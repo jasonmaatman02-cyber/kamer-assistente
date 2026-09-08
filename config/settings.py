@@ -32,7 +32,7 @@ DEFAULTS: dict = {
     "ai": {
         "backend": "ollama",            # ollama | openai
         "ollama_url": "http://localhost:11434",
-        "ollama_model": "llama3.2:3b",  # small enough for a Pi 4B; change freely
+        "ollama_model": "qwen2.5:1.5b",  # klein & snel genoeg voor een Pi 4B; 'ollama pull' vereist
         "openai_model": "gpt-4o-mini",
         "temperature": 0.6,
         "max_history": 20,

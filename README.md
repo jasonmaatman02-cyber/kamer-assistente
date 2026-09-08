@@ -33,7 +33,7 @@ pip install -r requirements.txt          # of requirements-dashboard.txt
 
 # Ollama (lokale LLM)
 curl -fsSL https://ollama.com/install.sh | sh
-ollama pull llama3.2:3b                   # ~2 GB, past in 4 GB RAM
+ollama pull qwen2.5:1.5b                  # ~1 GB, snel genoeg op een Pi 4B
 ```
 
 Piper- en faster-whisper-modellen worden bij het eerste gebruik automatisch
@@ -59,8 +59,8 @@ Alles is in te stellen via de **Settings**-tab in het dashboard (schrijft naar
   detectie in browser" staat uit (scheelt ~4 MB download + CPU).
 - **Dashboard verversen**: hogere ms-waarden = minder verkeer en minder
   Spotify-API-calls. De Overview-pagina haalt alles in één `/api/overview`-call op.
-- **AI → Ollama model**: kleiner model = sneller. `llama3.2:3b` of
-  `qwen2.5:1.5b` zijn redelijk op een Pi 4B (reken op enkele tokens/sec).
+- **AI → Ollama model**: `qwen2.5:1.5b` (standaard) is snel genoeg op een
+  Pi 4B. Groter (`llama3.2:3b`) = slimmer maar trager.
 
 ### Inloggegevens via de Settings-tab
 
@@ -99,8 +99,7 @@ logic/ voice/ devices/ sound_system/ scheduler/ weer/   — losse modules
 ## Bekende beperkingen
 
 - Een lokale LLM op een Pi 4B is traag. Voor snelle spraakbediening kan een
-  klein model (1–3B) of OpenAI als backend beter zijn.
-- De `Devices`-pagina is deels nog statische UI voor extra lampen/thermostaten.
-- Losse experiment-bestanden (`temp.py`, `camera.py`, `Dashboard/basic.html`,
-  `static/scripts/script.js`, `navigator.js`) worden nergens gebruikt en mogen
-  weg.
+  klein model (`qwen2.5:1.5b`) of OpenAI als backend beter zijn.
+- De `Devices`-pagina thermostaat is nog een demo (geen hardware-koppeling).
+- Spotify-afspeelbediening vereist een actief apparaat; installeer `raspotify`
+  om de Pi zelf een speler te maken.

@@ -1,13 +1,15 @@
 # Dashboard-only install (no torch, no whisper). Good for a quick Pi setup
 # where the voice assistant runs elsewhere or not at all.
-flask
-psutil
-requests
-python-dotenv
-tapo
-spotipy
-python-vlc
-opencv-python
-python-dateutil
-caldav
-ollama          # only needed for the AI Chat tab
+# Versions pinned to a known-good range (major locked, patches allowed).
+flask>=3.1,<4
+psutil>=7,<8
+requests>=2.32,<3
+python-dotenv>=1,<2
+waitress>=3,<4          # production WSGI server (rundashboard.py gebruikt dit als aanwezig)
+tapo>=0.8,<1
+spotipy>=2.25,<3
+python-vlc>=3,<4
+opencv-python>=4.9,<5   # of opencv-python-headless (lichter, geen GUI-deps) op een headless Pi
+python-dateutil>=2.9,<3
+caldav>=2,<3
+ollama>=0.6,<1          # alleen nodig voor de AI Chat-tab

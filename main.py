@@ -13,10 +13,9 @@ from logic.logger import log
 
 
 def run_dashboard(block: bool = True):
-    from Dashboard.backend.main import app
+    from rundashboard import main as _run
 
-    log("dashboard", "dashboard gestart")
-    app.run(host="0.0.0.0", port=5000, threaded=True, use_reloader=False)
+    _run()
 
 
 def run_assistant():

@@ -109,7 +109,8 @@ class SlimmeLamp:
         }
 
 if __name__ == "__main__":
-    from keys.API_keys import tapo_user, tapo_password
-    lamp = SlimmeLamp(tapo_user, tapo_password, "192.168.2.15")
+    import config
+
+    lamp = SlimmeLamp(config.secret("TAPO_USER"), config.secret("TAPO_PASSWORD"), "192.168.2.15")
     asyncio.run(lamp.connect())
     asyncio.run(lamp.uit())
