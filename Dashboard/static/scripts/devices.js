@@ -72,7 +72,7 @@ async function loadState(card, i) {
 }
 
 function wireCard(card, i) {
-  const busy = fn => async (...a) => { card.style.opacity = .6; try { await fn(...a); } finally { card.style.opacity = 1; } };
+  const busy = fn => async (...a) => { card.dataset.busy = "1"; card.style.opacity = .6; try { await fn(...a); } finally { card.style.opacity = 1; delete card.dataset.busy; } };
 
   card.querySelector(".l-power").addEventListener("change", busy(async e => {
     const r = await put(`/api/lamp/${e.target.checked ? "on" : "off"}`, { lamp: i });
@@ -113,7 +113,19 @@ async function init() {
     return;
   }
   grid.innerHTML = lamps.map(lampCard).join("");
-  grid.querySelectorAll(".card.device").forEach((card, i) => { wireCard(card, i); loadState(card, i); });
+  const cards = [...grid.querySelectorAll(".card.device")];
+  cards.forEach((card, i) => { wireCard(card, i); loadState(card, i); });
+
+  // live sync: pak wijzigingen op van spraak / andere tabs / fysieke schakelaar,
+  // maar laat een kaart met de rug niet toe terwijl je 'm bedient
+  setInterval(() => {
+    if (document.hidden) return;
+    cards.forEach((card, i) => {
+      if (card.dataset.busy) return;
+      if (card.contains(document.activeElement)) return;
+      loadState(card, i);
+    });
+  }, 10000);
 }
 
 // --- thermostat (persist naar settings.json) ---
