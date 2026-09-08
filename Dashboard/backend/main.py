@@ -613,35 +613,44 @@ def api_play_playlist():
 
 @app.route("/api/playlist_tracks/<playlist_id>")
 def api_playlist_tracks(playlist_id):
+    sp = _sp().sp
     try:
-        sp = _sp().sp
-        playlist = sp.playlist(playlist_id)
+        meta = sp.playlist(playlist_id, fields="name,images")
     except Exception as exc:  # noqa: BLE001
         return jsonify({"error": str(exc)}), 500
 
-    tracks = []
-    for it in (playlist.get("tracks") or {}).get("items", []):
-        t = it.get("track") if isinstance(it, dict) else None
-        if not isinstance(t, dict) or not t.get("uri"):
-            continue
-        try:
-            ms = t.get("duration_ms", 0)
-            album = t.get("album") or {}
-            imgs = album.get("images") or []
-            tracks.append({
-                "id": t.get("id"),
-                "name": t.get("name", "?"),
-                "artist": ", ".join(a["name"] for a in t.get("artists", []) if a.get("name")),
-                "duration": f"{ms // 60000}:{(ms % 60000) // 1000:02d}",
-                "thumbnail": imgs[0]["url"] if imgs else "",
-                "uri": t["uri"],
-            })
-        except Exception:  # noqa: BLE001
-            continue
+    # market=from_token is nodig, anders filtert Spotify de nummers weg (-> lege lijst)
+    tracks, offset = [], 0
+    try:
+        while True:
+            page = sp.playlist_items(
+                playlist_id, market="from_token", additional_types=("track",),
+                limit=100, offset=offset,
+            )
+            items = page.get("items", [])
+            for it in items:
+                t = it.get("track") if isinstance(it, dict) else None
+                if not isinstance(t, dict) or not t.get("uri"):
+                    continue
+                ms = t.get("duration_ms", 0) or 0
+                imgs = (t.get("album") or {}).get("images") or []
+                tracks.append({
+                    "id": t.get("id"),
+                    "name": t.get("name", "?"),
+                    "artist": ", ".join(a["name"] for a in t.get("artists", []) if a.get("name")),
+                    "duration": f"{ms // 60000}:{(ms % 60000) // 1000:02d}",
+                    "thumbnail": imgs[0]["url"] if imgs else "",
+                    "uri": t["uri"],
+                })
+            if not page.get("next") or len(tracks) >= 300:
+                break
+            offset += 100
+    except Exception as exc:  # noqa: BLE001
+        return jsonify({"error": str(exc)}), 500
 
-    imgs = playlist.get("images") or []
+    imgs = meta.get("images") or []
     return jsonify({
-        "name": playlist.get("name", "Playlist"),
+        "name": meta.get("name", "Playlist"),
         "thumbnail": imgs[0]["url"] if imgs else "",
         "tracks": tracks,
     })
@@ -668,14 +677,12 @@ def api_play_track():
         if not device_id:
             return _no_device_response()
         if playlist_id:
-            items = (sp.playlist(playlist_id).get("tracks") or {}).get("items", [])
-            offset = next(
-                (i for i, it in enumerate(items)
-                 if isinstance(it.get("track"), dict) and it["track"].get("id") == track_id),
-                0,
+            # start de playlist bij dit nummer (offset via uri = robuuster dan position)
+            sp.start_playback(
+                device_id=device_id,
+                context_uri=f"spotify:playlist:{playlist_id}",
+                offset={"uri": f"spotify:track:{track_id}"},
             )
-            sp.start_playback(device_id=device_id, context_uri=f"spotify:playlist:{playlist_id}",
-                              offset={"position": offset})
         else:
             sp.start_playback(device_id=device_id, uris=[f"spotify:track:{track_id}"])
         return jsonify({"success": True, "track_id": track_id})
