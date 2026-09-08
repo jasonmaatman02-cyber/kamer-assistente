@@ -695,15 +695,22 @@ def api_play_track():
         if not device_id:
             return _no_device_response()
         _wake_device(sp, device_id)
+        track_uri = f"spotify:track:{track_id}"
         if playlist_id:
-            # start de playlist bij dit nummer (offset via uri = robuuster dan position)
-            sp.start_playback(
-                device_id=device_id,
-                context_uri=f"spotify:playlist:{playlist_id}",
-                offset={"uri": f"spotify:track:{track_id}"},
-            )
+            sp.start_playback(device_id=device_id, context_uri=f"spotify:playlist:{playlist_id}",
+                              offset={"uri": track_uri})
         else:
-            sp.start_playback(device_id=device_id, uris=[f"spotify:track:{track_id}"])
+            # los nummer: speel binnen het album als context (kaal 'uris' speelt op
+            # veel apparaten niet af). Valt terug op uris als het album onbekend is.
+            try:
+                album_uri = sp.track(track_uri).get("album", {}).get("uri")
+            except Exception:  # noqa: BLE001
+                album_uri = None
+            if album_uri:
+                sp.start_playback(device_id=device_id, context_uri=album_uri,
+                                  offset={"uri": track_uri})
+            else:
+                sp.start_playback(device_id=device_id, uris=[track_uri])
         return jsonify({"success": True, "track_id": track_id})
     except Exception as exc:  # noqa: BLE001
         return _play_error(exc)
