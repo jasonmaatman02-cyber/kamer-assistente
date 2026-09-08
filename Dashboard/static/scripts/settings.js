@@ -259,9 +259,11 @@ const SECRET_GROUPS = [
 const secBox = document.getElementById("secrets-section");
 
 async function loadSecrets() {
+  const headers = UNLOCK_TOKEN ? { "X-Unlock-Token": UNLOCK_TOKEN } : {};
   let d;
-  try { d = await fetch("/api/secrets").then(r => r.json()); }
+  try { d = await fetch("/api/secrets", { headers }).then(r => r.json()); }
   catch (e) { secBox.innerHTML = '<div class="card"><p class="empty">Kon secrets-status niet laden.</p></div>'; return; }
+  if (UNLOCK_TOKEN && !d.unlocked) UNLOCK_TOKEN = null;  // sessie verlopen
   renderSecrets(d);
 }
 
