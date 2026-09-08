@@ -58,6 +58,8 @@ const SCHEMA = [
     key: "camera", title: "Camera", icon: "fa-video",
     fields: [
       { path: "enabled", label: "Camera aan", type: "bool" },
+      { path: "backend", label: "Backend", type: "select", options: ["auto", "opencv", "picamera2"],
+        hint: "auto = USB-webcam, val terug op de Pi-lintkabelcamera (picamera2)." },
       { path: "device_index", label: "Device index", type: "number", min: 0, max: 9 },
       { path: "width", label: "Breedte (px)", type: "number", min: 160, max: 1920, step: 16,
         hint: "Lager = minder bandbreedte. 640 is prima op trage wifi." },
@@ -96,6 +98,10 @@ const SCHEMA = [
     fields: [
       { path: "name", label: "Naam", type: "text" },
       { path: "wake_words", label: "Wake words (komma-gescheiden)", type: "list" },
+      { path: "wake_backend", label: "Wake-word backend", type: "select", options: ["auto", "porcupine", "whisper"],
+        hint: "auto = Porcupine als 't kan (PICOVOICE_ACCESS_KEY + voice/hey_kamer.ppn), anders whisper op de wake-woorden." },
+      { path: "porcupine_keyword", label: "Porcupine .ppn-pad", type: "text" },
+      { path: "porcupine_sensitivity", label: "Porcupine gevoeligheid", type: "number", step: "0.05", min: 0, max: 1 },
       { path: "system_prompt", label: "System prompt", type: "textarea" },
     ],
   },
@@ -258,6 +264,8 @@ const SECRET_GROUPS = [
       ["OPENWEATHER_KEY", "OpenWeatherMap-key", "password"],
       ["WEATHERAPI_KEY", "WeatherAPI-key", "password"],
       ["SERPER_API_KEY", "Serper-key", "password"]] },
+  { title: "Wake word (optioneel)", icon: "fa-microphone-lines", keys: [
+      ["PICOVOICE_ACCESS_KEY", "Picovoice AccessKey (console.picovoice.ai)", "password"]] },
 ];
 
 const secBox = document.getElementById("secrets-section");
