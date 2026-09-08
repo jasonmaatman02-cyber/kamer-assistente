@@ -1,8 +1,12 @@
+from pathlib import Path
+
 import spotipy
 from spotipy.oauth2 import SpotifyOAuth
 
-from keys.API_keys import spotify_client_id, spotify_client_secret, spotify_redirect_uri
+import config
 from logic.logger import log
+
+_CACHE_PATH = str(Path(__file__).resolve().parent.parent / ".cache")
 
 
 class SpotifyError(RuntimeError):
@@ -16,10 +20,12 @@ class SpotifyDJ:
             "user-read-recently-played playlist-read-private"
         )
         self.sp = spotipy.Spotify(auth_manager=SpotifyOAuth(
-            client_id=spotify_client_id,
-            client_secret=spotify_client_secret,
-            redirect_uri=spotify_redirect_uri,
+            client_id=config.secret("SPOTIFY_CLIENT_ID"),
+            client_secret=config.secret("SPOTIFY_CLIENT_SECRET"),
+            redirect_uri=config.secret("SPOTIFY_REDIRECT_URI", "http://127.0.0.1:8000/callback"),
             scope=self.scope,
+            open_browser=False,
+            cache_path=_CACHE_PATH,
         ))
 
     # ------------------------------------------------------------------ #

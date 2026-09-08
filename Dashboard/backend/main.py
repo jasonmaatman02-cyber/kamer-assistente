@@ -13,6 +13,7 @@ Design notes
 from __future__ import annotations
 
 import asyncio
+import secrets as _secrets
 import threading
 import time
 
@@ -157,6 +158,144 @@ def api_config():
         },
         "features": config.get("features"),
     })
+
+
+# --------------------------------------------------------------------------- #
+# Secrets editor — unlocked with a one-time code e-mailed to RECEIVER.
+# --------------------------------------------------------------------------- #
+_otp = {"code": None, "expires": 0.0}
+_unlock_sessions: dict[str, float] = {}
+_UNLOCK_TTL = 30 * 60
+_OTP_TTL = 10 * 60
+
+
+def _mail_ready() -> bool:
+    return bool(
+        config.secret("EMAIL_ADDRESS")
+        and config.secret("EMAIL_PASSWORD")
+        and config.secret("RECEIVER")
+    )
+
+
+def _unlocked() -> bool:
+    token = request.headers.get("X-Unlock-Token", "")
+    exp = _unlock_sessions.get(token)
+    if exp and time.time() < exp:
+        return True
+    _unlock_sessions.pop(token, None)
+    return False
+
+
+@app.route("/api/auth/request-code", methods=["POST"])
+def api_auth_request_code():
+    if not _mail_ready():
+        return jsonify({
+            "ok": False,
+            "error": "Mail nog niet ingesteld. Vul EMAIL_ADDRESS, EMAIL_PASSWORD en "
+                     "RECEIVER eenmalig in via het .env-bestand op de Pi.",
+        }), 400
+    from logic.mail_sender import send_email_message
+
+    code = f"{_secrets.randbelow(1_000_000):06d}"
+    _otp.update(code=code, expires=time.time() + _OTP_TTL)
+    result = send_email_message(
+        "Kamer-assistent: ontgrendelcode",
+        f"Je code om de instellingen te ontgrendelen: {code}\n\n"
+        f"Verloopt over 10 minuten. Niet aangevraagd? Negeer deze mail.",
+    )
+    if "mislukt" in result.lower():
+        return jsonify({"ok": False, "error": "Kon de mail niet versturen — check de Gmail-gegevens."}), 502
+    return jsonify({"ok": True})
+
+
+@app.route("/api/auth/verify", methods=["POST"])
+def api_auth_verify():
+    code = (request.get_json(silent=True) or {}).get("code", "").strip()
+    if not _otp["code"] or time.time() > _otp["expires"] or code != _otp["code"]:
+        return jsonify({"ok": False, "error": "Code ongeldig of verlopen"}), 401
+    _otp.update(code=None, expires=0.0)
+    token = _secrets.token_urlsafe(24)
+    _unlock_sessions[token] = time.time() + _UNLOCK_TTL
+    return jsonify({"ok": True, "token": token, "ttl": _UNLOCK_TTL})
+
+
+@app.route("/api/secrets", methods=["GET"])
+def api_secrets_get():
+    return jsonify({
+        "secrets": config.secret_status(),
+        "keys": config.SECRET_KEYS,
+        "unlocked": _unlocked(),
+        "mail_ready": _mail_ready(),
+    })
+
+
+@app.route("/api/secrets", methods=["POST"])
+def api_secrets_set():
+    if not _unlocked():
+        return jsonify({"ok": False, "error": "Niet ontgrendeld"}), 403
+    data = request.get_json(silent=True) or {}
+    changed = []
+    for key, value in data.items():
+        if key in config.SECRET_KEYS and isinstance(value, str):
+            try:
+                config.set_secret(key, value)
+                changed.append(key)
+            except Exception as exc:  # noqa: BLE001
+                return jsonify({"ok": False, "error": f"{key}: {exc}"}), 500
+    config.reload()
+    reset_services()
+    return jsonify({"ok": True, "changed": changed})
+
+
+# --------------------------------------------------------------------------- #
+# Spotify OAuth helper (headless: get URL -> user authorises -> pastes redirect)
+# --------------------------------------------------------------------------- #
+def _spotify_oauth():
+    from spotipy.oauth2 import SpotifyOAuth
+    from pathlib import Path
+
+    cid = config.secret("SPOTIFY_CLIENT_ID")
+    csecret = config.secret("SPOTIFY_CLIENT_SECRET")
+    if not (cid and csecret):
+        return None
+    return SpotifyOAuth(
+        client_id=cid,
+        client_secret=csecret,
+        redirect_uri=config.secret("SPOTIFY_REDIRECT_URI", "http://127.0.0.1:8000/callback"),
+        scope="user-read-playback-state user-modify-playback-state "
+              "user-read-recently-played playlist-read-private",
+        open_browser=False,
+        cache_path=str(Path(__file__).resolve().parent.parent.parent / ".cache"),
+    )
+
+
+@app.route("/api/spotify/auth-url")
+def api_spotify_auth_url():
+    if not _unlocked():
+        return jsonify({"ok": False, "error": "Niet ontgrendeld"}), 403
+    oauth = _spotify_oauth()
+    if not oauth:
+        return jsonify({"ok": False, "error": "Vul eerst SPOTIFY_CLIENT_ID en SPOTIFY_CLIENT_SECRET in"}), 400
+    return jsonify({"ok": True, "url": oauth.get_authorize_url()})
+
+
+@app.route("/api/spotify/token", methods=["POST"])
+def api_spotify_token():
+    if not _unlocked():
+        return jsonify({"ok": False, "error": "Niet ontgrendeld"}), 403
+    oauth = _spotify_oauth()
+    if not oauth:
+        return jsonify({"ok": False, "error": "Spotify client-id/secret ontbreekt"}), 400
+    redirect_url = (request.get_json(silent=True) or {}).get("redirect_url", "").strip()
+    if not redirect_url:
+        return jsonify({"ok": False, "error": "Plak de volledige URL waar je op uitkwam"}), 400
+    try:
+        code = oauth.parse_response_code(redirect_url)
+        oauth.get_access_token(code, as_dict=False, check_cache=False)
+    except Exception as exc:  # noqa: BLE001
+        return jsonify({"ok": False, "error": str(exc)}), 400
+    reset_services()
+    return jsonify({"ok": True})
 
 
 # --------------------------------------------------------------------------- #

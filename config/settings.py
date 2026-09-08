@@ -216,6 +216,65 @@ def _diff(base: dict, current: dict) -> dict:
     return out
 
 
+ENV_FILE = BASE_DIR / ".env"
+
+# Secrets the dashboard's Settings tab may edit. The "public" ones (emails,
+# hostnames) are shown in full; the rest are only ever shown masked.
+SECRET_KEYS = [
+    "OPENAI_API_KEY",
+    "TAPO_USER", "TAPO_PASSWORD",
+    "EMAIL_ADDRESS", "EMAIL_PASSWORD", "SMTP_SERVER", "SMTP_PORT", "RECEIVER",
+    "APPLE_ID_1", "APPLE_PASSWORD_1", "APPLE_ID_2", "APPLE_PASSWORD_2",
+    "SPOTIFY_CLIENT_ID", "SPOTIFY_CLIENT_SECRET", "SPOTIFY_REDIRECT_URI",
+    "WEATHERAPI_KEY", "SERPER_API_KEY",
+]
+_PUBLIC_SECRETS = {
+    "TAPO_USER", "EMAIL_ADDRESS", "SMTP_SERVER", "SMTP_PORT", "RECEIVER",
+    "APPLE_ID_1", "APPLE_ID_2", "SPOTIFY_CLIENT_ID", "SPOTIFY_REDIRECT_URI",
+}
+
+
 def secret(name: str, default: str = "") -> str:
     """Read a secret from the environment (``.env``)."""
     return os.environ.get(name, default)
+
+
+def set_secret(name: str, value: str) -> None:
+    """Write a secret to ``.env`` and apply it immediately (no restart)."""
+    value = (value or "").strip()
+    with _lock:
+        ENV_FILE.touch(exist_ok=True)
+        try:
+            if value:
+                from dotenv import set_key
+
+                set_key(str(ENV_FILE), name, value, quote_mode="never")
+                os.environ[name] = value
+            else:
+                from dotenv import unset_key
+
+                unset_key(str(ENV_FILE), name)
+                os.environ.pop(name, None)
+        except Exception as exc:  # noqa: BLE001
+            print(f"[config] kon secret '{name}' niet opslaan: {exc}")
+            raise
+
+
+def _mask(value: str) -> str:
+    if len(value) <= 6:
+        return "••••"
+    return f"{value[:3]}…{value[-2:]}"
+
+
+def secret_status() -> dict:
+    """``{name: {"set": bool, "hint": str}}`` — never the raw secret value."""
+    out = {}
+    for key in SECRET_KEYS:
+        val = os.environ.get(key, "")
+        if not val:
+            out[key] = {"set": False, "hint": ""}
+        elif key in _PUBLIC_SECRETS:
+            out[key] = {"set": True, "hint": val}
+        else:
+            out[key] = {"set": True, "hint": _mask(val)}
+    return out

@@ -232,3 +232,178 @@ document.getElementById("save-btn").addEventListener("click", save);
 document.getElementById("save-btn2").addEventListener("click", save);
 document.getElementById("reload-btn").addEventListener("click", load);
 load();
+
+// =====================================================================
+// Inloggegevens (secrets) — ontgrendelen met een code per mail
+// =====================================================================
+let UNLOCK_TOKEN = null;
+
+const SECRET_GROUPS = [
+  { title: "OpenAI (optioneel)", icon: "fa-robot", keys: [["OPENAI_API_KEY", "API-key", "password"]] },
+  { title: "Lampen (Tapo)", icon: "fa-lightbulb", keys: [
+      ["TAPO_USER", "TP-Link e-mail", "text"], ["TAPO_PASSWORD", "TP-Link wachtwoord", "password"]] },
+  { title: "E-mail (Gmail)", icon: "fa-envelope", keys: [
+      ["EMAIL_ADDRESS", "Afzender-adres", "text"], ["EMAIL_PASSWORD", "App-wachtwoord", "password"],
+      ["SMTP_SERVER", "SMTP-server", "text"], ["SMTP_PORT", "Poort", "text"],
+      ["RECEIVER", "Ontvanger (jij)", "text"]] },
+  { title: "Apple agenda (CalDAV)", icon: "fa-calendar", keys: [
+      ["APPLE_ID_1", "Apple ID", "text"], ["APPLE_PASSWORD_1", "App-wachtwoord", "password"],
+      ["APPLE_ID_2", "Apple ID 2 (optioneel)", "text"], ["APPLE_PASSWORD_2", "App-wachtwoord 2", "password"]] },
+  { title: "Spotify", icon: "fa-music", keys: [
+      ["SPOTIFY_CLIENT_ID", "Client ID", "text"], ["SPOTIFY_CLIENT_SECRET", "Client Secret", "password"],
+      ["SPOTIFY_REDIRECT_URI", "Redirect URI", "text"]], spotify: true },
+  { title: "Overig (optioneel)", icon: "fa-key", keys: [
+      ["WEATHERAPI_KEY", "WeatherAPI-key", "password"], ["SERPER_API_KEY", "Serper-key", "password"]] },
+];
+
+const secBox = document.getElementById("secrets-section");
+
+async function loadSecrets() {
+  let d;
+  try { d = await fetch("/api/secrets").then(r => r.json()); }
+  catch (e) { secBox.innerHTML = '<div class="card"><p class="empty">Kon secrets-status niet laden.</p></div>'; return; }
+  renderSecrets(d);
+}
+
+function lockedCard(d) {
+  const mailNote = d.mail_ready
+    ? "Je krijgt een code per mail op je RECEIVER-adres."
+    : "<b>Mail nog niet ingesteld.</b> Vul EMAIL_ADDRESS, EMAIL_PASSWORD en RECEIVER eerst eenmalig in via het .env-bestand op de Pi.";
+  return `
+  <div class="card">
+    <h3><i class="fa fa-lock"></i> Inloggegevens</h3>
+    <p class="muted">API-keys en wachtwoorden. Achter een slot; waarden worden nooit teruggestuurd naar de browser.</p>
+    <p class="muted">${mailNote}</p>
+    <button class="btn" id="req-code" ${d.mail_ready ? "" : "disabled"}><i class="fa fa-paper-plane"></i> Stuur code naar mail</button>
+    <div id="code-row" hidden style="margin-top:12px">
+      <div class="field row" style="max-width:320px">
+        <input type="text" id="code-input" inputmode="numeric" maxlength="6" placeholder="6-cijferige code">
+        <button class="btn primary" id="code-verify">Ontgrendel</button>
+      </div>
+    </div>
+    <p class="save-msg" id="sec-msg"></p>
+  </div>`;
+}
+
+function field(key, label, type, s) {
+  const ph = s.set ? (s.hint || "••••••") : "niet ingesteld";
+  return `<div class="field"><label>${label}</label>
+    <input type="${type === "password" ? "password" : "text"}" data-secret="${key}"
+      placeholder="${ph}" autocomplete="off"></div>`;
+}
+
+function unlockedCards(d) {
+  const cards = SECRET_GROUPS.map(g => `
+    <div class="card">
+      <h3><i class="fa ${g.icon}"></i> ${g.title}</h3>
+      ${g.keys.map(([k, l, t]) => field(k, l, t, d.secrets[k] || {})).join("")}
+      ${g.spotify ? `
+      <button class="btn small" id="sp-connect" style="margin-top:6px"><i class="fa fa-link"></i> Verbind met Spotify</button>
+      <div id="sp-row" hidden style="margin-top:10px">
+        <p class="muted">Open de link, log in bij Spotify, en plak hieronder de URL waar je op uitkwam.</p>
+        <div class="field"><input type="text" id="sp-redirect" placeholder="http://127.0.0.1:8000/callback?code=..."></div>
+        <button class="btn small primary" id="sp-finish">Koppelen afronden</button>
+      </div>` : ""}
+    </div>`).join("");
+  return `
+  <div class="card" style="grid-column:1/-1">
+    <h3><i class="fa fa-lock-open"></i> Inloggegevens <span class="muted">— ontgrendeld (30 min)</span></h3>
+    <p class="muted">Laat een veld leeg om het ongewijzigd te laten. Leegmaken kan door een spatie in te vullen en op te slaan.</p>
+  </div>
+  <div class="settings-grid" style="grid-column:1/-1">${cards}</div>
+  <div class="settings-actions" style="grid-column:1/-1">
+    <button class="btn primary" id="sec-save"><i class="fa fa-floppy-disk"></i> Inloggegevens opslaan</button>
+    <span class="save-msg" id="sec-save-msg"></span>
+  </div>`;
+}
+
+function renderSecrets(d) {
+  if (!d.unlocked || !UNLOCK_TOKEN) {
+    secBox.className = "";
+    secBox.innerHTML = lockedCard(d);
+    wireLock(d);
+  } else {
+    secBox.className = "settings-grid";
+    secBox.innerHTML = unlockedCards(d);
+    wireUnlocked();
+  }
+}
+
+function wireLock(d) {
+  const msg = document.getElementById("sec-msg");
+  const req = document.getElementById("req-code");
+  if (req) req.addEventListener("click", async () => {
+    req.disabled = true; msg.textContent = "Versturen…"; msg.className = "save-msg";
+    try {
+      const r = await fetch("/api/auth/request-code", { method: "POST" }).then(r => r.json());
+      if (r.ok) {
+        msg.textContent = "Code gemaild ✓"; msg.className = "save-msg ok";
+        document.getElementById("code-row").hidden = false;
+        document.getElementById("code-input").focus();
+      } else { msg.textContent = r.error || "Mislukt"; msg.className = "save-msg err"; req.disabled = false; }
+    } catch (e) { msg.textContent = "Netwerkfout"; msg.className = "save-msg err"; req.disabled = false; }
+  });
+  const verify = document.getElementById("code-verify");
+  if (verify) verify.addEventListener("click", async () => {
+    const code = document.getElementById("code-input").value.trim();
+    if (!code) return;
+    msg.textContent = "Controleren…"; msg.className = "save-msg";
+    try {
+      const r = await fetch("/api/auth/verify", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ code }),
+      }).then(r => r.json());
+      if (r.ok) { UNLOCK_TOKEN = r.token; toast("Ontgrendeld"); loadSecrets(); }
+      else { msg.textContent = r.error || "Ongeldig"; msg.className = "save-msg err"; }
+    } catch (e) { msg.textContent = "Netwerkfout"; msg.className = "save-msg err"; }
+  });
+}
+
+function wireUnlocked() {
+  document.getElementById("sec-save").addEventListener("click", async () => {
+    const msg = document.getElementById("sec-save-msg");
+    const payload = {};
+    secBox.querySelectorAll("input[data-secret]").forEach(inp => {
+      if (inp.value !== "") payload[inp.dataset.secret] = inp.value;
+    });
+    if (!Object.keys(payload).length) { msg.textContent = "Niks gewijzigd"; return; }
+    msg.textContent = "Opslaan…"; msg.className = "save-msg";
+    try {
+      const r = await fetch("/api/secrets", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-Unlock-Token": UNLOCK_TOKEN },
+        body: JSON.stringify(payload),
+      }).then(r => r.json());
+      if (r.ok) {
+        msg.textContent = `Opgeslagen: ${r.changed.join(", ")} ✓`; msg.className = "save-msg ok";
+        toast("Inloggegevens opgeslagen en toegepast");
+        loadSecrets();
+      } else {
+        if (r.error === "Niet ontgrendeld") { UNLOCK_TOKEN = null; loadSecrets(); }
+        msg.textContent = r.error || "Mislukt"; msg.className = "save-msg err";
+      }
+    } catch (e) { msg.textContent = "Netwerkfout"; msg.className = "save-msg err"; }
+  });
+
+  const spc = document.getElementById("sp-connect");
+  if (spc) spc.addEventListener("click", async () => {
+    const r = await fetch("/api/spotify/auth-url", { headers: { "X-Unlock-Token": UNLOCK_TOKEN } }).then(r => r.json());
+    if (!r.ok) { toast(r.error || "Vul eerst client-id/secret in en sla op", true); return; }
+    window.open(r.url, "_blank", "noopener");
+    document.getElementById("sp-row").hidden = false;
+  });
+  const spf = document.getElementById("sp-finish");
+  if (spf) spf.addEventListener("click", async () => {
+    const redirect_url = document.getElementById("sp-redirect").value.trim();
+    if (!redirect_url) return;
+    const r = await fetch("/api/spotify/token", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-Unlock-Token": UNLOCK_TOKEN },
+      body: JSON.stringify({ redirect_url }),
+    }).then(r => r.json());
+    toast(r.ok ? "Spotify gekoppeld ✓" : (r.error || "Koppelen mislukt"), !r.ok);
+    if (r.ok) document.getElementById("sp-row").hidden = true;
+  });
+}
+
+loadSecrets();

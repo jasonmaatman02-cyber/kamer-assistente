@@ -3,18 +3,18 @@ from datetime import datetime, timedelta, timezone
 from caldav import DAVClient
 from dateutil.parser import parse
 
-from keys.API_keys import appleid1, applewachtwoord1, appleid2, applewachtwoord2
+import config
 
 ICLOUD_URL = "https://caldav.icloud.com/"
 
 
 class AppleCalendarMultiAccount:
     def __init__(self):
-        self.accounts = [
-            {"id": i, "password": p}
-            for i, p in ((appleid1, applewachtwoord1), (appleid2, applewachtwoord2))
-            if i and p
-        ]
+        pairs = (
+            (config.secret("APPLE_ID_1"), config.secret("APPLE_PASSWORD_1")),
+            (config.secret("APPLE_ID_2"), config.secret("APPLE_PASSWORD_2")),
+        )
+        self.accounts = [{"id": i, "password": p} for i, p in pairs if i and p]
         self.error = None
         self.calendars = self._connect()
 

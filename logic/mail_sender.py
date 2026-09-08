@@ -10,7 +10,7 @@ from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from pathlib import Path
 
-from keys.API_keys import EMAIL_ADDRESS, EMAIL_PASSWORD, SMTP_SERVER, SMTP_PORT, RECEIVER
+import config
 from logic.logger import log
 
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -19,20 +19,23 @@ MAX_ATTACH_BYTES = 20 * 1024 * 1024  # Gmail weigert >25 MB; hou marge
 
 
 def _smtp():
-    if int(SMTP_PORT) == 465:
-        return smtplib.SMTP_SSL(SMTP_SERVER, int(SMTP_PORT), timeout=20)
-    s = smtplib.SMTP(SMTP_SERVER, int(SMTP_PORT), timeout=20)
+    server = config.secret("SMTP_SERVER", "smtp.gmail.com")
+    port = int(config.secret("SMTP_PORT", "587") or 587)
+    if port == 465:
+        return smtplib.SMTP_SSL(server, port, timeout=20)
+    s = smtplib.SMTP(server, port, timeout=20)
     s.starttls()
     return s
 
 
 def _send(msg) -> bool:
-    if not (EMAIL_ADDRESS and EMAIL_PASSWORD):
+    addr, pw = config.secret("EMAIL_ADDRESS"), config.secret("EMAIL_PASSWORD")
+    if not (addr and pw):
         log("ERROR", "E-mail niet geconfigureerd (.env)")
         return False
     try:
         with _smtp() as server:
-            server.login(EMAIL_ADDRESS, EMAIL_PASSWORD)
+            server.login(addr, pw)
             server.send_message(msg)
         return True
     except Exception as exc:  # noqa: BLE001
@@ -44,8 +47,8 @@ def _send(msg) -> bool:
 def send_email_message(subject: str, message: str, to: str | None = None) -> str:
     msg = MIMEText(message)
     msg["Subject"] = subject
-    msg["From"] = EMAIL_ADDRESS
-    msg["To"] = to or RECEIVER
+    msg["From"] = config.secret("EMAIL_ADDRESS")
+    msg["To"] = to or config.secret("RECEIVER")
     if _send(msg):
         log("E-mail", f"E-mail verzonden: {subject}")
         return "E-mail verzonden"
@@ -75,8 +78,8 @@ def zip_logs_and_send(max_months: int = 3) -> str:
             return f"Logs te groot om te mailen ({size // (1024*1024)} MB)"
 
         msg = MIMEMultipart()
-        msg["From"] = EMAIL_ADDRESS
-        msg["To"] = RECEIVER
+        msg["From"] = config.secret("EMAIL_ADDRESS")
+        msg["To"] = config.secret("RECEIVER")
         msg["Subject"] = "Logs"
         msg.attach(MIMEText("Hierbij de logs.", "plain"))
         with open(zip_path, "rb") as f:

@@ -62,7 +62,29 @@ Alles is in te stellen via de **Settings**-tab in het dashboard (schrijft naar
 - **AI → Ollama model**: kleiner model = sneller. `llama3.2:3b` of
   `qwen2.5:1.5b` zijn redelijk op een Pi 4B (reken op enkele tokens/sec).
 
-Secrets horen **niet** in `settings.json` — die blijven in `.env`.
+### Inloggegevens via de Settings-tab
+
+API-keys en wachtwoorden (OpenAI, Tapo, Gmail, Apple, Spotify, …) vul je in
+onder **Settings → Inloggegevens**. Dat schrijft naar `.env` en past het direct
+toe (geen herstart). Waarden komen nooit terug naar de browser — je ziet alleen
+een gemaskeerde hint of "niet ingesteld".
+
+De sectie zit achter een slot: je vraagt een 6-cijferige code aan, die naar je
+`RECEIVER`-mailadres wordt gestuurd, en daarmee ontgrendel je 30 minuten.
+
+**Eenmalig op een verse Pi**: de mailcode kan pas verstuurd worden als de
+Gmail-gegevens al bekend zijn. Vul die dus één keer met de hand in:
+
+```bash
+cp .env.example .env
+nano .env    # zet EMAIL_ADDRESS, EMAIL_PASSWORD (Gmail app-password) en RECEIVER
+```
+
+Daarna doe je al het andere (Spotify, Tapo, OpenAI, Apple) via de UI.
+
+**Spotify** heeft daarna nog een koppelstap: knop *Verbind met Spotify* →
+inloggen → de URL waar je op uitkomt terugplakken. Dat cachet het token in
+`.cache`.
 
 ## Architectuur
 
