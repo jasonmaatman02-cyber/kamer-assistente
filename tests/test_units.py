@@ -141,3 +141,25 @@ def test_use_porcupine_respects_config(monkeypatch):
     assert Whisper._use_porcupine() is False          # niet klaar -> whisper
     config.set("assistant.wake_backend", "porcupine")
     assert Whisper._use_porcupine() is False          # geforceerd maar niet klaar
+
+
+# --- spotify "geen apparaat"-status in /api/service_status --------------- #
+def test_service_status_flags_no_device(monkeypatch):
+    from Dashboard.backend import services
+
+    class FakeDJ:
+        sp = object()
+
+    monkeypatch.setitem(services._services, "spotify", FakeDJ())
+    monkeypatch.setattr(services, "_probe", lambda n: (True, None))
+    monkeypatch.setattr(services, "active_device_id", lambda sp: None)
+    services._health_cache.clear()
+
+    st = services.service_status()["spotify"]
+    assert st["ok"] is True and st["no_device"] is True
+    assert st["error"] == "geen apparaat actief"
+
+    monkeypatch.setattr(services, "active_device_id", lambda sp: "dev123")
+    services._health_cache.clear()
+    st = services.service_status()["spotify"]
+    assert "no_device" not in st and st["error"] is None

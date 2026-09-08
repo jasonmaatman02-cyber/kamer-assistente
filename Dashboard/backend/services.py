@@ -10,6 +10,7 @@ import asyncio
 import time
 
 import config
+from logic.logger import log
 
 # --------------------------------------------------------------------------- #
 # Lazy service registry
@@ -45,10 +46,13 @@ def svc(name: str):
         else:
             return None
         _errors.pop(name, None)
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:  # noqa: BLE001 - één storing mag niet het hele dashboard slopen
+        first_time = _errors.get(name) != str(exc)
         _errors[name] = str(exc)
         _services[name] = None
         print(f"[dashboard] service '{name}' niet beschikbaar: {exc}")
+        if first_time:  # niet elke poll opnieuw in het logboek spammen
+            log("Service", f"{name} niet beschikbaar: {exc}")
     return _services[name]
 
 
@@ -219,6 +223,21 @@ def _probe(name: str):
         return False, msg
 
 
+def _spotify_has_device() -> bool:
+    """Gecached (TTL): is er een Spotify-apparaat om op af te spelen?"""
+    now = time.time()
+    cached = _health_cache.get("spotify_device")
+    if cached and cached[1] >= now:
+        return cached[0]
+    s = _services.get("spotify")
+    try:
+        has = bool(s and active_device_id(s.sp))
+    except Exception:  # noqa: BLE001 - check zelf mag niet zeuren
+        has = True
+    _health_cache["spotify_device"] = (has, now + _HEALTH_TTL)
+    return has
+
+
 def service_status() -> dict:
     now = time.time()
     out = {}
@@ -230,7 +249,11 @@ def service_status() -> dict:
         ok, err, _ = _health_cache[n]
         out[n] = {"ok": ok, "error": err}
         if n == "spotify":
-            out[n]["needs_relink"] = bool(err and "opnieuw koppelen" in err)
+            relink = bool(err and "opnieuw koppelen" in err)
+            out[n]["needs_relink"] = relink
+            if ok and not relink and not _spotify_has_device():
+                out[n]["no_device"] = True
+                out[n]["error"] = "geen apparaat actief"
     return out
 
 
