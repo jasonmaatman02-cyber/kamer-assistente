@@ -106,6 +106,29 @@ def test_verwerk_input_stream_plain(monkeypatch):
     assert gpt_handler.conversation_history[-1] == {"role": "assistant", "content": "Hallo!"}
 
 
+def test_llm_model_missing_skips_openai_fallback(monkeypatch):
+    import ai.llm as llm
+
+    calls = {"openai": 0}
+
+    def boom_ollama(messages, tools):
+        raise RuntimeError("model 'qwen2.5:1.5b' not found (status code: 404)")
+
+    def track_openai(messages, tools):
+        calls["openai"] += 1
+        return {"content": "hoi van openai", "tool_calls": []}
+
+    monkeypatch.setattr(llm, "_chat_ollama", boom_ollama)
+    monkeypatch.setattr(llm, "_chat_openai", track_openai)
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    import config
+    config.set("ai.backend", "ollama")
+
+    out = llm.chat([{"role": "user", "content": "hi"}])
+    assert calls["openai"] == 0                       # configfout -> geen OpenAI
+    assert "ollama pull qwen2.5:1.5b" in out["content"]
+
+
 def test_verwerk_input_stream_tool(monkeypatch):
     import ai.llm as llm
 

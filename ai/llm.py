@@ -151,16 +151,17 @@ def chat(messages, tools=None) -> dict:
         return _chat_ollama(messages, tools)
     except Exception as exc:  # noqa: BLE001 - surface a usable message to the UI
         print(f"[llm] backend '{backend}' faalde: {exc}")
-        hint = ""
-        if backend == "ollama" and "not found" in str(exc).lower():
-            hint = f" — draai eerst 'ollama pull {config.get('ai.ollama_model')}'"
-        # Try the other backend once before giving up.
-        try:
-            if backend != "openai" and config.secret("OPENAI_API_KEY"):
-                print("[llm] val terug op OpenAI")
-                return _chat_openai(messages, tools)
-        except Exception as exc2:  # noqa: BLE001
-            print(f"[llm] fallback faalde ook: {exc2}")
+        # "model not found" is een configfout, geen storing — OpenAI lost dat
+        # niet op en kost alleen tijd + een tweede verwarrende foutmelding.
+        model_missing = backend == "ollama" and "not found" in str(exc).lower()
+        hint = f" — draai eerst 'ollama pull {config.get('ai.ollama_model')}'" if model_missing else ""
+        if not model_missing:
+            try:
+                if backend != "openai" and config.secret("OPENAI_API_KEY"):
+                    print("[llm] val terug op OpenAI")
+                    return _chat_openai(messages, tools)
+            except Exception as exc2:  # noqa: BLE001
+                print(f"[llm] fallback faalde ook: {exc2}")
         out = _empty()
         out["content"] = f"AI niet bereikbaar ({exc}){hint}"
         return out
