@@ -29,6 +29,11 @@ def test_settings_roundtrip(client):
     assert client.get("/api/config").get_json()["camera"]["enabled"] in (True, False)
 
 
+def test_camera_detect_threshold_roundtrip(client):
+    assert client.post("/api/settings", json={"camera": {"detect_threshold": 0.35}}).status_code == 200
+    assert client.get("/api/config").get_json()["camera"]["detect_threshold"] == 0.35
+
+
 def test_notes_crud(client):
     assert client.post("/api/notes", json={"note": "melk kopen"}).get_json()["success"]
     notes = client.get("/api/notes").get_json()["notes"]

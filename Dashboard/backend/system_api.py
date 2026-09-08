@@ -36,6 +36,7 @@ def public_config():
         "camera": {
             "browser_detection": config.get("camera.browser_detection"),
             "enabled": config.get("camera.enabled"),
+            "detect_threshold": config.get("camera.detect_threshold", 0.5),
         },
         "features": config.get("features"),
     })

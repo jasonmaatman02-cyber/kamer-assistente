@@ -33,7 +33,7 @@ function timeAllowsLamp() {
   return !(m >= 21 * 60 + 40 || m < 7 * 60); // geblokkeerd 21:40–07:00
 }
 
-async function startDetection() {
+async function startDetection(threshold = 0.5) {
   setStatus('<span class="orange">AI-model laden…</span>');
   try {
     await loadScript("https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@3.9.0");
@@ -58,7 +58,7 @@ async function startDetection() {
       const preds = await model.detect(img);
       ctx.clearRect(0, 0, canvas.width, canvas.height);
       const sx = canvas.width / img.naturalWidth, sy = canvas.height / img.naturalHeight;
-      const persons = preds.filter(p => p.class === "person" && p.score > 0.5);
+      const persons = preds.filter(p => p.class === "person" && p.score > threshold);
       persons.forEach(p => {
         const [x, y, w, h] = p.bbox;
         ctx.strokeStyle = "#00eaff"; ctx.lineWidth = 3;
@@ -101,7 +101,8 @@ if (img) {
   }
 
   if (cfg.camera && cfg.camera.browser_detection) {
-    startDetection();
+    const t = Number(cfg.camera.detect_threshold);
+    startDetection(Number.isFinite(t) && t > 0 && t < 1 ? t : 0.5);
   } else {
     if (canvas) canvas.hidden = true;
     setStatus('<span class="muted">Live (geen detectie)</span>');

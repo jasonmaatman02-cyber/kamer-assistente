@@ -75,6 +75,9 @@ DEFAULTS: dict = {
         "fps": 10,
         "jpeg_quality": 55,
         "browser_detection": False,     # run coco-ssd in the browser (heavy, off by default)
+        # min. zekerheid (0-1) om iemand als "persoon" te tellen. Lager = pikt
+        # ook wazig IR-/nachtbeeld op, maar meer valse detecties.
+        "detect_threshold": 0.5,
     },
     "dashboard": {
         "poll_now_playing_ms": 4000,
