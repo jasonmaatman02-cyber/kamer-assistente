@@ -61,3 +61,31 @@ def test_password_gate(client, monkeypatch):
     assert ok.get_json()["ok"] is True
     assert b"Inloggen" not in client.get("/settings").data      # nu de echte pagina
     assert client.post("/api/login", json={"password": "fout"}).status_code == 401
+
+
+def test_routines_crud(client, monkeypatch):
+    monkeypatch.setenv("DASHBOARD_PASSWORD", "x")
+    client.post("/api/login", json={"password": "x"})
+    # builtin routines altijd aanwezig
+    r = client.get("/api/routines").get_json()["routines"]
+    assert {x["id"] for x in r} >= {"morning", "bedtime", "party", "desk"}
+    # custom aanmaken
+    ok = client.post("/api/routines", json={
+        "id": "filmavond", "name": "Filmavond", "desc": "dim",
+        "steps": [{"action": "lamp", "lamp": 0, "mode": "desk"}],
+    })
+    assert ok.get_json()["success"] is True
+    ids = {x["id"] for x in client.get("/api/routines").get_json()["routines"]}
+    assert "filmavond" in ids
+    # ingebouwde id weigeren
+    assert client.post("/api/routines", json={"id": "morning", "name": "x"}).status_code == 400
+    # verwijderen
+    assert client.delete("/api/routines/filmavond").get_json()["success"] is True
+    ids = {x["id"] for x in client.get("/api/routines").get_json()["routines"]}
+    assert "filmavond" not in ids
+
+
+def test_routines_write_needs_password(client, monkeypatch):
+    monkeypatch.setenv("DASHBOARD_PASSWORD", "x")  # not logged in
+    assert client.post("/api/routines", json={"id": "a", "name": "b"}).status_code == 401
+    assert client.delete("/api/routines/a").status_code == 401

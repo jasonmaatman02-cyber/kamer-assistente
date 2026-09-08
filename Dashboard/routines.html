@@ -12,10 +12,26 @@
   <div class="main">
     <div class="topbar">
       <h3><i class="fa fa-bolt"></i> Routines</h3>
-      <a class="settings-btn" href="/settings"><i class="fa fa-gear"></i> Settings</a>
+      <button class="btn" id="new-routine"><i class="fa fa-plus"></i> Nieuwe routine</button>
     </div>
     <div class="grid" id="routines-grid">
       <p class="muted"><i class="fa fa-spinner fa-pulse"></i> laden…</p>
+    </div>
+
+    <div id="builder" hidden style="margin-top:24px">
+      <div class="card" style="max-width:640px">
+        <h3><i class="fa fa-wand-magic-sparkles"></i> Routine bouwen</h3>
+        <div class="field"><label>Naam</label><input type="text" id="r-name" placeholder="Filmavond"></div>
+        <div class="field"><label>Omschrijving</label><input type="text" id="r-desc" placeholder="Lampen dimmen, muziek aan"></div>
+        <label style="font-size:13px;color:#b0c7e4;font-weight:600">Stappen</label>
+        <div id="steps"></div>
+        <button class="btn small" id="add-step" style="margin-top:8px"><i class="fa fa-plus"></i> Stap</button>
+        <div class="settings-actions" style="margin-top:16px">
+          <button class="btn primary" id="save-routine">Opslaan</button>
+          <button class="btn" id="cancel-routine">Annuleren</button>
+          <span class="save-msg" id="r-msg"></span>
+        </div>
+      </div>
     </div>
   </div>
   <div class="toast" id="toast"></div>
