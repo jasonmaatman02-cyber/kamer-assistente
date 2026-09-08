@@ -14,6 +14,32 @@ const jpost = (url, body) => fetch(url, {
 }).then(r => r.json()).catch(() => ({}));
 const $ = id => document.getElementById(id);
 
+function notify(msg, isErr) {
+  let el = $("media-notice");
+  if (!el) {
+    el = document.createElement("div");
+    el.id = "media-notice";
+    el.style.cssText = "position:fixed;left:50%;bottom:20px;transform:translateX(-50%);z-index:999;max-width:90%;" +
+      "padding:12px 18px;border-radius:8px;background:#16202f;color:#d6e2f0;box-shadow:0 0 16px rgba(0,0,0,.5)";
+    document.body.appendChild(el);
+  }
+  el.style.border = "1px solid " + (isErr ? "#e74c3c" : "#00bfff");
+  el.textContent = msg;
+  el.hidden = false;
+  clearTimeout(el._t);
+  el._t = setTimeout(() => (el.hidden = true), 6000);
+}
+
+// speelactie + nette melding bij "geen apparaat"
+async function playAction(url, body) {
+  const r = await jpost(url, body);
+  if (r && r.success === false) {
+    notify(r.error || "Afspelen mislukt", true);
+    if (r.no_device) loadSpotifyDevices();
+  }
+  return r;
+}
+
 function msToTime(ms) {
   if (!ms) return "0:00";
   const s = Math.floor(ms / 1000);
@@ -54,7 +80,7 @@ async function fetchPlaylists() {
     box.appendChild(div);
     div.querySelector(".play-btn").addEventListener("click", async e => {
       e.stopPropagation();
-      await jpost("/api/play_playlist", { id: p.id });
+      await playAction("/api/play_playlist", { id: p.id });
       updateCurrentPlaying();
     });
     div.addEventListener("click", () => openPlaylistOverlay(p.id));
@@ -71,9 +97,11 @@ async function openPlaylistOverlay(playlistId) {
   if (!ok || !d || d.error) { list.innerHTML = `<p class="empty">${(d && d.error) || "Kan playlist niet laden"}</p>`; return; }
   $("overlay-thumb").src = d.thumbnail || FALLBACK_ART;
   $("overlay-title").textContent = d.name || "";
-  $("overlay-details").textContent = `${d.tracks.length} nummers`;
+  const tr = d.tracks || [];
+  $("overlay-details").textContent = `${tr.length} nummers`;
+  if (!tr.length) { list.innerHTML = '<p class="empty">Geen afspeelbare nummers in deze playlist.</p>'; return; }
   list.innerHTML = "";
-  d.tracks.forEach((track, i) => {
+  tr.forEach((track, i) => {
     const div = document.createElement("div");
     div.className = "track";
     div.innerHTML = `
@@ -81,7 +109,7 @@ async function openPlaylistOverlay(playlistId) {
       <div><span>${track.duration}</span><button class="track-play" data-id="${track.id}">▶</button></div>`;
     list.appendChild(div);
     div.querySelector(".track-play").addEventListener("click", async () => {
-      await jpost("/api/play_track", { track_id: track.id, playlist_id: overlay.dataset.playlistId });
+      await playAction("/api/play_track", { track_id: track.id, playlist_id: overlay.dataset.playlistId });
       updateCurrentPlaying();
     });
   });
@@ -258,7 +286,7 @@ searchInput.addEventListener("input", () => {
         <button class="play-track-btn" data-id="${track.id}">▶</button>`;
       div.querySelector(".play-track-btn").addEventListener("click", async e => {
         e.stopPropagation();
-        await jpost("/api/play_track", { track_id: track.id });
+        await playAction("/api/play_track", { track_id: track.id });
         updateCurrentPlaying();
       });
       results.appendChild(div);

@@ -560,17 +560,55 @@ def api_playlists():
         return jsonify({"error": str(exc)}), 503
 
 
+def _active_device_id(sp):
+    """Actief apparaat, anders het eerste beschikbare, anders None."""
+    try:
+        pb = sp.current_playback()
+        if pb and pb.get("device", {}).get("id"):
+            return pb["device"]["id"]
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        for d in sp.devices().get("devices", []):
+            if d.get("id"):
+                return d["id"]
+    except Exception:  # noqa: BLE001
+        pass
+    return None
+
+
+def _no_device_response():
+    return jsonify({
+        "success": False,
+        "no_device": True,
+        "error": "Geen actief Spotify-apparaat. Open Spotify op je telefoon, pc of box "
+                 "(speel daar even iets) en kies het apparaat in de lijst.",
+    }), 409
+
+
+def _play_error(exc):
+    msg = str(getattr(exc, "msg", "") or exc)
+    if "NO_ACTIVE_DEVICE" in msg or "No active device" in msg:
+        return _no_device_response()
+    if "Restriction violated" in msg:
+        return jsonify({"success": False, "error": "Spotify weigerde dit commando (geen premium-apparaat of niets speelt)."}), 403
+    return jsonify({"success": False, "error": msg}), 500
+
+
 @app.route("/api/play_playlist", methods=["POST"])
 def api_play_playlist():
+    pid = (request.get_json(silent=True) or {}).get("id")
+    if not pid:
+        return jsonify({"success": False, "error": "Geen playlist ID"}), 400
     try:
-        pid = (request.get_json(silent=True) or {}).get("id")
-        if not pid:
-            return jsonify({"success": False, "error": "Geen playlist ID"}), 400
         sp = _sp().sp
-        sp.start_playback(context_uri=f"spotify:playlist:{pid}")
-        return jsonify({"success": True, "name": sp.playlist(pid)["name"]})
+        dev = _active_device_id(sp)
+        if not dev:
+            return _no_device_response()
+        sp.start_playback(device_id=dev, context_uri=f"spotify:playlist:{pid}")
+        return jsonify({"success": True})
     except Exception as exc:  # noqa: BLE001
-        return jsonify({"success": False, "error": str(exc)}), 500
+        return _play_error(exc)
 
 
 @app.route("/api/playlist_tracks/<playlist_id>")
@@ -578,21 +616,35 @@ def api_playlist_tracks(playlist_id):
     try:
         sp = _sp().sp
         playlist = sp.playlist(playlist_id)
-        tracks = [{
-            "id": it["track"]["id"],
-            "name": it["track"]["name"],
-            "artist": ", ".join(a["name"] for a in it["track"]["artists"]),
-            "duration": f"{int(it['track']['duration_ms']/60000)}:{int((it['track']['duration_ms']%60000)/1000):02d}",
-            "thumbnail": it["track"]["album"]["images"][0]["url"] if it["track"]["album"]["images"] else "",
-            "uri": it["track"]["uri"],
-        } for it in playlist["tracks"]["items"] if it.get("track")]
-        return jsonify({
-            "name": playlist["name"],
-            "thumbnail": playlist["images"][0]["url"] if playlist["images"] else "",
-            "tracks": tracks,
-        })
     except Exception as exc:  # noqa: BLE001
         return jsonify({"error": str(exc)}), 500
+
+    tracks = []
+    for it in (playlist.get("tracks") or {}).get("items", []):
+        t = it.get("track") if isinstance(it, dict) else None
+        if not isinstance(t, dict) or not t.get("uri"):
+            continue
+        try:
+            ms = t.get("duration_ms", 0)
+            album = t.get("album") or {}
+            imgs = album.get("images") or []
+            tracks.append({
+                "id": t.get("id"),
+                "name": t.get("name", "?"),
+                "artist": ", ".join(a["name"] for a in t.get("artists", []) if a.get("name")),
+                "duration": f"{ms // 60000}:{(ms % 60000) // 1000:02d}",
+                "thumbnail": imgs[0]["url"] if imgs else "",
+                "uri": t["uri"],
+            })
+        except Exception:  # noqa: BLE001
+            continue
+
+    imgs = playlist.get("images") or []
+    return jsonify({
+        "name": playlist.get("name", "Playlist"),
+        "thumbnail": imgs[0]["url"] if imgs else "",
+        "tracks": tracks,
+    })
 
 
 @app.route("/api/last_played_playlists")
@@ -605,24 +657,30 @@ def api_last_played_playlists():
 
 @app.route("/api/play_track", methods=["POST"])
 def api_play_track():
+    data = request.get_json(silent=True) or {}
+    track_id = data.get("track_id")
+    playlist_id = data.get("playlist_id")
+    if not track_id:
+        return jsonify({"success": False, "error": "track_id ontbreekt"}), 400
     try:
-        data = request.get_json(silent=True) or {}
-        track_id = data.get("track_id")
-        playlist_id = data.get("playlist_id")
-        if not track_id:
-            return jsonify({"success": False, "error": "track_id ontbreekt"}), 400
         sp = _sp().sp
-        dev = sp.current_playback()
-        device_id = dev["device"]["id"] if dev and dev.get("device") else None
+        device_id = _active_device_id(sp)
+        if not device_id:
+            return _no_device_response()
         if playlist_id:
-            items = sp.playlist(playlist_id)["tracks"]["items"]
-            offset = next((i for i, it in enumerate(items) if it["track"]["id"] == track_id), 0)
-            sp.start_playback(device_id=device_id, context_uri=f"spotify:playlist:{playlist_id}", offset={"position": offset})
+            items = (sp.playlist(playlist_id).get("tracks") or {}).get("items", [])
+            offset = next(
+                (i for i, it in enumerate(items)
+                 if isinstance(it.get("track"), dict) and it["track"].get("id") == track_id),
+                0,
+            )
+            sp.start_playback(device_id=device_id, context_uri=f"spotify:playlist:{playlist_id}",
+                              offset={"position": offset})
         else:
             sp.start_playback(device_id=device_id, uris=[f"spotify:track:{track_id}"])
         return jsonify({"success": True, "track_id": track_id})
     except Exception as exc:  # noqa: BLE001
-        return jsonify({"success": False, "error": str(exc)}), 500
+        return _play_error(exc)
 
 
 @app.route("/api/search_spotify")
