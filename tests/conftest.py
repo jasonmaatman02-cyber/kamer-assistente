@@ -20,6 +20,7 @@ def _offline(monkeypatch, tmp_path):
     monkeypatch.setattr("config.settings.SETTINGS_FILE", tmp_path / "settings.json")
     monkeypatch.setattr("config.settings.ENV_FILE", tmp_path / ".env")
     monkeypatch.setattr("logic.notes.NOTES_FILE", tmp_path / "notes.json")
+    monkeypatch.setattr("logic.logger.BASE_LOG_DIR", tmp_path / "logs")  # niet in de echte data/logs schrijven
     for key in config.SECRET_KEYS:
         monkeypatch.delenv(key, raising=False)
     config.reload()

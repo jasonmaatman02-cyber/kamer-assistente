@@ -46,9 +46,12 @@ function renderSystem(d) {
 function renderServices(d) {
   if (!d) return;
   const label = { spotify: "Spotify", radio: "Radio", weer: "Weer", agenda: "Agenda" };
-  $("service-status").innerHTML = Object.entries(d).map(([k, v]) =>
-    `<p><i class="fa fa-circle ${v.ok ? "green" : "red"}"></i> ${label[k] || k}${v.error ? ` <span class="muted">(${v.error})</span>` : ""}</p>`
-  ).join("");
+  $("service-status").innerHTML = Object.entries(d).map(([k, v]) => {
+    const extra = v.needs_relink
+      ? ` <a href="/settings" style="color:#00bfff">opnieuw koppelen</a>`
+      : v.error ? ` <span class="muted">(${v.error})</span>` : "";
+    return `<p><i class="fa fa-circle ${v.ok ? "green" : "red"}"></i> ${label[k] || k}${extra}</p>`;
+  }).join("");
   const conn = $("conn-status");
   const down = Object.values(d).filter(v => !v.ok).length;
   if (conn) {

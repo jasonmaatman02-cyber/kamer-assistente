@@ -16,7 +16,13 @@
     </div>
     <div class="grid">
       <div class="card full" style="height:auto">
-        <h3><i class="fa fa-list"></i> Recente gebeurtenissen <span class="muted" id="date"></span></h3>
+        <h3><i class="fa fa-list"></i> Recente gebeurtenissen <span class="muted" id="date"></span>
+          <span class="muted" id="new-count" style="float:right"></span></h3>
+        <div class="field row" style="gap:10px;margin-bottom:10px;flex-wrap:wrap">
+          <select id="f-subject" style="min-width:140px"><option value="">Alle onderwerpen</option></select>
+          <input type="text" id="f-text" placeholder="zoeken…" style="flex:1;min-width:120px">
+          <button class="btn small" id="mark-read">Gezien</button>
+        </div>
         <table class="data-table">
           <thead><tr><th style="width:90px">Tijd</th><th style="width:140px">Onderwerp</th><th>Bericht</th></tr></thead>
           <tbody id="log-body"><tr><td colspan="3" class="muted">laden…</td></tr></tbody>

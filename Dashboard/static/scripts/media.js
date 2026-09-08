@@ -30,12 +30,29 @@ function notify(msg, isErr) {
   el._t = setTimeout(() => (el.hidden = true), 6000);
 }
 
+function relinkBanner() {
+  if (document.getElementById("sp-relink")) return;
+  const el = document.createElement("div");
+  el.id = "sp-relink";
+  el.className = "card";
+  el.style.cssText = "border:1px solid #ffa500;margin-bottom:16px";
+  el.innerHTML = `<p><i class="fa fa-triangle-exclamation orange"></i> Spotify-koppeling verlopen —
+    <a href="/settings" style="color:#00bfff">opnieuw koppelen via Settings</a>.</p>`;
+  const grid = document.querySelector(".grid");
+  grid.parentNode.insertBefore(el, grid);
+}
+function checkRelink(d) {
+  const s = JSON.stringify(d || "");
+  if (s.includes("invalid_grant") || s.includes("opnieuw koppelen") || (d && d.relink)) relinkBanner();
+}
+
 // speelactie + nette melding bij "geen apparaat"
 async function playAction(url, body) {
   const r = await jpost(url, body);
   if (r && r.success === false) {
     notify(r.error || "Afspelen mislukt", true);
     if (r.no_device) loadSpotifyDevices();
+    checkRelink(r);
   }
   return r;
 }
@@ -65,6 +82,7 @@ async function fetchPlaylists() {
   const box = document.querySelector(".playlists-container");
   const { ok, d } = await jget("/api/playlists").catch(() => ({ ok: false, d: null }));
   if (!ok || !Array.isArray(d)) {
+    checkRelink(d);
     box.innerHTML = `<p class="empty">${(d && d.error) ? "Spotify: " + d.error : "Spotify niet verbonden."}</p>`;
     return;
   }
