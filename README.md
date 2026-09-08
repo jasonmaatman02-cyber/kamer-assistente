@@ -117,14 +117,32 @@ Daarna doe je al het andere (Spotify, Tapo, OpenAI, Apple) via de UI.
 inloggen → de URL waar je op uitkomt terugplakken. Dat cachet het token in
 `.cache`.
 
+## Dashboard-tabs
+
+- **Overview** — systeemstatus, weer, agenda, now-playing, notities, snelknoppen
+  voor routines. Toont "Spotify opnieuw koppelen" als het token verlopen is.
+- **Devices** — lampen (aan/uit, helderheid, kleur, kleurtemp, standen), status
+  ververst elke 10 s zodat spraak/andere tabs zichtbaar blijven.
+- **Media** — Spotify (zoeken, playlists, afspelen) + radio.
+- **Environment** — weer + (lokale) thermostaat.
+- **Routines** — 4 ingebouwde + zelf routines bouwen (stappen: lamp/radio/
+  spotify/say).
+- **Notes & Alarms** — notities + handmatige wekker (tijd + welke routine er
+  afgaat); blijft staan na een herstart.
+- **AI Chat** — antwoorden streamen token-voor-token, geschiedenis in de browser.
+- **Notifications** — logboek met onderwerp-filter, zoekbalk en "gezien".
+- **Settings** — alles uit `settings.json` + de inloggegevens (achter mailslot).
+
 ## Architectuur
 
 ```
 config/          .env + settings.json, met defaults (config.get / config.set)
 ai/              llm.py · tts.py · stt.py  — backend-onafhankelijke AI-helpers
-Dashboard/       Flask-app; services worden lazy geladen zodat één storing
-                 niet het hele dashboard sloopt
+Dashboard/       Flask-app in blueprints (auth · system · media · devices ·
+backend/         camera · secrets · routines · pages); services lazy geladen
+                 zodat één storing niet het hele dashboard sloopt
 logic/ voice/ devices/ sound_system/ scheduler/ weer/   — losse modules
+deploy/          systemd-service + setup-pi.sh / update-pi.sh
 ```
 
 ## Bekende beperkingen
