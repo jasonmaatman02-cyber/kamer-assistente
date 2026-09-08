@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Smart Home - Inloggen</title>
+  <link rel="stylesheet" href="/static/styles/main.css">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
+</head>
+<body style="justify-content:center;align-items:center">
+  <div class="card" style="max-width:340px;width:90%">
+    <h3><i class="fa fa-lock"></i> Inloggen</h3>
+    <p class="muted">Dit deel van het dashboard is met een wachtwoord beveiligd.</p>
+    <div class="field">
+      <label for="pw">Wachtwoord</label>
+      <input type="password" id="pw" autofocus>
+    </div>
+    <button class="btn primary" id="go" style="width:100%">Inloggen</button>
+    <p class="save-msg" id="msg"></p>
+  </div>
+  <script>
+    const pw = document.getElementById("pw");
+    const msg = document.getElementById("msg");
+    async function login() {
+      msg.textContent = "…"; msg.className = "save-msg";
+      try {
+        const r = await fetch("/api/login", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ password: pw.value }),
+        }).then(r => r.json());
+        if (r.ok) { location.reload(); }
+        else { msg.textContent = r.error || "Mislukt"; msg.className = "save-msg err"; }
+      } catch (e) { msg.textContent = "Netwerkfout"; msg.className = "save-msg err"; }
+    }
+    document.getElementById("go").addEventListener("click", login);
+    pw.addEventListener("keydown", e => { if (e.key === "Enter") login(); });
+  </script>
+</body>
+</html>

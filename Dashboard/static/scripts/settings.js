@@ -9,7 +9,7 @@ const SCHEMA = [
         hint: "ollama = gratis & lokaal. openai vereist OPENAI_API_KEY in .env." },
       { path: "ollama_url", label: "Ollama URL", type: "text" },
       { path: "ollama_model", label: "Ollama model", type: "text",
-        hint: "Klein model voor de Pi, bv. llama3.2:3b of qwen2.5:1.5b. Eerst 'ollama pull <model>'." },
+        hint: "bv. qwen2.5:1.5b (snel op een Pi) of llama3.2:3b (slimmer). Eerst 'ollama pull <model>'." },
       { path: "openai_model", label: "OpenAI model", type: "text" },
       { path: "temperature", label: "Temperature", type: "number", step: "0.1", min: 0, max: 2 },
       { path: "max_history", label: "Max gespreksregels", type: "number", min: 2, max: 100 },
@@ -239,6 +239,8 @@ load();
 let UNLOCK_TOKEN = null;
 
 const SECRET_GROUPS = [
+  { title: "Dashboard-beveiliging", icon: "fa-shield-halved", keys: [
+      ["DASHBOARD_PASSWORD", "Wachtwoord (leeg = geen slot; beschermt camera/chat/routines/settings)", "password"]] },
   { title: "OpenAI (optioneel)", icon: "fa-robot", keys: [["OPENAI_API_KEY", "API-key", "password"]] },
   { title: "Lampen (Tapo)", icon: "fa-lightbulb", keys: [
       ["TAPO_USER", "TP-Link e-mail", "text"], ["TAPO_PASSWORD", "TP-Link wachtwoord", "password"]] },

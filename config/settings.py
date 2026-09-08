@@ -224,6 +224,7 @@ ENV_FILE = BASE_DIR / ".env"
 # Secrets the dashboard's Settings tab may edit. The "public" ones (emails,
 # hostnames) are shown in full; the rest are only ever shown masked.
 SECRET_KEYS = [
+    "DASHBOARD_PASSWORD",
     "OPENAI_API_KEY",
     "TAPO_USER", "TAPO_PASSWORD",
     "EMAIL_ADDRESS", "EMAIL_PASSWORD", "SMTP_SERVER", "SMTP_PORT", "RECEIVER",
