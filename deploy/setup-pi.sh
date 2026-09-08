@@ -24,7 +24,8 @@ sudo apt-get install -y --no-install-recommends \
   libvlc-dev vlc \
   espeak-ng \
   portaudio19-dev libopenblas0 \
-  logrotate
+  logrotate \
+  avahi-daemon   # -> pi bereikbaar op <hostname>.local, geen vast IP nodig
 
 # ---------------------------------------------------------------- python venv
 if [ ! -d .venv ]; then
@@ -95,6 +96,6 @@ echo "==> klaar. Status:"
 sudo systemctl --no-pager --lines=8 status kamer-dashboard.service || true
 echo
 IP="$(hostname -I 2>/dev/null | awk '{print $1}')"
-echo "Dashboard:  http://${IP:-<pi-ip>}:5000"
+echo "Dashboard:  http://${IP:-<pi-ip>}:5000   of   http://$(hostname).local:5000"
 echo "Logs:       journalctl -u kamer-dashboard -f"
 echo "Herstart:   sudo systemctl restart kamer-dashboard"
