@@ -32,8 +32,8 @@ noisereduce>=3,<4
 # --- Optional: only if you use OpenAI as a fallback ---
 openai>=2,<3
 
-# --- Optional wake-word engine ---
-pvporcupine>=1.9,<2
+# --- Optional wake-word engine (v3 API: pvporcupine.create(access_key=...)) ---
+pvporcupine>=3,<4
 
 # --- Raspberry Pi camera (install on the Pi only) ---
 # picamera2
