@@ -104,11 +104,14 @@ class SpotifyDJ:
                 p = self.sp.playlist(ctx["uri"])
             except Exception:  # noqa: BLE001
                 continue
+            if not isinstance(p, dict) or not p.get("id"):
+                continue
+            images = p.get("images") or []
             out.append({
-                "naam": p["name"],
+                "naam": p.get("name", "Naamloos"),
                 "id": p["id"],
-                "tracks_count": p["tracks"]["total"],
-                "thumbnail": p["images"][0]["url"] if p.get("images") else None,
+                "tracks_count": (p.get("tracks") or {}).get("total", 0),
+                "thumbnail": images[0]["url"] if images else None,
             })
             if len(out) >= limit:
                 break
@@ -126,18 +129,22 @@ class SpotifyDJ:
             raise SpotifyError(str(exc)) from exc
         out = []
         for p in results.get("items", []):
+            if not isinstance(p, dict) or not p.get("id"):
+                continue  # Spotify geeft soms lege/onvolledige playlist-items terug
+            images = p.get("images") or []
+            tracks = p.get("tracks") or {}
             duur = ""
             if with_duration:
                 try:
                     pt = self.sp.playlist_tracks(p["id"])
-                    ms = sum(t["track"]["duration_ms"] for t in pt["items"] if t.get("track"))
+                    ms = sum(t["track"]["duration_ms"] for t in pt.get("items", []) if t.get("track"))
                     duur = f"{ms // 60000}m {(ms % 60000) // 1000}s"
                 except Exception:  # noqa: BLE001
                     duur = ""
             out.append({
-                "naam": p["name"],
-                "tracks_count": p["tracks"]["total"],
-                "thumbnail": p["images"][0]["url"] if p.get("images") else None,
+                "naam": p.get("name", "Naamloos"),
+                "tracks_count": tracks.get("total", 0),
+                "thumbnail": images[0]["url"] if images else None,
                 "duur": duur,
                 "id": p["id"],
             })
