@@ -29,10 +29,14 @@
 
       <div class="card">
         <h3><i class="fa fa-clock"></i> Wekker</h3>
-        <p class="muted">De wekker wordt gezet via de spraakassistent (bedtijd-routine).
-          Handmatig zetten vanaf het dashboard komt hier later.</p>
+        <p class="muted" id="alarm-status">laden…</p>
         <div class="field"><label for="alarm">Tijd</label><input type="time" id="alarm"></div>
-        <button class="btn" id="alarm-set" disabled>Binnenkort</button>
+        <div class="field"><label for="alarm-routine">Routine bij afgaan</label>
+          <select id="alarm-routine"></select></div>
+        <div class="field row">
+          <button class="btn primary" id="alarm-set">Zetten</button>
+          <button class="btn" id="alarm-clear">Wissen</button>
+        </div>
       </div>
     </div>
   </div>

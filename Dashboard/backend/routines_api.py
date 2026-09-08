@@ -1,4 +1,4 @@
-"""Routines, notes and the AI chat endpoint."""
+"""Routines, notes and the manual dashboard alarm."""
 import asyncio
 
 from flask import Blueprint, jsonify, request
@@ -6,6 +6,8 @@ from flask import Blueprint, jsonify, request
 import config
 from Dashboard.backend import services as S
 from Dashboard.backend.auth import require_password
+from logic.logger import log
+from scheduler.alarm import AlarmScheduler
 
 routines_bp = Blueprint("routines", __name__)
 
@@ -73,32 +75,94 @@ def _run_step(step):
         speak(step.get("text", ""))
 
 
+def _run_routine(rid):
+    """Voer een routine uit (ingebouwd of custom). Gooit bij een onbekende id."""
+    if rid == "morning":
+        from scheduler.routines import morning_routine
+
+        morning_routine()
+    elif rid == "bedtime":
+        from scheduler.routines import bedtime_routine
+
+        bedtime_routine()
+    elif rid in ("party", "desk"):
+        lamp = S.lamp(S.lamp_ip(0))
+        asyncio.run(lamp.party() if rid == "party" else lamp.bureau())
+    else:
+        custom = {r["id"]: r for r in (config.get("routines", []) or [])}
+        if rid not in custom:
+            raise ValueError(f"onbekende routine: {rid}")
+        for step in custom[rid].get("steps", []):
+            _run_step(step)
+
+
 @routines_bp.route("/api/routines/run", methods=["POST"])
 @require_password
 def routines_run():
     rid = (request.get_json(silent=True) or {}).get("id")
     try:
-        if rid == "morning":
-            from scheduler.routines import morning_routine
-
-            morning_routine()
-        elif rid == "bedtime":
-            from scheduler.routines import bedtime_routine
-
-            bedtime_routine()
-        elif rid in ("party", "desk"):
-            ip = S.lamp_ip(0)
-            lamp = S.lamp(ip)
-            asyncio.run(lamp.party() if rid == "party" else lamp.bureau())
-        else:
-            custom = {r["id"]: r for r in (config.get("routines", []) or [])}
-            if rid not in custom:
-                return jsonify({"success": False, "error": "onbekende routine"}), 400
-            for step in custom[rid].get("steps", []):
-                _run_step(step)
+        _run_routine(rid)
         return jsonify({"success": True})
+    except ValueError as exc:
+        return jsonify({"success": False, "error": str(exc)}), 400
     except Exception as exc:  # noqa: BLE001
         return jsonify({"success": False, "error": str(exc)}), 500
+
+
+# ---- Wekker (handmatig vanaf het dashboard) ----
+_ALL_IDS = {r["id"] for r in _BUILTIN}
+
+
+def _alarm_fire():
+    rid = config.get("alarm.routine", "morning")
+    log("Alarm", f"Dashboard-wekker gaat af -> routine '{rid}'")
+    try:
+        _run_routine(rid)
+    except Exception as exc:  # noqa: BLE001
+        log("Alarm", f"Wekker-routine mislukte: {exc}")
+
+
+_alarm = AlarmScheduler(callback=_alarm_fire)
+
+# Her-arm een bewaarde wekker na een herstart van de service.
+_saved = config.get("alarm.time")
+if _saved:
+    _alarm.set_alarm(_saved)
+
+
+@routines_bp.route("/api/alarm", methods=["GET"])
+def alarm_get():
+    dt = _alarm.alarm_time
+    return jsonify({
+        "set": dt is not None,
+        "time": dt.strftime("%H:%M") if dt else config.get("alarm.time"),
+        "when": dt.strftime("%Y-%m-%d %H:%M") if dt else None,
+        "routine": config.get("alarm.routine", "morning"),
+    })
+
+
+@routines_bp.route("/api/alarm", methods=["POST"])
+@require_password
+def alarm_set():
+    data = request.get_json(silent=True) or {}
+    time_str = str(data.get("time", "")).strip()
+    routine = str(data.get("routine", "morning")).strip() or "morning"
+    if routine not in _ALL_IDS and routine not in {r.get("id") for r in (config.get("routines", []) or [])}:
+        return jsonify({"success": False, "error": "onbekende routine"}), 400
+    dt = _alarm.set_alarm(time_str)
+    if dt is None:
+        return jsonify({"success": False, "error": "tijd niet te lezen (gebruik bv. 07:30)"}), 400
+    config.set("alarm.time", dt.strftime("%H:%M"))
+    config.set("alarm.routine", routine)
+    return jsonify({"success": True, "when": dt.strftime("%Y-%m-%d %H:%M")})
+
+
+@routines_bp.route("/api/alarm", methods=["DELETE"])
+@require_password
+def alarm_clear():
+    _alarm.cancel_alarm()
+    config.set("alarm.time", "")
+    return jsonify({"success": True})
 
 
 # ---- Notes ----

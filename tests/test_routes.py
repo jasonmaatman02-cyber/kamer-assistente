@@ -9,7 +9,7 @@ READ_ONLY = [
     "/api/weather", "/api/calendar_today", "/api/overview", "/api/notes",
     "/api/routines", "/api/lamps", "/api/thermostat", "/api/camera_status",
     "/api/secrets", "/api/auth/status", "/api/current_playing",
-    "/api/radio_stations",
+    "/api/radio_stations", "/api/alarm",
 ]
 
 
@@ -89,3 +89,20 @@ def test_routines_write_needs_password(client, monkeypatch):
     monkeypatch.setenv("DASHBOARD_PASSWORD", "x")  # not logged in
     assert client.post("/api/routines", json={"id": "a", "name": "b"}).status_code == 401
     assert client.delete("/api/routines/a").status_code == 401
+
+
+def test_alarm_set_and_clear(client):
+    from Dashboard.backend import routines_api
+
+    r = client.post("/api/alarm", json={"time": "07:30", "routine": "morning"})
+    assert r.get_json()["success"] is True
+    got = client.get("/api/alarm").get_json()
+    assert got["set"] is True and got["time"] == "07:30" and got["routine"] == "morning"
+    assert routines_api._alarm.alarm_time is not None
+
+    assert client.post("/api/alarm", json={"time": "onzin"}).status_code == 400
+    assert client.post("/api/alarm", json={"time": "07:30", "routine": "nope"}).status_code == 400
+
+    assert client.delete("/api/alarm").get_json()["success"] is True
+    assert client.get("/api/alarm").get_json()["set"] is False
+    routines_api._alarm.cancel_alarm()

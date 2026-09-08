@@ -83,6 +83,7 @@ DEFAULTS: dict = {
         "poll_agenda_ms": 300000,
         "poll_system_ms": 10000,
     },
+    "alarm": {"time": "", "routine": "morning"},   # handmatige dashboard-wekker
     "devices": {
         "lamps": [
             {"name": "Bedroom Lamp", "ip": "192.168.2.15"},

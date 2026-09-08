@@ -43,3 +43,41 @@ async function add() {
 document.getElementById("note-add").addEventListener("click", add);
 document.getElementById("note-input").addEventListener("keydown", e => { if (e.key === "Enter") add(); });
 load();
+
+// ---- Wekker ----
+const aStatus = document.getElementById("alarm-status");
+const aTime = document.getElementById("alarm");
+const aRoutine = document.getElementById("alarm-routine");
+
+async function loadAlarm() {
+  try {
+    const [al, rl] = await Promise.all([j("/api/alarm"), j("/api/routines")]);
+    aRoutine.innerHTML = (rl.routines || []).map(r =>
+      `<option value="${r.id}" ${r.id === al.routine ? "selected" : ""}>${r.name}</option>`).join("");
+    if (al.set) {
+      aStatus.textContent = `Staat aan: ${al.when} → ${al.routine}`;
+      aStatus.className = "";
+    } else {
+      aStatus.textContent = "Geen wekker gezet.";
+      aStatus.className = "muted";
+    }
+    if (al.time) aTime.value = al.time;
+  } catch (e) { aStatus.textContent = "Kon wekker-status niet laden."; }
+}
+
+document.getElementById("alarm-set").addEventListener("click", async () => {
+  if (!aTime.value) { toast("Kies een tijd", true); return; }
+  const r = await j("/api/alarm", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ time: aTime.value, routine: aRoutine.value }),
+  });
+  if (r.success) { toast(`Wekker gezet: ${r.when}`); loadAlarm(); }
+  else toast(r.error || "Mislukt", true);
+});
+
+document.getElementById("alarm-clear").addEventListener("click", async () => {
+  const r = await j("/api/alarm", { method: "DELETE" });
+  if (r.success) { toast("Wekker gewist"); loadAlarm(); }
+});
+
+loadAlarm();
