@@ -1,0 +1,175 @@
+/* ===== Switch / Checkbox ===== */
+.switch {
+  position: relative;
+  display: inline-block;
+  width: 52px;
+  height: 28px;
+}
+
+.switch input {
+  opacity: 0;
+  width: 0; height: 0;
+}
+
+.slider {
+  position: absolute;
+  cursor: pointer;
+  top: 0; left: 0; right: 0; bottom: 0;
+  background-color: #151c28;
+  transition: 0.4s;
+  border-radius: 34px;
+  box-shadow: inset 0 0 6px rgba(0, 0, 0, 0.4);
+}
+
+.slider.round { border-radius: 34px; }
+
+.slider:before {
+  position: absolute;
+  content: "";
+  height: 24px; width: 24px;
+  left: 2px; bottom: 2px;
+  background-color: #6e98bb;
+  transition: 0.4s;
+  border-radius: 50%;
+  box-shadow: 0 0 8px #6e98bb;
+}
+
+input:checked + .slider {
+  background-color: #0f3057;
+}
+
+input:checked + .slider:before {
+  transform: translateX(24px);
+  background-color: #00ffff;
+}
+
+/* ===== Buttons ===== */
+.settings-btn {
+  background: #0f3057;
+  border: none;
+  color: #fff;
+  padding: 6px 14px;
+  border-radius: 8px;
+  cursor: pointer;
+  font-weight: 600;
+  font-size: 14px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
+  transition: all 0.25s ease;
+}
+
+.settings-btn:hover {
+  background: #1c4e7a;
+  transform: scale(1.05);
+  box-shadow: 0 0 12px rgba(0, 0, 0, 0.4);
+}
+
+/* ===== Color Picker ===== */
+.device input[type=color] {
+  width: 100%;
+  height: 40px;
+  border-radius: 6px;
+  border: rgb(10, 14, 20);
+  cursor: pointer;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
+  transition: all 0.3s ease;
+}
+
+.device input[type=color]:hover {
+  box-shadow: 0 0 12px #6e98bb;
+}
+
+/* ===== Sliders ===== */
+.device input[type=range] {
+  -webkit-appearance: none;
+  width: 100%;
+  height: 8px;
+  background: #151c28;
+  border-radius: 6px;
+  outline: none;
+  box-shadow: inset 0 0 6px rgba(0, 0, 0, 0.4);
+}
+
+.device input[type=range]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 20px; height: 20px;
+  background: #6e98bb;
+  border-radius: 50%;
+  cursor: pointer;
+  box-shadow: 0 0 8px #6e98bb;
+  transition: transform 0.2s ease, background 0.2s ease;
+}
+
+.device input[type=range]::-webkit-slider-thumb:hover {
+  transform: scale(1.3);
+  background: #00ffff;
+}
+
+.device input[type=range]::-moz-range-thumb {
+  width: 20px; height: 20px;
+  background: #6e98bb;
+  border-radius: 50%;
+  cursor: pointer;
+  box-shadow: 0 0 8px #6e98bb;
+}
+
+.slider-preview {
+  display: inline-block;
+  margin-left: 10px;
+  font-weight: bold;
+  color: #1a253d;
+}
+
+/* ===== Input & Select Styling ===== */
+.device .extras input[type=number],
+.device .extras select {
+  padding: 5px 8px;
+  border-radius: 6px;
+  border: none;
+  background: #0d1b2a;
+  color: #d6e2f0;
+  font-weight: 500;
+  outline: none;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
+  transition: all 0.3s ease;
+}
+
+.device .extras input[type=number]:hover,
+.device .extras select:hover {
+  box-shadow: 0 0 12px #6e98bb;
+}
+
+.device .extras input[type=number]:focus,
+.device .extras select:focus {
+  box-shadow: 0 0 16px #6e98bb;
+}
+
+/* ===== Dropdown Heaters ===== */
+.heater {
+  background: #0d1b2a;
+  padding: 12px;
+  border-radius: 8px;
+  margin: 8px 0;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
+}
+
+details summary {
+  cursor: pointer;
+  color: #c6c6c6;
+  font-weight: 600;
+  margin-bottom: 8px;
+}
+
+details[open] summary {
+  color: #7b7b7b;
+}
+
+/* ===== Device Card ===== */
+
+.timer-display {
+  font-weight: bold;
+  color: #00ffff;
+  margin-left: 10px;
+  display: inline-block;
+  min-width: 80px;
+  text-align: center;
+}

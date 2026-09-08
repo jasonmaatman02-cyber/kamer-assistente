@@ -1,0 +1,24 @@
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Smart Home - Routines</title>
+  <link rel="stylesheet" href="/static/styles/main.css">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
+</head>
+<body>
+  {% include '_sidebar.html' %}
+  <div class="main">
+    <div class="topbar">
+      <h3><i class="fa fa-bolt"></i> Routines</h3>
+      <a class="settings-btn" href="/settings"><i class="fa fa-gear"></i> Settings</a>
+    </div>
+    <div class="grid" id="routines-grid">
+      <p class="muted"><i class="fa fa-spinner fa-pulse"></i> laden…</p>
+    </div>
+  </div>
+  <div class="toast" id="toast"></div>
+  <script src="/static/scripts/routines.js"></script>
+</body>
+</html>

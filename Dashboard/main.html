@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Smart Home Dashboard</title>
+  <link rel="stylesheet" href="/static/styles/main.css">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
+</head>
+<body>
+  {% include '_sidebar.html' %}
+
+  <div class="main">
+    <div class="topbar">
+      <h3><i class="fa fa-gauge-high"></i> System Overview</h3>
+      <a class="settings-btn" href="/settings"><i class="fa fa-gear"></i> Settings</a>
+    </div>
+
+    <div class="grid">
+      <!-- System Status -->
+      <div class="card">
+        <h3><i class="fa fa-server"></i> System Status</h3>
+        <div id="sys-stats"><p class="muted"><i class="fa fa-spinner fa-pulse"></i> laden…</p></div>
+      </div>
+
+      <!-- Services -->
+      <div class="card">
+        <h3><i class="fa fa-plug"></i> Services</h3>
+        <div id="service-status"><p class="muted"><i class="fa fa-spinner fa-pulse"></i> laden…</p></div>
+      </div>
+
+      <!-- Weather -->
+      <div class="card">
+        <h3><i class="fa fa-cloud-sun"></i> Current Weather</h3>
+        <p id="w-title" class="location muted">laden…</p>
+        <p id="w-temp" class="temp"></p>
+        <p id="w-condition"></p>
+        <p id="w-humidity"></p>
+        <p id="w-wind"></p>
+      </div>
+
+      <!-- Now Playing -->
+      <div class="card now-playing-card">
+        <div class="now-playing-header"><i class="fa fa-music"></i><h3>Now Playing</h3></div>
+        <div class="now-playing-info">
+          <img id="np-thumb" src="/static/images/radio.png" class="album-cover">
+          <div class="track-details">
+            <h4 id="np-title">No music playing</h4>
+            <p id="np-artist">–</p>
+          </div>
+        </div>
+        <div class="progress-container">
+          <span id="np-current-time">0:00</span>
+          <input type="range" id="np-progress" value="0" min="0" max="100">
+          <span id="np-duration">--:--</span>
+        </div>
+        <div class="controls">
+          <button id="prev-btn"><i class="fa fa-backward"></i></button>
+          <button id="np-play-pause"><i class="fa fa-play"></i></button>
+          <button id="next-btn"><i class="fa fa-forward"></i></button>
+        </div>
+      </div>
+
+      <!-- Quick Actions -->
+      <div class="card">
+        <h3><i class="fa fa-bolt"></i> Quick Actions</h3>
+        <div class="actions">
+          <button data-routine="morning"><i class="fa fa-sun"></i> Morning</button>
+          <button data-routine="bedtime"><i class="fa fa-moon"></i> Evening</button>
+          <button data-routine="desk"><i class="fa fa-lightbulb"></i> Desk</button>
+          <button data-routine="party"><i class="fa fa-champagne-glasses"></i> Party</button>
+        </div>
+        <p id="qa-msg" class="muted"></p>
+      </div>
+
+      <!-- Schedule -->
+      <div class="card">
+        <h3><i class="fa fa-calendar"></i> Today's Schedule</h3>
+        <div class="agenda-list"><p class="muted"><i class="fa fa-spinner fa-pulse"></i> Agenda laden…</p></div>
+      </div>
+
+      <!-- Notes -->
+      <div class="card wide">
+        <h3><i class="fa fa-note-sticky"></i> Recent Notes</h3>
+        <div id="notes-list"><p class="muted">laden…</p></div>
+        <div class="field row" style="margin-top:10px">
+          <input type="text" id="note-input" placeholder="Nieuwe notitie…">
+          <button class="btn small" id="note-add">Toevoegen</button>
+        </div>
+      </div>
+
+      <div class="card">
+        <h3><i class="fa fa-bell"></i> Recent Notifications</h3>
+        <p class="muted">Notificaties verschijnen op de <a class="card-link" href="/notifications" style="color:#00bfff">Notifications</a>-pagina.</p>
+      </div>
+    </div>
+  </div>
+  <script src="/static/scripts/home.js"></script>
+</body>
+</html>

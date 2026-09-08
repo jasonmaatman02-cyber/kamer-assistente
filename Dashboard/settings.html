@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Smart Home - Settings</title>
+  <link rel="stylesheet" href="/static/styles/main.css">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
+</head>
+<body>
+  {% include '_sidebar.html' %}
+
+  <div class="main">
+    <div class="topbar">
+      <h3><i class="fa fa-gear"></i> Settings</h3>
+      <div>
+        <button class="btn small" id="reload-btn"><i class="fa fa-rotate"></i> Herladen</button>
+        <button class="btn primary" id="save-btn"><i class="fa fa-floppy-disk"></i> Opslaan</button>
+      </div>
+    </div>
+
+    <p class="muted" style="padding-top:14px">
+      Wijzigingen worden opgeslagen in <code>settings.json</code> en direct toegepast.
+      Voor secrets (API-keys, wachtwoorden) gebruik je het <code>.env</code>-bestand.
+    </p>
+
+    <form id="settings-form" class="settings-grid"></form>
+
+    <div class="settings-actions">
+      <button class="btn primary" id="save-btn2"><i class="fa fa-floppy-disk"></i> Opslaan</button>
+      <span class="save-msg" id="save-msg"></span>
+    </div>
+  </div>
+
+  <div class="toast" id="toast"></div>
+  <script src="/static/scripts/settings.js"></script>
+</body>
+</html>

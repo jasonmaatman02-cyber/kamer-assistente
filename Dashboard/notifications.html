@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Smart Home - Notifications</title>
+  <link rel="stylesheet" href="/static/styles/main.css">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
+</head>
+<body>
+  {% include '_sidebar.html' %}
+  <div class="main">
+    <div class="topbar">
+      <h3><i class="fa fa-envelope"></i> Notifications</h3>
+      <button class="btn small" id="refresh"><i class="fa fa-rotate"></i> Verversen</button>
+    </div>
+    <div class="grid">
+      <div class="card full" style="height:auto">
+        <h3><i class="fa fa-list"></i> Recente gebeurtenissen <span class="muted" id="date"></span></h3>
+        <table class="data-table">
+          <thead><tr><th style="width:90px">Tijd</th><th style="width:140px">Onderwerp</th><th>Bericht</th></tr></thead>
+          <tbody id="log-body"><tr><td colspan="3" class="muted">laden…</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+  <script src="/static/scripts/notifications.js"></script>
+</body>
+</html>

@@ -1,0 +1,84 @@
+# Kamerproject — slimme kamer + dashboard
+
+Draait op een Raspberry Pi 4B (4 GB). De hele AI-stack is **gratis en lokaal**:
+chat via Ollama, spraak via Piper, transcriptie via faster-whisper, weer via
+Open-Meteo, internet zoeken via DuckDuckGo. OpenAI is alleen nog een optionele
+fallback.
+
+## ⚠️ Eerst: roteer je secrets
+
+`keys/API_keys.py` stond vol met echte wachtwoorden en API-keys in platte tekst.
+Die zijn nu verplaatst naar `.env` (git-ignored), maar ze zijn al gelekt —
+**vervang ze allemaal**:
+
+| Key | Waar |
+|-----|------|
+| OpenAI API key | https://platform.openai.com/api-keys → oude intrekken |
+| Tapo / TP-Link wachtwoord | TP-Link account — en gebruik **niet** je Google-wachtwoord |
+| Gmail app-password | https://myaccount.google.com/apppasswords → oude verwijderen |
+| Apple app-wachtwoorden (2×) | https://account.apple.com → Inloggen & beveiliging |
+| Spotify client secret | https://developer.spotify.com/dashboard → "Rotate secret" |
+| WeatherAPI / Serper keys | niet meer nodig (gratis providers), mag je intrekken |
+
+Zet de nieuwe waarden in `.env` (kopieer `.env.example` als basis).
+`.cache` (Spotify-token) is ook git-ignored; verwijderen forceert opnieuw
+inloggen.
+
+## Installatie op de Pi
+
+```bash
+sudo apt install python3-venv libvlc-dev vlc espeak-ng portaudio19-dev libopenblas0
+python3 -m venv .venv && source .venv/bin/activate
+pip install -r requirements.txt          # of requirements-dashboard.txt
+
+# Ollama (lokale LLM)
+curl -fsSL https://ollama.com/install.sh | sh
+ollama pull llama3.2:3b                   # ~2 GB, past in 4 GB RAM
+```
+
+Piper- en faster-whisper-modellen worden bij het eerste gebruik automatisch
+gedownload naar `models/` resp. de HuggingFace-cache.
+
+## Starten
+
+```bash
+python main.py dashboard     # alleen het webdashboard  → http://<pi-ip>:5000
+python main.py assistant     # alleen de spraakassistent
+python main.py all           # allebei
+```
+
+Herstart de server na code-wijzigingen (Ctrl+C en opnieuw starten) — een oude
+draaiende instantie serveert nog de oude pagina's.
+
+## Instellingen
+
+Alles is in te stellen via de **Settings**-tab in het dashboard (schrijft naar
+`settings.json`). Handig voor de Pi / trage wifi:
+
+- **Camera**: resolutie 640×360, FPS 8–10, JPEG-kwaliteit 40–60. "Personen­
+  detectie in browser" staat uit (scheelt ~4 MB download + CPU).
+- **Dashboard verversen**: hogere ms-waarden = minder verkeer en minder
+  Spotify-API-calls. De Overview-pagina haalt alles in één `/api/overview`-call op.
+- **AI → Ollama model**: kleiner model = sneller. `llama3.2:3b` of
+  `qwen2.5:1.5b` zijn redelijk op een Pi 4B (reken op enkele tokens/sec).
+
+Secrets horen **niet** in `settings.json` — die blijven in `.env`.
+
+## Architectuur
+
+```
+config/          .env + settings.json, met defaults (config.get / config.set)
+ai/              llm.py · tts.py · stt.py  — backend-onafhankelijke AI-helpers
+Dashboard/       Flask-app; services worden lazy geladen zodat één storing
+                 niet het hele dashboard sloopt
+logic/ voice/ devices/ sound_system/ scheduler/ weer/   — losse modules
+```
+
+## Bekende beperkingen
+
+- Een lokale LLM op een Pi 4B is traag. Voor snelle spraakbediening kan een
+  klein model (1–3B) of OpenAI als backend beter zijn.
+- De `Devices`-pagina is deels nog statische UI voor extra lampen/thermostaten.
+- Losse experiment-bestanden (`temp.py`, `camera.py`, `Dashboard/basic.html`,
+  `static/scripts/script.js`, `navigator.js`) worden nergens gebruikt en mogen
+  weg.

@@ -1,0 +1,33 @@
+# --- Secrets & local machine config (NEVER commit) ---
+.env
+.cache
+settings.json
+
+# --- Python ---
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+
+# --- Editor / tooling ---
+.VSCodeCounter/
+.vscode/
+.cursor/
+.claude/
+.idea/
+
+# --- Stray nested repo (not part of this project) ---
+kamerAI-/
+
+# --- Runtime artifacts ---
+data/logs/
+logs.zip
+*.wav
+*.mp3
+
+# --- Downloaded models (fetched on first run) ---
+*.onnx
+*.onnx.json
+models/

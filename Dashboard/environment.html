@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Smart Home - Environment</title>
+  <link rel="stylesheet" href="/static/styles/main.css">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
+</head>
+<body>
+  {% include '_sidebar.html' %}
+  <div class="main">
+    <div class="topbar">
+      <h3><i class="fa fa-globe"></i> Environment</h3>
+      <a class="settings-btn" href="/settings"><i class="fa fa-gear"></i> Settings</a>
+    </div>
+
+    <div class="grid">
+      <div class="card wide">
+        <h3><i class="fa fa-cloud-sun"></i> Weer nu — <span id="w-city">…</span></h3>
+        <p style="font-size:42px;font-weight:bold;color:#fff" id="w-temp">–</p>
+        <p id="w-condition" class="muted" style="font-size:18px"></p>
+        <div class="stat-row"><span>Wind</span><span id="w-wind">–</span></div>
+        <div class="stat-row"><span>Luchtvochtigheid</span><span id="w-humidity">–</span></div>
+        <p class="muted" id="w-updated"></p>
+      </div>
+
+      <div class="card">
+        <h3><i class="fa fa-location-dot"></i> Locatie</h3>
+        <div class="field"><label for="city">Stad</label>
+          <input type="text" id="city" placeholder="Arnhem"></div>
+        <button class="btn" id="save-city">Opslaan &amp; verversen</button>
+        <p class="muted" id="city-msg"></p>
+      </div>
+
+      <div class="card">
+        <h3><i class="fa fa-temperature-half"></i> Thermostaat</h3>
+        <p class="muted">Doeltemperatuur (lokaal, nog niet gekoppeld aan hardware).</p>
+        <div class="slider-container">
+          <span>Doel</span>
+          <input type="range" id="thermo" min="15" max="30" value="20">
+          <span id="thermo-val">20°C</span>
+        </div>
+      </div>
+    </div>
+  </div>
+  <script src="/static/scripts/environment.js"></script>
+</body>
+</html>

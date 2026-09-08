@@ -1,0 +1,13 @@
+# Dashboard-only install (no torch, no whisper). Good for a quick Pi setup
+# where the voice assistant runs elsewhere or not at all.
+flask
+psutil
+requests
+python-dotenv
+tapo
+spotipy
+python-vlc
+opencv-python
+python-dateutil
+caldav
+ollama          # only needed for the AI Chat tab

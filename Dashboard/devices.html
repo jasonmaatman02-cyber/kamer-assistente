@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Smart Home - Devices</title>
+  <link rel="stylesheet" href="/static/styles/main.css">
+  <link rel="stylesheet" href="/static/styles/devices.css">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
+</head>
+<body>
+  {% include '_sidebar.html' %}
+
+  <div class="main">
+    <div class="topbar">
+      <h3><i class="fa fa-microchip"></i> Devices</h3>
+      <a class="settings-btn" href="/settings"><i class="fa fa-gear"></i> Lampen beheren</a>
+    </div>
+
+    <div class="grid devices-grid" id="lamps-grid">
+      <p class="muted"><i class="fa fa-spinner fa-pulse"></i> lampen laden…</p>
+    </div>
+
+    <div class="grid" style="margin-top:20px">
+      <div class="card device">
+        <h3><i class="fa fa-temperature-half"></i> Thermostaat <span class="muted">(demo)</span></h3>
+        <p class="muted">Nog niet gekoppeld aan hardware.</p>
+        <div class="slider-container">
+          <span>Doel</span>
+          <input type="range" min="15" max="30" value="20" id="thermo">
+          <span id="thermo-val">20°C</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="toast" id="toast"></div>
+  <script src="/static/scripts/devices.js"></script>
+</body>
+</html>

@@ -1,0 +1,36 @@
+# Full install: dashboard + voice assistant + free/offline AI stack.
+# On a Raspberry Pi you can also do the lighter dashboard-only install:
+#     pip install -r requirements-dashboard.txt
+
+# --- Web dashboard ---
+flask
+psutil
+requests
+python-dotenv
+
+# --- Smart devices / media ---
+tapo
+spotipy
+python-vlc
+opencv-python
+python-dateutil
+caldav
+
+# --- Free / offline AI stack ---
+ollama            # chat LLM (needs the Ollama daemon + a pulled model)
+piper-tts         # text-to-speech (Dutch, offline)
+faster-whisper    # speech-to-text (offline, light)
+ddgs              # DuckDuckGo web search (no API key)
+sounddevice
+scipy
+numpy
+pygame
+
+# --- Optional: only if you use OpenAI as a fallback ---
+openai
+
+# --- Optional wake-word engine ---
+pvporcupine
+
+# --- Raspberry Pi camera (install on the Pi only) ---
+# picamera2

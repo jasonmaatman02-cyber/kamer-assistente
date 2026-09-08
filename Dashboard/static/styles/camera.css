@@ -1,0 +1,22 @@
+.camera-container {
+  position: relative; /* nodig voor absolute positioning van canvas */
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  height: 800px;
+}
+
+.camera-feed {
+  width: 1000px;
+  height: auto;
+  border-radius: 10px;
+}
+
+.camera-container .canvas {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 1000px; /* match de video */
+  height: auto;   /* match de video */
+  pointer-events: none; /* zodat muis events door de canvas gaan */
+}

@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Live Person Detectie</title>
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@3.9.0"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd"></script>
+  <style>
+    body {
+      margin: 0;
+      background: #000;
+      overflow: hidden;
+    }
+    video, canvas {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100vw;
+      height: 100vh;
+      object-fit: cover;
+    }
+  </style>
+</head>
+<body>
+  <video id="video" autoplay playsinline muted></video>
+  <canvas id="canvas"></canvas>
+
+  <script>
+    const video = document.getElementById('video');
+    const canvas = document.getElementById('canvas');
+    const ctx = canvas.getContext('2d');
+    let model;
+
+    let personDetected = false;
+    let lastSeen = 0;
+    let lampCooldown = false;
+    const COOLDOWN_AAN = 10000; // 10 sec na aanzetten niet weer uit
+    const COOLDOWN_UIT = 10000; // 10 sec niemand zien voor uit
+
+    async function setupCamera() {
+    const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+    video.srcObject = stream;
+    return new Promise(resolve => {
+        video.onloadedmetadata = () => resolve(video);
+    });
+    }
+
+    async function runDetection() {
+    model = await cocoSsd.load();
+    await setupCamera();
+    video.play();
+    detectFrame();
+    }
+
+    async function detectFrame() {
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+    const predictions = await model.detect(video);
+
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    let foundPerson = false;
+
+    predictions.forEach(pred => {
+        if (pred.class === 'person' && pred.score > 0.6) {
+        foundPerson = true;
+        const [x, y, w, h] = pred.bbox;
+        ctx.strokeStyle = 'lime';
+        ctx.lineWidth = 3;
+        ctx.strokeRect(x, y, w, h);
+        }
+    });
+
+    const now = Date.now();
+
+    // === Persoon gedetecteerd ===
+    if (foundPerson) {
+        lastSeen = now;
+
+        // Alleen API-call als dit de eerste keer is
+        if (!personDetected) {
+        personDetected = true;
+        lampCooldown = true;
+        fetch('/api/lamp/on', { method: 'PUT' });
+        console.log('👤 Persoon gezien → lamp aan');
+
+        // Na 10 seconden mag hij weer uitgezet worden
+        setTimeout(() => {
+            lampCooldown = false;
+        }, COOLDOWN_AAN);
+        }
+    }
+
+    // === Niemand meer in beeld ===
+    if (!foundPerson && personDetected && !lampCooldown) {
+        // Check of het al 10 seconden geleden is sinds laatste persoon
+        if (now - lastSeen > COOLDOWN_UIT) {
+        personDetected = false;
+        fetch('/api/lamp/off', { method: 'PUT' });
+        console.log('🚫 Niemand 10s gezien → lamp uit');
+        }
+    }
+
+    requestAnimationFrame(detectFrame);
+    }
+
+    runDetection();
+
+  </script>
+</body>
+</html>

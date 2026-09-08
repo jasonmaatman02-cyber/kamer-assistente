@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Smart Home - Media</title>
+  <link rel="stylesheet" href="/static/styles/main.css">
+  <link rel="stylesheet" href="/static/styles/media.css">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
+</head>
+<body>
+  {% include '_sidebar.html' %}
+
+  <!-- Main -->
+  <div class="main">
+    <div class="topbar">
+      <h3><i class="fa fa-music"></i> Media Center</h3>
+      <a class="settings-btn" href="/settings"><i class="fa fa-gear"></i> Settings</a>
+    </div>
+    <div class="grid">
+        <div class="card wide now-playing">
+            <h3><i class="fa fa-music"></i> Now Playing</h3>
+
+            <div class="now-playing-container">
+                <img src="static/images/radio.png" class="album-art" id="np-thumb">
+                <div class="track-info">
+                    <h4 id="np-title">-</h4>
+                    <p id="np-artist">-</p>
+                    <div class="progress">
+                        <span id="np-current-time">0:00</span>
+                        <input type="range" id="np-progress" min="0" max="100" value="0">
+                        <span id="np-duration">0:00</span>
+                    </div>
+                    <div class="controls">
+                      <button id="prev-btn"><i class="fa-solid fa-backward"></i></button>
+                      <button id="np-play-pause"><i class="fa-solid fa-play"></i></button>
+                      <button id="next-btn"><i class="fa-solid fa-forward"></i></button>
+                    </div>
+                    <div class="volume-container">
+                      <i class="fa-solid fa-volume-low"></i>
+                      <input type="range" id="volume-slider" min="0" max="100" value="50">
+                      <i class="fa-solid fa-volume-high"></i>
+                    </div>
+
+                </div>
+            </div>
+        </div>
+
+        <div class="card">
+          <h3>Search Spotify</h3>
+          <input type="text" id="spotify-search" placeholder="Zoek nummers...">
+          <div id="search-results" class="search-results"></div>
+        </div>
+
+        <div class="card long">
+          <h3>Playlists</h3>
+          <div class="playlists-container"></div>
+        </div>
+        <div class="card long">
+          <h3>radio stations</h3>
+          <div class="radio-container"></div>
+        </div>
+        <div class="card">
+          <h3>🎧 Spotify-apparaten</h3>
+          <div id="devices-menu"></div>
+          <button id="connect-device-btn" disabled>Connect</button>
+        </div>
+
+    </div>
+   </div>
+  </div>
+
+          <!-- Overlay voor playlist detail -->
+  <div id="playlist-overlay" class="overlay hidden">
+    <div class="overlay-content">
+      <button class="close-overlay">×</button>
+      <div class="playlist-header">
+        <img id="overlay-thumb" src="" class="overlay-thumb">
+        <div class="overlay-info">
+          <h2 id="overlay-title"></h2>
+          <p id="overlay-details"></p>
+        </div>
+      </div>
+      <div class="tracks-list" id="tracks-list"></div>
+    </div>
+  </div>
+
+  <script src="static/scripts/media.js"></script>
+</body>
+</html>
