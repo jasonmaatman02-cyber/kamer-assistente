@@ -67,6 +67,8 @@ DEFAULTS: dict = {
     },
     "camera": {
         "enabled": True,
+        # "auto" -> USB/opencv, val terug op de Pi-lintkabelcamera (picamera2)
+        "backend": "auto",
         "device_index": 0,
         "width": 640,
         "height": 360,

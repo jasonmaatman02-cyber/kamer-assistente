@@ -24,29 +24,66 @@ class _Camera:
         self._stop = threading.Event()
         self.error = None
 
+    def _open_source(self, w, h, fps):
+        """(read_fn, close_fn) voor de beste beschikbare camera-backend.
+
+        read_fn -> (ok, frame_bgr). Gooit een uitzondering als de backend niet
+        kan openen; de caller probeert dan de volgende.
+        """
+        backend = config.get("camera.backend", "auto")
+        errs = []
+
+        if backend in ("auto", "opencv"):
+            try:
+                import cv2
+
+                idx = config.get("camera.device_index", 0)
+                cap = cv2.VideoCapture(idx)
+                cap.set(cv2.CAP_PROP_FRAME_WIDTH, w)
+                cap.set(cv2.CAP_PROP_FRAME_HEIGHT, h)
+                cap.set(cv2.CAP_PROP_FPS, fps)
+                if not cap.isOpened():
+                    cap.release()
+                    raise RuntimeError(f"opencv: camera {idx} gaat niet open")
+                return cap.read, cap.release
+            except Exception as exc:  # noqa: BLE001
+                errs.append(str(exc))
+
+        if backend in ("auto", "picamera2"):
+            try:
+                from picamera2 import Picamera2
+
+                pc = Picamera2()
+                # 'RGB888' levert bij picamera2 juist BGR-geheugenvolgorde op,
+                # precies wat cv2.imencode verwacht — niet omdraaien.
+                pc.configure(pc.create_video_configuration(
+                    main={"size": (w, h), "format": "RGB888"}))
+                pc.start()
+                return (lambda: (True, pc.capture_array())), (lambda: (pc.stop(), pc.close()))
+            except Exception as exc:  # noqa: BLE001
+                errs.append(str(exc))
+
+        raise RuntimeError("; ".join(errs) or f"onbekende camera.backend {backend!r}")
+
     def _run(self):
         try:
             import cv2
         except Exception as exc:  # noqa: BLE001
             self.error = f"opencv ontbreekt: {exc}"
             return
-        idx = config.get("camera.device_index", 0)
-        cap = cv2.VideoCapture(idx)
-        cap.set(cv2.CAP_PROP_FRAME_WIDTH, config.get("camera.width", 640))
-        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, config.get("camera.height", 360))
-        cap.set(cv2.CAP_PROP_FPS, config.get("camera.fps", 10))
-        if not cap.isOpened():
-            self.error = f"camera {idx} kan niet worden geopend"
-            cap.release()
+        w, h = config.get("camera.width", 640), config.get("camera.height", 360)
+        try:
+            read, close = self._open_source(w, h, config.get("camera.fps", 10))
+        except Exception as exc:  # noqa: BLE001
+            self.error = f"camera kan niet worden geopend ({exc})"
             return
         self.error = None
-        w, h = config.get("camera.width", 640), config.get("camera.height", 360)
         try:
             while not self._stop.is_set():
                 q = int(config.get("camera.jpeg_quality", 55))
                 delay = 1.0 / max(1, config.get("camera.fps", 10))
-                ok, frame = cap.read()
-                if not ok:
+                ok, frame = read()
+                if not ok or frame is None:
                     self.error = "geen beeld van camera"
                     break
                 frame = cv2.resize(frame, (w, h))
@@ -57,7 +94,10 @@ class _Camera:
                         self._latest = (buf.tobytes(), self._seq)
                 time.sleep(delay)
         finally:
-            cap.release()
+            try:
+                close()
+            except Exception:  # noqa: BLE001
+                pass
             with self._lock:
                 self._latest = None
 
