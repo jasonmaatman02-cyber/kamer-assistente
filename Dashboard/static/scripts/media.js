@@ -49,7 +49,7 @@ async function fetchPlaylists() {
     div.className = "playlist-item";
     div.innerHTML = `
       <img src="${p.thumbnail || FALLBACK_ART}" class="playlist-thumb" onerror="this.src='${FALLBACK_ART}'">
-      <div class="playlist-info"><h4>${p.naam || "?"}</h4><p>${p.tracks_count ?? "?"} nummers • ${p.duur || ""}</p></div>
+      <div class="playlist-info"><h4>${p.naam || "?"}</h4><p>${[p.tracks_count ? p.tracks_count + " nummers" : "", p.duur].filter(Boolean).join(" • ") || " "}</p></div>
       <button class="play-btn" data-id="${p.id}"><i class="fa fa-play"></i></button>`;
     box.appendChild(div);
     div.querySelector(".play-btn").addEventListener("click", async e => {
