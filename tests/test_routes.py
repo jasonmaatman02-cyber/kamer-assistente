@@ -9,7 +9,7 @@ READ_ONLY = [
     "/api/weather", "/api/calendar_today", "/api/overview", "/api/notes",
     "/api/routines", "/api/lamps", "/api/thermostat", "/api/camera_status",
     "/api/secrets", "/api/auth/status", "/api/current_playing",
-    "/api/radio_stations", "/api/alarm",
+    "/api/radio_stations", "/api/alarm", "/api/speedtest",
 ]
 
 
@@ -89,6 +89,37 @@ def test_routines_write_needs_password(client, monkeypatch):
     monkeypatch.setenv("DASHBOARD_PASSWORD", "x")  # not logged in
     assert client.post("/api/routines", json={"id": "a", "name": "b"}).status_code == 401
     assert client.delete("/api/routines/a").status_code == 401
+
+
+def test_speedtest_flow(client, monkeypatch):
+    import time as _t
+
+    from Dashboard.backend import system_api
+
+    with system_api._speed_lock:
+        system_api._speed.update(status="idle", result=None, error=None)
+
+    def fake_run():
+        with system_api._speed_lock:
+            system_api._speed.update(status="done", error=None, result={
+                "down_mbps": 42.0, "up_mbps": 9.1, "ping_ms": 12.0,
+                "server": "Test", "tested_at": "2026-09-08 21:00"})
+
+    monkeypatch.setattr(system_api, "_run_speedtest", fake_run)
+
+    assert client.get("/api/speedtest").get_json()["status"] == "idle"
+    assert client.post("/api/speedtest").get_json()["status"] == "running"
+    for _ in range(40):
+        if client.get("/api/speedtest").get_json()["status"] == "done":
+            break
+        _t.sleep(0.05)
+    r = client.get("/api/speedtest").get_json()
+    assert r["status"] == "done" and r["result"]["down_mbps"] == 42.0
+
+
+def test_speedtest_start_needs_password(client, monkeypatch):
+    monkeypatch.setenv("DASHBOARD_PASSWORD", "x")  # not logged in
+    assert client.post("/api/speedtest").status_code == 401
 
 
 def test_alarm_set_and_clear(client):

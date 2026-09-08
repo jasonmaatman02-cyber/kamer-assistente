@@ -161,6 +161,44 @@ async function addNote() {
 $("note-add").addEventListener("click", addNote);
 $("note-input").addEventListener("keydown", e => { if (e.key === "Enter") { e.preventDefault(); addNote(); } });
 
+// ---------- wifi speed test (on-demand) ----------
+let speedPoll = null;
+function renderSpeed(d) {
+  const body = $("speed-body"), btn = $("speed-run");
+  if (d.status === "running") {
+    body.innerHTML = '<p class="muted"><i class="fa fa-spinner fa-pulse"></i> Meten… (~30s, gebruikt data)</p>';
+    btn.disabled = true;
+    return;
+  }
+  btn.disabled = false;
+  if (d.status === "error") {
+    body.innerHTML = `<p class="empty">Mislukt: ${d.error || "?"}</p>`;
+  } else if (d.result) {
+    const r = d.result;
+    body.innerHTML =
+      `<div class="stat-row"><span>Download</span><span>${r.down_mbps} Mbit/s</span></div>` +
+      `<div class="stat-row"><span>Upload</span><span>${r.up_mbps} Mbit/s</span></div>` +
+      `<div class="stat-row"><span>Ping</span><span>${r.ping_ms} ms</span></div>` +
+      `<p class="muted" style="margin-top:6px">${[r.server, r.tested_at].filter(Boolean).join(" • ")}</p>`;
+  } else {
+    body.innerHTML = '<p class="muted">Nog niet getest.</p>';
+  }
+}
+async function pollSpeed() {
+  try {
+    const d = await jget("/api/speedtest");
+    renderSpeed(d);
+    if (d.status === "running" && !speedPoll) speedPoll = setInterval(pollSpeed, 2000);
+    if (d.status !== "running" && speedPoll) { clearInterval(speedPoll); speedPoll = null; }
+  } catch (e) {}
+}
+$("speed-run").addEventListener("click", async () => {
+  $("speed-run").disabled = true;
+  try { await jpost("/api/speedtest"); } catch (e) {}
+  pollSpeed();
+});
+pollSpeed();
+
 // ---------- schedule ----------
 (async function init() {
   let cfg = { poll: {} };

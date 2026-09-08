@@ -1,8 +1,15 @@
 """System / settings / overview endpoints."""
+import json
+import shutil
+import subprocess
+import threading
+import time
+
 from flask import Blueprint, jsonify, request
 
 import config
 from Dashboard.backend import services as S
+from Dashboard.backend.auth import require_password
 
 system_bp = Blueprint("system", __name__)
 
@@ -68,6 +75,91 @@ def overview():
         "now_playing": S.current_playing(),
         "notes": list_all_notes(),
     })
+
+
+# --------------------------------------------------------------------------- #
+# Wifi-snelheidstest (on-demand; verbruikt echte data, dus nooit automatisch)
+# --------------------------------------------------------------------------- #
+_speed = {"status": "idle", "result": None, "error": None}  # idle|running|done|error
+_speed_lock = threading.Lock()
+
+
+def _speedtest_ookla():
+    """Officiële Ookla CLI als die op PATH staat (betrouwbaarder dan de lib).
+    Geeft None terug als 'ie er niet is of het niet de Ookla-versie is."""
+    exe = shutil.which("speedtest")
+    if not exe:
+        return None
+    try:
+        ver = subprocess.run([exe, "--version"], capture_output=True, text=True, timeout=10)
+        if "Ookla" not in (ver.stdout + ver.stderr):
+            return None  # dit is de python 'speedtest-cli', niet de Ookla CLI
+        out = subprocess.run(
+            [exe, "--format=json", "--progress=no", "--accept-license", "--accept-gdpr"],
+            capture_output=True, text=True, timeout=180,
+        )
+        data = json.loads(out.stdout or "{}")
+        if "download" not in data:
+            return None
+        return {
+            "down_mbps": round(data["download"]["bandwidth"] * 8 / 1e6, 1),
+            "up_mbps": round(data["upload"]["bandwidth"] * 8 / 1e6, 1),
+            "ping_ms": round(data.get("ping", {}).get("latency", 0), 1),
+            "server": (data.get("server") or {}).get("name"),
+            "engine": "ookla",
+        }
+    except Exception:  # noqa: BLE001 - val terug op de python-lib
+        return None
+
+
+def _speedtest_python():
+    import speedtest  # pip: speedtest-cli
+
+    s = speedtest.Speedtest(secure=True)
+    s.get_best_server()
+    down = s.download() / 1e6
+    up = s.upload(pre_allocate=False) / 1e6
+    r = s.results.dict()
+    return {
+        "down_mbps": round(down, 1),
+        "up_mbps": round(up, 1),
+        "ping_ms": round(r.get("ping", 0), 1),
+        "server": (r.get("server") or {}).get("sponsor"),
+        "engine": "speedtest-cli",
+    }
+
+
+def _run_speedtest():
+    t0 = time.time()
+    try:
+        res = _speedtest_ookla() or _speedtest_python()
+        res["took_s"] = round(time.time() - t0, 1)
+        res["tested_at"] = time.strftime("%Y-%m-%d %H:%M")
+        with _speed_lock:
+            _speed.update(status="done", result=res, error=None)
+    except Exception as exc:  # noqa: BLE001
+        msg = str(exc) or exc.__class__.__name__
+        if "No module named" in msg:
+            msg = "speedtest-cli niet geïnstalleerd — draai deploy/update-pi.sh"
+        with _speed_lock:
+            _speed.update(status="error", error=msg)
+
+
+@system_bp.route("/api/speedtest", methods=["GET"])
+def speedtest_status():
+    with _speed_lock:
+        return jsonify(dict(_speed))
+
+
+@system_bp.route("/api/speedtest", methods=["POST"])
+@require_password
+def speedtest_start():
+    with _speed_lock:
+        if _speed["status"] == "running":
+            return jsonify({"status": "running"})
+        _speed.update(status="running", error=None)
+    threading.Thread(target=_run_speedtest, daemon=True, name="speedtest").start()
+    return jsonify({"status": "running"})
 
 
 @system_bp.route("/api/notifications")
