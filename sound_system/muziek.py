@@ -8,6 +8,14 @@ from logic.logger import log
 
 _CACHE_PATH = str(Path(__file__).resolve().parent.parent / ".cache")
 
+# Één plek voor de scope — de OAuth-koppelknop en SpotifyDJ MOETEN gelijk zijn,
+# anders vindt spotipy het gecachte token "te weinig" en probeert opnieuw in te
+# loggen (wat op een headless Pi de request kan laten hangen).
+SPOTIFY_SCOPE = (
+    "user-read-playback-state user-modify-playback-state "
+    "user-read-recently-played playlist-read-private"
+)
+
 
 class SpotifyError(RuntimeError):
     pass
@@ -15,10 +23,7 @@ class SpotifyError(RuntimeError):
 
 class SpotifyDJ:
     def __init__(self):
-        self.scope = (
-            "user-read-playback-state user-modify-playback-state "
-            "user-read-recently-played playlist-read-private"
-        )
+        self.scope = SPOTIFY_SCOPE
         self.sp = spotipy.Spotify(auth_manager=SpotifyOAuth(
             client_id=config.secret("SPOTIFY_CLIENT_ID"),
             client_secret=config.secret("SPOTIFY_CLIENT_SECRET"),
@@ -111,11 +116,14 @@ class SpotifyDJ:
 
     def playlists_info(self, limit=40, with_duration=False):
         """Playlist-overzicht. ``with_duration`` doet een extra API-call per
-        playlist voor de totale speelduur — standaard uit (scheelt N calls)."""
+        playlist voor de totale speelduur — standaard uit (scheelt N calls).
+        Gooit een SpotifyError zodat de UI de reden kan tonen."""
         try:
             results = self.sp.current_user_playlists(limit=limit)
-        except Exception:  # noqa: BLE001
-            return []
+        except spotipy.SpotifyException as exc:
+            raise SpotifyError(exc.msg or str(exc)) from exc
+        except Exception as exc:  # noqa: BLE001
+            raise SpotifyError(str(exc)) from exc
         out = []
         for p in results.get("items", []):
             duur = ""

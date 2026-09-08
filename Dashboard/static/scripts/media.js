@@ -120,6 +120,9 @@ async function loadRadioStations() {
 
 // ---------------------------------------------------------------- player
 let isPlaying = false, currentType = null;
+// Local playhead so the bar moves elke ~250ms i.p.v. te springen per poll.
+const playhead = { pos: 0, dur: 0, playing: false, at: 0 };
+
 async function updateCurrentPlaying() {
   const { d: data } = await jget("/api/current_playing").catch(() => ({ d: { type: "none" } }));
   const thumb = $("np-thumb"), title = $("np-title"), artist = $("np-artist");
@@ -131,11 +134,16 @@ async function updateCurrentPlaying() {
     thumb.src = data.thumbnail || FALLBACK_ART;
     title.textContent = data.name;
     artist.textContent = `${data.artist} • ${data.album}`;
-    progress.max = data.duration_ms; progress.value = data.progress_ms;
-    curT.textContent = msToTime(data.progress_ms);
-    dur.textContent = msToTime(data.duration_ms);
+    progress.max = data.duration_ms;
     isPlaying = data.is_playing;
     btn.innerHTML = isPlaying ? "⏸" : "▶";
+    dur.textContent = msToTime(data.duration_ms);
+    // resync de lokale playhead met de server
+    playhead.pos = data.progress_ms || 0;
+    playhead.dur = data.duration_ms || 0;
+    playhead.playing = !!data.is_playing;
+    playhead.at = Date.now();
+    if (!isSeeking) { progress.value = playhead.pos; curT.textContent = msToTime(playhead.pos); }
   } else if (data.type === "radio") {
     const key = (data.station || "").toLowerCase().replace(/\s/g, "");
     thumb.src = radioLogos[key] || FALLBACK_ART;
@@ -145,14 +153,24 @@ async function updateCurrentPlaying() {
     curT.textContent = data.elapsed ? msToTime(data.elapsed * 1000) : "Live";
     dur.textContent = "";
     btn.innerHTML = "⏸"; isPlaying = true;
+    playhead.playing = false;
     if (volumeSlider && data.volume !== undefined) volumeSlider.value = data.volume;
   } else {
     title.textContent = "–"; artist.textContent = "–";
     thumb.src = FALLBACK_ART;
     progress.value = 0; curT.textContent = "0:00"; dur.textContent = "0:00";
     btn.innerHTML = "▶"; isPlaying = false;
+    playhead.playing = false;
   }
 }
+
+// vloeiende voortgang tussen polls door
+setInterval(() => {
+  if (!playhead.playing || isSeeking || currentType !== "spotify") return;
+  const est = Math.min(playhead.pos + (Date.now() - playhead.at), playhead.dur);
+  $("np-progress").value = est;
+  $("np-current-time").textContent = msToTime(est);
+}, 250);
 
 // seek
 const progress = $("np-progress");

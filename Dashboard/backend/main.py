@@ -253,6 +253,7 @@ def api_secrets_set():
 def _spotify_oauth():
     from spotipy.oauth2 import SpotifyOAuth
     from pathlib import Path
+    from sound_system.muziek import SPOTIFY_SCOPE
 
     cid = config.secret("SPOTIFY_CLIENT_ID")
     csecret = config.secret("SPOTIFY_CLIENT_SECRET")
@@ -262,9 +263,9 @@ def _spotify_oauth():
         client_id=cid,
         client_secret=csecret,
         redirect_uri=config.secret("SPOTIFY_REDIRECT_URI", "http://127.0.0.1:8000/callback"),
-        scope="user-read-playback-state user-modify-playback-state "
-              "user-read-recently-played playlist-read-private",
+        scope=SPOTIFY_SCOPE,
         open_browser=False,
+        show_dialog=True,   # altijd de volledige scope-lijst laten bevestigen
         cache_path=str(Path(__file__).resolve().parent.parent.parent / ".cache"),
     )
 
