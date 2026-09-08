@@ -20,9 +20,35 @@ from logic.gpt_handler import verwerk_input
 from logic.logger import log
 from voice.tts_output import speak
 
+try:
+    from voice.porcupine_wake import detect_wakeword_porcupine, porcupine_ready
+except Exception:  # noqa: BLE001 - pvporcupine/sounddevice ontbreekt
+    detect_wakeword_porcupine = None
+
+    def porcupine_ready() -> bool:
+        return False
+
+
 SAMPLERATE = 16000
 WAKE_DURATION = 2.0
 COMMAND_DURATION = 5.0
+PORCUPINE_LISTEN_TIMEOUT = 20.0
+
+_wake_backend_warned = False
+
+
+def _use_porcupine() -> bool:
+    """Kies Porcupine als de config 't toestaat en alles aanwezig is."""
+    global _wake_backend_warned
+    mode = config.get("assistant.wake_backend", "auto")
+    if mode == "whisper" or detect_wakeword_porcupine is None:
+        return False
+    if porcupine_ready():
+        return True
+    if mode == "porcupine" and not _wake_backend_warned:
+        log("Error", "wake_backend=porcupine maar niet klaar (key/.ppn?) — val terug op whisper")
+        _wake_backend_warned = True
+    return False
 
 
 class NoMicError(RuntimeError):
@@ -69,11 +95,20 @@ def whisperrr():
         time.sleep(5)  # uitgezet via Settings — rustig blijven pollen
         return
     try:
-        wake_text = stt.transcribe_array(_record(WAKE_DURATION), SAMPLERATE)
-        if wake_text:
-            print(f"Gehoord: {wake_text}")
-        if not _is_wake(wake_text):
-            return
+        if _use_porcupine():
+            try:
+                if not detect_wakeword_porcupine(timeout=PORCUPINE_LISTEN_TIMEOUT):
+                    return
+            except Exception as exc:  # noqa: BLE001 - val terug op whisper deze ronde
+                log("Error", f"Porcupine-fout, whisper-fallback: {exc}")
+                if not _is_wake(stt.transcribe_array(_record(WAKE_DURATION), SAMPLERATE)):
+                    return
+        else:
+            wake_text = stt.transcribe_array(_record(WAKE_DURATION), SAMPLERATE)
+            if wake_text:
+                print(f"Gehoord: {wake_text}")
+            if not _is_wake(wake_text):
+                return
 
         print("Wake word herkend, neem opdracht op...")
         speak("Zeg het eens.")

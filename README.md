@@ -83,6 +83,16 @@ Alles is in te stellen via de **Settings**-tab in het dashboard (schrijft naar
 - **AI → Ollama model**: `qwen2.5:1.5b` (standaard) is snel genoeg op een
   Pi 4B. Groter (`llama3.2:3b`) = slimmer maar trager.
 
+### Wake word (optioneel)
+
+Standaard luistert de assistent door elke ~2 s een stukje met whisper te
+transcriberen en op de wake-woorden te matchen — werkt, maar kost constant CPU.
+Lichter is **Porcupine**: `pip install pvporcupine`, haal een gratis AccessKey op
+bij [console.picovoice.ai](https://console.picovoice.ai/), zet die als
+`PICOVOICE_ACCESS_KEY` (Settings → Inloggegevens) en leg een Nederlandse
+"hey kamer" `.ppn` neer als `voice/hey_kamer.ppn`. `assistant.wake_backend`
+staat op `auto` en schakelt dan vanzelf over; `whisper`/`porcupine` forceren.
+
 ### Inloggegevens via de Settings-tab
 
 API-keys en wachtwoorden (OpenAI, Tapo, Gmail, Apple, Spotify, …) vul je in

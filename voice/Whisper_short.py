@@ -6,7 +6,7 @@ import time
 
 import config
 from ai import stt
-from voice.Whisper import _is_wake, _record, NoMicError, SAMPLERATE
+from voice.Whisper import _is_wake, _record, _use_porcupine, NoMicError, SAMPLERATE
 
 COMMAND_DURATION = 5.0
 
@@ -36,7 +36,7 @@ def wacht_op_wakeword(timeout: float | None = 30) -> bool:
 
 def shortwhisper() -> str | None:
     found = False
-    if detect_wakeword_porcupine is not None:
+    if _use_porcupine():
         try:
             found = detect_wakeword_porcupine(timeout=30)
         except Exception as exc:  # noqa: BLE001

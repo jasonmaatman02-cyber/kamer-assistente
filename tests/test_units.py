@@ -119,3 +119,25 @@ def test_verwerk_input_stream_tool(monkeypatch):
     monkeypatch.setitem(gpt_handler.functies_dispatcher, "lees_notities", lambda: "Geen notities.")
     out = "".join(gpt_handler.verwerk_input_stream("lees mijn notities"))
     assert out == "Geen notities."
+
+
+# --- wake-word backend keuze ---------------------------------------------- #
+def test_use_porcupine_respects_config(monkeypatch):
+    pytest.importorskip("sounddevice")
+    import config
+    from voice import Whisper
+
+    # pvporcupine kan ontbreken in CI -> forceer een detector zodat we de
+    # config-logica testen, niet de lib-aanwezigheid
+    monkeypatch.setattr(Whisper, "detect_wakeword_porcupine", lambda *a, **k: True)
+
+    monkeypatch.setattr(Whisper, "porcupine_ready", lambda: True)
+    config.set("assistant.wake_backend", "whisper")
+    assert Whisper._use_porcupine() is False          # expliciet uitgezet
+    config.set("assistant.wake_backend", "auto")
+    assert Whisper._use_porcupine() is True           # klaar + auto
+
+    monkeypatch.setattr(Whisper, "porcupine_ready", lambda: False)
+    assert Whisper._use_porcupine() is False          # niet klaar -> whisper
+    config.set("assistant.wake_backend", "porcupine")
+    assert Whisper._use_porcupine() is False          # geforceerd maar niet klaar

@@ -99,6 +99,12 @@ DEFAULTS: dict = {
     "assistant": {
         "name": "Kamer",
         "wake_words": ["hey kamer", "hey kammer", "hey camera", "hoi kamer"],
+        # "auto"  -> Porcupine als 't kan (pvporcupine + .ppn + PICOVOICE_ACCESS_KEY),
+        #            anders whisper-transcriptie op de wake-woorden.
+        # "porcupine" / "whisper" forceren een backend.
+        "wake_backend": "auto",
+        "porcupine_keyword": "voice/hey_kamer.ppn",
+        "porcupine_sensitivity": 0.5,
         "system_prompt": (
             "Je bent een Nederlandse spraakassistent voor kamerautomatisering. "
             "Regels:\n"
@@ -231,6 +237,7 @@ SECRET_KEYS = [
     "APPLE_ID_1", "APPLE_PASSWORD_1", "APPLE_ID_2", "APPLE_PASSWORD_2",
     "SPOTIFY_CLIENT_ID", "SPOTIFY_CLIENT_SECRET", "SPOTIFY_REDIRECT_URI",
     "OPENWEATHER_KEY", "WEATHERAPI_KEY", "SERPER_API_KEY",
+    "PICOVOICE_ACCESS_KEY",
 ]
 _PUBLIC_SECRETS = {
     "TAPO_USER", "EMAIL_ADDRESS", "SMTP_SERVER", "SMTP_PORT", "RECEIVER",
