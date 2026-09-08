@@ -62,6 +62,9 @@ DEFAULTS: dict = {
         "provider": "duckduckgo",       # duckduckgo (no key) | serper
         "max_results": 5,
     },
+    "spotify": {
+        "market": "NL",                 # land voor beschikbaarheid van nummers
+    },
     "camera": {
         "enabled": True,
         "device_index": 0,

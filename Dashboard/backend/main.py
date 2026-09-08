@@ -619,12 +619,13 @@ def api_playlist_tracks(playlist_id):
     except Exception as exc:  # noqa: BLE001
         return jsonify({"error": str(exc)}), 500
 
-    # market=from_token is nodig, anders filtert Spotify de nummers weg (-> lege lijst)
+    # zonder expliciete market filtert Spotify de nummers weg (-> lege lijst)
+    market = config.get("spotify.market", "NL")
     tracks, offset = [], 0
     try:
         while True:
             page = sp.playlist_items(
-                playlist_id, market="from_token", additional_types=("track",),
+                playlist_id, market=market, additional_types=("track",),
                 limit=100, offset=offset,
             )
             items = page.get("items", [])
@@ -696,7 +697,8 @@ def api_search_spotify():
     if not query:
         return jsonify({"tracks": []})
     try:
-        results = _sp().sp.search(q=query, type="track", limit=10)
+        results = _sp().sp.search(q=query, type="track", limit=10,
+                                  market=config.get("spotify.market", "NL"))
         return jsonify({"tracks": [{
             "id": it["id"],
             "name": it["name"],
