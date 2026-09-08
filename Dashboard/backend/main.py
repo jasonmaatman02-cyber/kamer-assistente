@@ -586,6 +586,19 @@ def _no_device_response():
     }), 409
 
 
+def _wake_device(sp, device_id):
+    """Een idle Spotify-app accepteert 'afspelen' wel maar begint niet. Neem het
+    apparaat eerst over zodat het echt actief is."""
+    try:
+        pb = sp.current_playback()
+        active = pb and pb.get("device", {}).get("id") == device_id and pb.get("is_playing")
+        if not active:
+            sp.transfer_playback(device_id, force_play=True)
+            time.sleep(0.5)
+    except Exception:  # noqa: BLE001
+        pass
+
+
 def _play_error(exc):
     msg = str(getattr(exc, "msg", "") or exc)
     if "NO_ACTIVE_DEVICE" in msg or "No active device" in msg:
@@ -605,6 +618,7 @@ def api_play_playlist():
         dev = _active_device_id(sp)
         if not dev:
             return _no_device_response()
+        _wake_device(sp, dev)
         sp.start_playback(device_id=dev, context_uri=f"spotify:playlist:{pid}")
         return jsonify({"success": True})
     except Exception as exc:  # noqa: BLE001
@@ -680,6 +694,7 @@ def api_play_track():
         device_id = _active_device_id(sp)
         if not device_id:
             return _no_device_response()
+        _wake_device(sp, device_id)
         if playlist_id:
             # start de playlist bij dit nummer (offset via uri = robuuster dan position)
             sp.start_playback(
