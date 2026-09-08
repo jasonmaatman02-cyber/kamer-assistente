@@ -262,7 +262,9 @@ def set_secret(name: str, value: str) -> None:
             if value:
                 from dotenv import set_key
 
-                set_key(str(ENV_FILE), name, value, quote_mode="never")
+                # quote_mode="always": zet 'value' tussen quotes zodat een
+                # wachtwoord met #, $, spaties enz. niet corrupt terugleest.
+                set_key(str(ENV_FILE), name, value, quote_mode="always")
                 os.environ[name] = value
             else:
                 from dotenv import unset_key
