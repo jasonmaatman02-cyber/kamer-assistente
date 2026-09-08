@@ -58,6 +58,13 @@ def bedtime_routine():
 
     _for_each_lamp("uit")
 
+    # Vanaf het dashboard (geen microfoon) heeft de vraag-en-antwoord geen zin.
+    from voice.Whisper import mic_available
+
+    if not mic_available():
+        speak("Slaap lekker!")
+        return
+
     speak("Zal ik ook een wekker voor je instellen?")
     response = shortwhisper() or ""
     if not any(w in response.lower() for w in ("ja", "graag", "zeker")):
