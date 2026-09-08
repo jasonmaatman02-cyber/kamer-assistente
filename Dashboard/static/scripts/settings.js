@@ -39,8 +39,8 @@ const SCHEMA = [
   {
     key: "weather", title: "Weer", icon: "fa-cloud-sun",
     fields: [
-      { path: "provider", label: "Provider", type: "select", options: ["open-meteo", "weatherapi"],
-        hint: "open-meteo heeft geen API-key nodig." },
+      { path: "provider", label: "Provider", type: "select", options: ["open-meteo", "openweathermap", "weatherapi"],
+        hint: "open-meteo heeft geen API-key nodig. Voor openweathermap/weatherapi vul je de key in onder Inloggegevens." },
       { path: "city", label: "Stad", type: "text" },
       { path: "latitude", label: "Latitude", type: "number", step: "0.001" },
       { path: "longitude", label: "Longitude", type: "number", step: "0.001" },
@@ -252,8 +252,10 @@ const SECRET_GROUPS = [
   { title: "Spotify", icon: "fa-music", keys: [
       ["SPOTIFY_CLIENT_ID", "Client ID", "text"], ["SPOTIFY_CLIENT_SECRET", "Client Secret", "password"],
       ["SPOTIFY_REDIRECT_URI", "Redirect URI", "text"]], spotify: true },
-  { title: "Overig (optioneel)", icon: "fa-key", keys: [
-      ["WEATHERAPI_KEY", "WeatherAPI-key", "password"], ["SERPER_API_KEY", "Serper-key", "password"]] },
+  { title: "Weer & zoeken (optioneel)", icon: "fa-key", keys: [
+      ["OPENWEATHER_KEY", "OpenWeatherMap-key", "password"],
+      ["WEATHERAPI_KEY", "WeatherAPI-key", "password"],
+      ["SERPER_API_KEY", "Serper-key", "password"]] },
 ];
 
 const secBox = document.getElementById("secrets-section");

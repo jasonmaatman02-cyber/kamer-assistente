@@ -2,8 +2,9 @@
 
 Providers (``config: weather.provider``):
 
-* ``open-meteo`` – free, no API key. Default.
-* ``weatherapi`` – needs ``WEATHERAPI_KEY``.
+* ``open-meteo``      – free, no API key. Default.
+* ``openweathermap``  – needs ``OPENWEATHER_KEY``.
+* ``weatherapi``      – needs ``WEATHERAPI_KEY``.
 
 ``fetch_weather()`` returns ``{"temp", "wind", "humidity", "condition", "city"}``
 regardless of provider, so callers don't care which one is active.
@@ -59,7 +60,9 @@ class WeerAPI:
             return hit[1]
 
         try:
-            if provider == "weatherapi" and config.secret("WEATHERAPI_KEY"):
+            if provider == "openweathermap" and config.secret("OPENWEATHER_KEY"):
+                data = self._fetch_openweathermap(city)
+            elif provider == "weatherapi" and config.secret("WEATHERAPI_KEY"):
                 data = self._fetch_weatherapi(city)
             else:
                 data = self._fetch_open_meteo(city)
@@ -136,6 +139,32 @@ class WeerAPI:
             "humidity": cur["humidity"],
             "condition": _WEATHERAPI_NL.get(cur["condition"]["text"], cur["condition"]["text"]),
             "city": data["location"]["name"],
+        }
+
+    # ------------------------------------------------------------------ #
+    # OpenWeatherMap
+    # ------------------------------------------------------------------ #
+    def _fetch_openweathermap(self, city: str):
+        r = requests.get(
+            "https://api.openweathermap.org/data/2.5/weather",
+            params={
+                "q": city,
+                "appid": config.secret("OPENWEATHER_KEY"),
+                "units": "metric",
+                "lang": "nl",
+            },
+            timeout=5,
+        )
+        r.raise_for_status()
+        data = r.json()
+        weather = (data.get("weather") or [{}])[0]
+        condition = (weather.get("description") or "onbekend").capitalize()
+        return {
+            "temp": round(data["main"]["temp"], 1),
+            "wind": round(data.get("wind", {}).get("speed", 0) * 3.6, 1),  # m/s -> km/h
+            "humidity": data["main"]["humidity"],
+            "condition": condition,
+            "city": data.get("name", city),
         }
 
     # ------------------------------------------------------------------ #
