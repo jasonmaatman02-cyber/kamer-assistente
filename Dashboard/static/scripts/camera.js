@@ -28,9 +28,18 @@ async function callAPI(url) {
   setTimeout(() => (lampBusy = false), 3000);
 }
 
+const toMin = s => {
+  const m = /^(\d{1,2}):(\d{2})$/.exec(String(s || "").trim());
+  return m ? (+m[1] % 24) * 60 + (+m[2] % 60) : null;
+};
+// stil-venster waarin detectie de lamp NIET automatisch aanzet
+let QUIET = { from: 21 * 60 + 40, to: 7 * 60 };
 function timeAllowsLamp() {
+  if (QUIET.from == null || QUIET.to == null || QUIET.from === QUIET.to) return true;
   const m = new Date().getHours() * 60 + new Date().getMinutes();
-  return !(m >= 21 * 60 + 40 || m < 7 * 60); // geblokkeerd 21:40–07:00
+  return QUIET.from < QUIET.to
+    ? !(m >= QUIET.from && m < QUIET.to)          // venster binnen één dag
+    : !(m >= QUIET.from || m < QUIET.to);         // venster over middernacht
 }
 
 async function startDetection(threshold = 0.5) {
@@ -69,7 +78,7 @@ async function startDetection(threshold = 0.5) {
       if (persons.length) {
         lastPerson = now;
         if (!lampOn && timeAllowsLamp()) { lampOn = true; callAPI("/api/lamp/on"); setStatus('<span class="green">Persoon gezien — lamp aan</span>'); }
-        else if (!timeAllowsLamp()) setStatus('<span class="orange">Geblokkeerd (21:40–07:00)</span>');
+        else if (!timeAllowsLamp()) setStatus('<span class="orange">Persoon gezien — lamp geblokkeerd (stil-venster)</span>');
       } else if (lampOn && now - lastPerson > GONE_DELAY) {
         lampOn = false; callAPI("/api/lamp/off"); setStatus('<span class="red">Niemand — lamp uit</span>');
       }
@@ -102,6 +111,8 @@ if (img) {
 
   if (cfg.camera && cfg.camera.browser_detection) {
     const t = Number(cfg.camera.detect_threshold);
+    const qf = toMin(cfg.camera.lamp_quiet_from), qt = toMin(cfg.camera.lamp_quiet_to);
+    if (qf != null && qt != null) QUIET = { from: qf, to: qt };
     startDetection(Number.isFinite(t) && t > 0 && t < 1 ? t : 0.5);
   } else {
     if (canvas) canvas.hidden = true;

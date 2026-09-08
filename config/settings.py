@@ -78,6 +78,10 @@ DEFAULTS: dict = {
         # min. zekerheid (0-1) om iemand als "persoon" te tellen. Lager = pikt
         # ook wazig IR-/nachtbeeld op, maar meer valse detecties.
         "detect_threshold": 0.5,
+        # in dit venster laat detectie de lamp NIET automatisch aangaan.
+        # from == to (of allebei leeg) = altijd toegestaan, ook 's nachts.
+        "lamp_quiet_from": "21:40",
+        "lamp_quiet_to": "07:00",
     },
     "dashboard": {
         "poll_now_playing_ms": 4000,

@@ -71,6 +71,9 @@ const SCHEMA = [
         hint: "Laadt ~4 MB TensorFlow.js en belast de CPU. Standaard uit." },
       { path: "detect_threshold", label: "Detectie-drempel", type: "number", step: "0.05", min: 0.1, max: 0.9,
         hint: "Zekerheid om iemand te tellen. 0.35–0.45 pakt wazig IR-/nachtbeeld beter, maar meer valse alarmen." },
+      { path: "lamp_quiet_from", label: "Lamp-stil vanaf", type: "text",
+        hint: "Detectie zet de lamp NIET automatisch aan tussen deze tijden (HH:MM). Gelijk zetten = altijd toegestaan." },
+      { path: "lamp_quiet_to", label: "Lamp-stil tot", type: "text" },
     ],
   },
   {

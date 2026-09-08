@@ -37,6 +37,8 @@ def public_config():
             "browser_detection": config.get("camera.browser_detection"),
             "enabled": config.get("camera.enabled"),
             "detect_threshold": config.get("camera.detect_threshold", 0.5),
+            "lamp_quiet_from": config.get("camera.lamp_quiet_from", "21:40"),
+            "lamp_quiet_to": config.get("camera.lamp_quiet_to", "07:00"),
         },
         "features": config.get("features"),
     })
