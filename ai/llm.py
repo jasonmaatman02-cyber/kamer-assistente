@@ -172,3 +172,73 @@ def complete(prompt: str, system: str | None = None) -> str:
         messages.append({"role": "system", "content": system})
     messages.append({"role": "user", "content": prompt})
     return chat(messages).get("content") or ""
+
+
+def chat_stream(messages, tools=None):
+    """Generator. Yields ``{"type": "chunk", "text": str}`` while the model
+    writes, then finally either ``{"type": "tool_calls", "calls": [...]}`` (no
+    text was meant for the user) or ``{"type": "done", "content": str}``.
+
+    Only Ollama streams token-by-token; OpenAI / errors fall back to one chunk.
+    """
+    backend = (config.get("ai.backend") or "ollama").lower()
+    if backend != "ollama":
+        res = chat(messages, tools)
+        if res.get("tool_calls"):
+            yield {"type": "tool_calls", "calls": res["tool_calls"]}
+        else:
+            text = res.get("content") or ""
+            if text:
+                yield {"type": "chunk", "text": text}
+            yield {"type": "done", "content": text}
+        return
+
+    try:
+        import ollama
+
+        client = ollama.Client(host=config.get("ai.ollama_url"))
+        stream = client.chat(
+            model=config.get("ai.ollama_model"),
+            messages=messages,
+            tools=_as_openai_tools(tools),
+            options={"temperature": config.get("ai.temperature", 0.6)},
+            stream=True,
+        )
+        content = ""
+        raw_calls = []
+        for part in stream:
+            msg = part.get("message", {}) if isinstance(part, dict) else getattr(part, "message", {})
+            delta = msg.get("content") if isinstance(msg, dict) else getattr(msg, "content", "")
+            tcs = msg.get("tool_calls") if isinstance(msg, dict) else getattr(msg, "tool_calls", None)
+            if tcs:
+                raw_calls.extend(tcs)
+            if delta:
+                content += delta
+                yield {"type": "chunk", "text": delta}
+
+        calls = []
+        for c in raw_calls:
+            fn = c.get("function", {}) if isinstance(c, dict) else getattr(c, "function", {})
+            name = fn.get("name") if isinstance(fn, dict) else getattr(fn, "name", None)
+            args = fn.get("arguments") if isinstance(fn, dict) else getattr(fn, "arguments", {})
+            if isinstance(args, str):
+                try:
+                    args = json.loads(args)
+                except json.JSONDecodeError:
+                    args = {}
+            calls.append({"name": name, "arguments": args or {}})
+        if not calls:
+            calls = _salvage_tool_calls(content)
+
+        if calls:
+            yield {"type": "tool_calls", "calls": calls}
+        else:
+            yield {"type": "done", "content": content}
+    except Exception as exc:  # noqa: BLE001
+        res = chat(messages, tools)  # niet-streamende fallback (met OpenAI-fallback erin)
+        if res.get("tool_calls"):
+            yield {"type": "tool_calls", "calls": res["tool_calls"]}
+        else:
+            text = res.get("content") or f"AI-fout: {exc}"
+            yield {"type": "chunk", "text": text}
+            yield {"type": "done", "content": text}

@@ -86,3 +86,36 @@ def test_playlist_item_new_vs_old_format():
         assert t and t.get("type") != "episode" and t["uri"] == want
     t = ep.get("item") or ep.get("track")
     assert t.get("type") == "episode"  # wordt overgeslagen
+
+
+# --- chat streaming --------------------------------------------------- #
+def test_verwerk_input_stream_plain(monkeypatch):
+    import ai.llm as llm
+
+    def fake_stream(messages, tools=None):
+        yield {"type": "chunk", "text": "Hal"}
+        yield {"type": "chunk", "text": "lo!"}
+        yield {"type": "done", "content": "Hallo!"}
+
+    monkeypatch.setattr(llm, "chat_stream", fake_stream)
+    from logic import gpt_handler
+
+    monkeypatch.setattr(gpt_handler, "conversation_history", [{"role": "system", "content": "x"}])
+    out = "".join(gpt_handler.verwerk_input_stream("hoi"))
+    assert out == "Hallo!"
+    assert gpt_handler.conversation_history[-1] == {"role": "assistant", "content": "Hallo!"}
+
+
+def test_verwerk_input_stream_tool(monkeypatch):
+    import ai.llm as llm
+
+    def fake_stream(messages, tools=None):
+        yield {"type": "tool_calls", "calls": [{"name": "lees_notities", "arguments": {}}]}
+
+    monkeypatch.setattr(llm, "chat_stream", fake_stream)
+    from logic import gpt_handler
+
+    monkeypatch.setattr(gpt_handler, "conversation_history", [{"role": "system", "content": "x"}])
+    monkeypatch.setitem(gpt_handler.functies_dispatcher, "lees_notities", lambda: "Geen notities.")
+    out = "".join(gpt_handler.verwerk_input_stream("lees mijn notities"))
+    assert out == "Geen notities."

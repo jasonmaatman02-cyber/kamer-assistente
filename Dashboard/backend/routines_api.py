@@ -125,15 +125,3 @@ def notes_delete(index: int):
     from logic.notes import delete_note
 
     return jsonify({"success": delete_note(index)})
-
-
-# ---- Chat ----
-@routines_bp.route("/api/send_message", methods=["POST"])
-@require_password
-def send_message():
-    text = (request.get_json(silent=True) or {}).get("message", "").strip()
-    if not text:
-        return jsonify({"reply": "Typ iets alsjeblieft."})
-    from logic.gpt_handler import verwerk_input
-
-    return jsonify({"reply": verwerk_input(text)})

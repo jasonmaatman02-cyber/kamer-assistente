@@ -331,18 +331,51 @@ def gpt_verwerk(prompt: str) -> dict:
     return result
 
 
+def _dispatch(call) -> str:
+    fn = functies_dispatcher.get(call["name"])
+    if not fn:
+        return f"Functie '{call['name']}' niet gevonden."
+    uitkomst = fn(**(call.get("arguments") or {}))
+    log("AI", f"Functie {call['name']} -> {uitkomst}")
+    return str(uitkomst)
+
+
 def verwerk_input(text: str) -> str:
     try:
         result = gpt_verwerk(text)
         for call in result.get("tool_calls", []):
-            naam = call["name"]
-            fn = functies_dispatcher.get(naam)
-            if not fn:
-                return f"Functie '{naam}' niet gevonden."
-            uitkomst = fn(**(call.get("arguments") or {}))
-            log("AI", f"Functie {naam} -> {uitkomst}")
-            return str(uitkomst)
+            return _dispatch(call)
         return result.get("content") or "Ik heb daar geen antwoord op."
     except Exception as exc:  # noqa: BLE001
         log("ERROR", f"Fout bij verwerken input: {exc}")
         return f"Fout bij verwerken input: {exc}"
+
+
+def verwerk_input_stream(text: str):
+    """Generator van tekst-stukjes. Doet eerst de tool-check (stream), en zodra
+    de assistent een functie kiest wordt die uitgevoerd en het resultaat als
+    één stuk teruggegeven. Anders komt het antwoord token voor token."""
+    conversation_history.append({"role": "user", "content": text})
+    _trim_history()
+    answer = ""
+    try:
+        for ev in llm.chat_stream(conversation_history, tools=functions):
+            if ev["type"] == "chunk":
+                answer += ev["text"]
+                yield ev["text"]
+            elif ev["type"] == "tool_calls":
+                for call in ev["calls"]:
+                    result = _dispatch(call)
+                    conversation_history.append({"role": "assistant", "content": result})
+                    yield result
+                return
+            elif ev["type"] == "done":
+                if not answer and ev.get("content"):
+                    answer = ev["content"]
+                    yield answer
+    except Exception as exc:  # noqa: BLE001
+        log("ERROR", f"Fout bij streamen: {exc}")
+        yield f"\n[fout: {exc}]"
+        return
+    if answer:
+        conversation_history.append({"role": "assistant", "content": answer})
