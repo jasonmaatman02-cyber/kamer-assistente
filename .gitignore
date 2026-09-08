@@ -31,3 +31,6 @@ logs.zip
 *.onnx
 *.onnx.json
 models/
+
+# tests
+.pytest_cache/
