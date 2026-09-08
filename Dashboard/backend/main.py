@@ -630,8 +630,11 @@ def api_playlist_tracks(playlist_id):
             )
             items = page.get("items", [])
             for it in items:
-                t = it.get("track") if isinstance(it, dict) else None
-                if not isinstance(t, dict) or not t.get("uri"):
+                if not isinstance(it, dict):
+                    continue
+                # nieuw Spotify-formaat: track staat onder "item"; oud: onder "track"
+                t = it.get("item") or it.get("track")
+                if not isinstance(t, dict) or t.get("type") == "episode" or not t.get("uri"):
                     continue
                 ms = t.get("duration_ms", 0) or 0
                 imgs = (t.get("album") or {}).get("images") or []
