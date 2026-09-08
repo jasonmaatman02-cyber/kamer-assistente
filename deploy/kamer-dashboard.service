@@ -1,0 +1,20 @@
+[Unit]
+Description=Kamer-assistent webdashboard
+# Netwerk nodig voor Spotify/weer; Ollama is optioneel (dashboard start ook zonder)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=pi
+WorkingDirectory=/home/pi/kamer-assistente
+ExecStart=/home/pi/kamer-assistente/.venv/bin/python -m rundashboard
+Environment=PYTHONUNBUFFERED=1
+Restart=always
+RestartSec=3
+# Geef 't wat lucht op een Pi 4B, maar niet oneindig
+MemoryMax=1200M
+Nice=5
+
+[Install]
+WantedBy=multi-user.target

@@ -50,6 +50,27 @@ python main.py all           # allebei
 Herstart de server na code-wijzigingen (Ctrl+C en opnieuw starten) — een oude
 draaiende instantie serveert nog de oude pagina's.
 
+### Als service (aanrader op de Pi)
+
+`screen` is fragiel: valt de Pi uit, dan is het dashboard weg. Beter is een
+systemd-service die automatisch (her)start:
+
+```bash
+cd ~/kamer-assistente
+bash deploy/setup-pi.sh        # apt-pakketten, venv, .env, logrotate, service
+```
+
+Daarna:
+
+```bash
+bash deploy/update-pi.sh       # git pull + pip + systemctl restart
+journalctl -u kamer-dashboard -f
+sudo systemctl restart kamer-dashboard
+```
+
+De service draait `python -m rundashboard` (waitress) als user `pi`, met
+`Restart=always` en een geheugenlimiet van 1,2 GB.
+
 ## Instellingen
 
 Alles is in te stellen via de **Settings**-tab in het dashboard (schrijft naar
@@ -103,3 +124,13 @@ logic/ voice/ devices/ sound_system/ scheduler/ weer/   — losse modules
 - De `Devices`-pagina thermostaat is nog een demo (geen hardware-koppeling).
 - Spotify-afspeelbediening vereist een actief apparaat; installeer `raspotify`
   om de Pi zelf een speler te maken.
+
+## Tests
+
+```bash
+pip install -r requirements-dashboard.txt pytest requests
+pytest -q
+```
+
+De tests draaien volledig offline (geen echte Spotify/Tapo/mail — zie
+`tests/conftest.py`). CI draait ze bij elke push (`.github/workflows/ci.yml`).
