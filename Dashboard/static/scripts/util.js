@@ -41,4 +41,21 @@
 
   w.KT = { jget, jpost, jput, jdel, toast, esc };
   w.esc = esc;   // ook los beschikbaar voor de pagina-scripts
+
+  // Uitlog-knop onderin de sidebar, alleen als er een wachtwoord ingesteld is
+  document.addEventListener("DOMContentLoaded", () => {
+    const menu = document.querySelector(".sidebar .menu");
+    if (!menu) return;
+    fetch("/api/auth/status").then(r => r.json()).then(s => {
+      if (!s.password_required) return;
+      const li = document.createElement("li");
+      li.innerHTML = '<a href="#" id="kt-logout"><i class="fa fa-right-from-bracket"></i> Uitloggen</a>';
+      menu.appendChild(li);
+      li.querySelector("a").addEventListener("click", async e => {
+        e.preventDefault();
+        try { await fetch("/api/logout", { method: "POST" }); } catch (_) {}
+        location.href = "/main";
+      });
+    }).catch(() => {});
+  });
 })(window);

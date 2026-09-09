@@ -99,6 +99,13 @@ const SCHEMA = [
     ],
   },
   {
+    key: "security", title: "Beveiliging", icon: "fa-shield-halved",
+    fields: [
+      { path: "session_days", label: "Ingelogd blijven (dagen)", type: "number", min: 0, max: 90,
+        hint: "0 = elke keer opnieuw inloggen als je de browser sluit (veiligst). Serverlimiet is sowieso 24 uur bij 0." },
+    ],
+  },
+  {
     key: "assistant", title: "Assistent", icon: "fa-comment-dots",
     fields: [
       { path: "name", label: "Naam", type: "text" },

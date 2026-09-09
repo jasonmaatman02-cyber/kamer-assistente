@@ -1,4 +1,5 @@
 """Every read-only route answers without a bug, even with no Spotify/lamps/mail."""
+import time
 import pytest
 
 READ_ONLY = [
@@ -171,6 +172,27 @@ def test_speedtest_flow(client, monkeypatch):
 def test_speedtest_start_needs_password(client, monkeypatch):
     monkeypatch.setenv("DASHBOARD_PASSWORD", "x")  # not logged in
     assert client.post("/api/speedtest").status_code == 401
+
+
+def test_login_is_session_only_by_default(client, monkeypatch):
+    import config
+    from Dashboard.backend import auth
+
+    monkeypatch.setenv("DASHBOARD_PASSWORD", "geheim")
+
+    config.set("security.session_days", 0)
+    r = client.post("/api/login", json={"password": "geheim"})
+    sc = r.headers.get("Set-Cookie", "")
+    assert r.get_json()["persistent"] is False
+    assert "Max-Age" not in sc and "Expires" not in sc          # sessiecookie
+    tok = next(iter(auth._pw_sessions))
+    assert auth._pw_sessions[tok] - time.time() <= 24 * 3600 + 5  # harde serverlimiet
+
+    auth._pw_sessions.clear()
+    config.set("security.session_days", 7)
+    r = client.post("/api/login", json={"password": "geheim"})
+    assert r.get_json()["persistent"] is True
+    assert "Max-Age=604800" in r.headers.get("Set-Cookie", "")
 
 
 def test_settings_post_needs_password(client, monkeypatch):

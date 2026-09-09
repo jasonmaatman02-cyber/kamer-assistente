@@ -92,6 +92,11 @@ DEFAULTS: dict = {
         "poll_system_ms": 10000,
     },
     "alarm": {"time": "", "routine": "morning"},   # handmatige dashboard-wekker
+    "security": {
+        # 0 = elke browsersessie opnieuw inloggen (cookie weg bij afsluiten),
+        # met een harde serverlimiet van 24u. >0 = zoveel dagen onthouden.
+        "session_days": 0,
+    },
     "devices": {
         "lamps": [
             {"name": "Bedroom Lamp", "ip": "192.168.2.15"},

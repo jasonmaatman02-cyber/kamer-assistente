@@ -112,10 +112,19 @@ def verify():
 # --------------------------------------------------------------------------- #
 COOKIE = "kamer_session"
 _pw_sessions: dict[str, float] = {}
-_PW_TTL = 30 * 24 * 3600
+# security.session_days: 0 (default) = alleen deze browsersessie (cookie weg bij
+# afsluiten) met een harde serverlimiet van 24u; >0 = zoveel dagen onthouden.
+_PW_SESSION_CAP = 24 * 3600
 _pw_fails = {"n": 0, "until": 0.0}
 _PW_MAX_FAILS = 5
 _PW_LOCK = 60
+
+
+def _session_days() -> int:
+    try:
+        return max(0, int(config.get("security.session_days", 0) or 0))
+    except (TypeError, ValueError):
+        return 0
 
 
 def password_set() -> bool:
@@ -158,10 +167,14 @@ def login():
         _pw_fails["until"] = now + _PW_LOCK
         return jsonify({"ok": False, "error": "Onjuist wachtwoord"}), 401
     _pw_fails.update(n=0, until=0.0)
+    days = _session_days()
     tok = _secrets.token_urlsafe(32)
-    _pw_sessions[tok] = now + _PW_TTL
-    resp = jsonify({"ok": True})
-    resp.set_cookie(COOKIE, tok, max_age=_PW_TTL, httponly=True, samesite="Lax")
+    _pw_sessions[tok] = now + (days * 86400 if days else _PW_SESSION_CAP)
+    resp = jsonify({"ok": True, "persistent": bool(days)})
+    kw = {"httponly": True, "samesite": "Lax"}
+    if days:                       # anders: sessiecookie -> weg bij browser sluiten
+        kw["max_age"] = days * 86400
+    resp.set_cookie(COOKIE, tok, **kw)
     return resp
 
 
