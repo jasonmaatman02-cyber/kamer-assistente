@@ -1,22 +1,25 @@
 .camera-container {
-  position: relative; /* nodig voor absolute positioning van canvas */
-  display: flex;
-  justify-content: center;
-  align-items: center;
-  height: 800px;
+  position: relative;          /* anker voor het overlay-canvas */
+  width: min(1000px, 100%);
+  margin: 0 auto;
+  line-height: 0;
 }
 
 .camera-feed {
-  width: 1000px;
+  width: 100%;
   height: auto;
+  display: block;
   border-radius: 10px;
+  background: #0d1b2a;
+  min-height: 220px;           /* kaart klapt niet in terwijl er nog geen beeld is */
 }
 
+/* canvas ligt precies over de video; in JS krijgt 'ie de natuurlijke
+   pixelgrootte, CSS schaalt 'm mee met de video */
 .camera-container .canvas {
   position: absolute;
-  top: 0;
-  left: 0;
-  width: 1000px; /* match de video */
-  height: auto;   /* match de video */
-  pointer-events: none; /* zodat muis events door de canvas gaan */
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
 }

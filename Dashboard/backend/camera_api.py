@@ -179,6 +179,20 @@ def video_feed():
     return resp
 
 
+@camera_bp.route("/api/camera_snapshot")
+@require_password
+def camera_snapshot():
+    """Losse JPEG van het laatste frame — de browser-detectie draait hierop
+    (een <img> met een MJPEG-stream levert geen leesbare pixels)."""
+    if not config.get("camera.enabled", True):
+        return Response("camera uit", status=503)
+    camera._ensure_running()
+    latest = camera._latest
+    if not latest:
+        return Response("nog geen beeld", status=503)
+    return Response(latest[0], mimetype="image/jpeg", headers={"Cache-Control": "no-store"})
+
+
 @camera_bp.route("/api/camera_status")
 def camera_status():
     return jsonify({

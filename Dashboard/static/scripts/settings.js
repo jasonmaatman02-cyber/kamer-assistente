@@ -131,8 +131,9 @@ function renderField(section, f) {
   const hint = f.hint ? `<span class="hint">${f.hint}</span>` : "";
 
   if (f.type === "bool") {
+    // .toggle MOET een <label> zijn, anders doet klikken op de schakelaar zelf niets
     return `<div class="field row"><label for="${id}">${f.label}</label>
-      <span class="toggle"><input type="checkbox" id="${id}" data-section="${section}" data-path="${f.path}" data-type="bool" ${val ? "checked" : ""}><span class="track"></span></span></div>${hint}`;
+      <label class="toggle"><input type="checkbox" id="${id}" data-section="${section}" data-path="${f.path}" data-type="bool" ${val ? "checked" : ""}><span class="track"></span></label></div>${hint}`;
   }
   let input;
   if (f.type === "select") {

@@ -11,6 +11,7 @@ READ_ONLY = [
     "/api/routines", "/api/lamps", "/api/thermostat", "/api/camera_status",
     "/api/secrets", "/api/auth/status", "/api/current_playing",
     "/api/radio_stations", "/api/alarm", "/api/speedtest", "/api/health",
+    "/api/camera_snapshot",
 ]
 
 

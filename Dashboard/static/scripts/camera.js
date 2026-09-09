@@ -1,8 +1,8 @@
 // Security camera view.
-// Browser-side person detection (TensorFlow.js + coco-ssd, ~4 MB) is OFF by
-// default and only loaded when Settings -> Camera -> "Personendetectie in
-// browser" is enabled. Without it this page is just the MJPEG stream, which is
-// far lighter on a Pi and on slow wifi.
+// Browser-side person detection (TensorFlow.js + coco-ssd) is OFF by default and
+// only runs when Settings -> Camera -> "Personendetectie in browser" aan staat.
+// De detectie draait in de browser die deze pagina bekijkt (jouw laptop/telefoon),
+// niet op de Pi.
 
 const img = document.querySelector(".camera-feed");
 const canvas = document.getElementById("canvas");
@@ -13,18 +13,19 @@ function setStatus(html) { if (statusEl) statusEl.innerHTML = "Status: " + html;
 function loadScript(src) {
   return new Promise((resolve, reject) => {
     const s = document.createElement("script");
-    s.src = src; s.onload = resolve; s.onerror = () => reject(new Error("kan niet laden: " + src));
+    s.src = src;
+    s.onload = resolve;
+    s.onerror = () => reject(new Error("kan niet laden: " + src.split("/").pop()));
     document.head.appendChild(s);
   });
 }
 
-// ---- API helper with a small cooldown so we don't spam the lamp ----
+// ---- lamp aansturen, met een kleine cooldown zodat we 'm niet spammen ----
 let lampBusy = false;
-async function callAPI(url) {
+function callAPI(url) {
   if (lampBusy) return;
   lampBusy = true;
-  try { await fetch(url, { method: "PUT" }); }
-  catch (e) { console.error("lamp API:", e); }
+  fetch(url, { method: "PUT" }).catch(e => console.error("lamp API:", e));
   setTimeout(() => (lampBusy = false), 3000);
 }
 
@@ -32,90 +33,154 @@ const toMin = s => {
   const m = /^(\d{1,2}):(\d{2})$/.exec(String(s || "").trim());
   return m ? (+m[1] % 24) * 60 + (+m[2] % 60) : null;
 };
-// stil-venster waarin detectie de lamp NIET automatisch aanzet
-let QUIET = { from: 21 * 60 + 40, to: 7 * 60 };
+let QUIET = { from: 21 * 60 + 40, to: 7 * 60 };   // stil-venster (lamp niet automatisch aan)
 function timeAllowsLamp() {
   if (QUIET.from == null || QUIET.to == null || QUIET.from === QUIET.to) return true;
   const m = new Date().getHours() * 60 + new Date().getMinutes();
   return QUIET.from < QUIET.to
-    ? !(m >= QUIET.from && m < QUIET.to)          // venster binnen één dag
-    : !(m >= QUIET.from || m < QUIET.to);         // venster over middernacht
+    ? !(m >= QUIET.from && m < QUIET.to)
+    : !(m >= QUIET.from || m < QUIET.to);
 }
 
-async function startDetection(threshold = 0.5) {
-  setStatus('<span class="orange">AI-model laden…</span>');
-  try {
-    await loadScript("https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@3.9.0");
-    await loadScript("https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd");
-  } catch (e) {
-    setStatus('<span class="red">Model laden mislukt</span>');
-    return;
+// --------------------------------------------------------------------------- //
+// model laden (1x, gepind op een werkende combinatie)
+// --------------------------------------------------------------------------- //
+const CDN = "https://cdn.jsdelivr.net/npm";
+let _modelPromise = null;
+function getModel() {
+  if (!_modelPromise) {
+    _modelPromise = (async () => {
+      await loadScript(`${CDN}/@tensorflow/tfjs@4.22.0/dist/tf.min.js`);
+      await loadScript(`${CDN}/@tensorflow-models/coco-ssd@2.2.3/dist/coco-ssd.min.js`);
+      try { await tf.setBackend("webgl"); } catch (_) { /* val terug op wat er is */ }
+      await tf.ready();
+      return cocoSsd.load({ base: "lite_mobilenet_v2" });   // lichtste variant
+    })().catch(err => { _modelPromise = null; throw err; });
   }
-  const ctx = canvas.getContext("2d");
-  const model = await cocoSsd.load();
-  setStatus('<span class="green">Actief</span>');
+  return _modelPromise;
+}
 
-  let lampOn = false, lastPerson = Date.now();
-  const GONE_DELAY = 10000, DETECT_EVERY = 600;
-  let last = 0;
+// --------------------------------------------------------------------------- //
+// detectie-lus
+// --------------------------------------------------------------------------- //
+let detector = null;   // { stop() } zolang detectie loopt
 
-  async function loop() {
-    const now = Date.now();
-    if (now - last > DETECT_EVERY && img.complete && img.naturalWidth) {
-      last = now;
-      canvas.width = img.clientWidth; canvas.height = img.clientHeight;
-      const preds = await model.detect(img);
-      ctx.clearRect(0, 0, canvas.width, canvas.height);
-      const sx = canvas.width / img.naturalWidth, sy = canvas.height / img.naturalHeight;
+function startDetection(threshold) {
+  if (detector) return;
+  let stopped = false;
+  const octx = canvas.getContext("2d");
+  let model = null, lampOn = false, lastPerson = Date.now(), missing = 0;
+
+  detector = {
+    stop() {
+      stopped = true;
+      try { octx.clearRect(0, 0, canvas.width, canvas.height); } catch (_) {}
+      detector = null;
+    },
+  };
+
+  setStatus('<span class="orange">AI-model laden…</span>');
+  getModel().then(m => {
+    if (stopped) return;
+    model = m;
+    setStatus('<span class="green">model geladen</span>');
+    tick();
+  }).catch(e => {
+    setStatus(`<span class="red">model laden mislukt: ${e.message}</span>`);
+    detector = null;
+  });
+
+  function schedule(ms) { if (!stopped) setTimeout(tick, ms); }
+
+  async function grabFrame() {
+    // losse JPEG i.p.v. de <img>-stream: die levert geen leesbare pixels
+    const r = await fetch("/api/camera_snapshot", { cache: "no-store" });
+    if (!r.ok) throw new Error("camera_snapshot " + r.status);
+    return createImageBitmap(await r.blob());
+  }
+
+  async function tick() {
+    if (stopped) return;
+    const t0 = performance.now();
+    let bmp;
+    try {
+      bmp = await grabFrame();
+    } catch (e) {
+      missing++;
+      setStatus('<span class="orange">wachten op camerabeeld…</span>');
+      return schedule(missing > 5 ? 3000 : 1000);
+    }
+    missing = 0;
+    try {
+      const nw = bmp.width, nh = bmp.height;
+      const preds = await model.detect(bmp);
+      bmp.close();
       const persons = preds.filter(p => p.class === "person" && p.score > threshold);
+
+      // overlay: canvas-bitmap = natuurlijke grootte, CSS schaalt mee -> geen rekenwerk
+      canvas.width = nw; canvas.height = nh;
+      octx.clearRect(0, 0, nw, nh);
+      octx.strokeStyle = "#00eaff"; octx.fillStyle = "#00eaff";
+      octx.lineWidth = Math.max(2, nw / 320);
+      octx.font = `${Math.max(12, nw / 40)}px sans-serif`;
       persons.forEach(p => {
         const [x, y, w, h] = p.bbox;
-        ctx.strokeStyle = "#00eaff"; ctx.lineWidth = 3;
-        ctx.strokeRect(x * sx, y * sy, w * sx, h * sy);
-        ctx.fillStyle = "#00eaff"; ctx.font = "16px sans-serif";
-        ctx.fillText(`Persoon ${(p.score * 100) | 0}%`, x * sx, y * sy - 4);
+        octx.strokeRect(x, y, w, h);
+        octx.fillText(`Persoon ${(p.score * 100) | 0}%`, x, Math.max(12, y - 4));
       });
+
+      const ms = Math.round(performance.now() - t0);
+      const now = Date.now();
       if (persons.length) {
         lastPerson = now;
-        if (!lampOn && timeAllowsLamp()) { lampOn = true; callAPI("/api/lamp/on"); setStatus('<span class="green">Persoon gezien — lamp aan</span>'); }
-        else if (!timeAllowsLamp()) setStatus('<span class="orange">Persoon gezien — lamp geblokkeerd (stil-venster)</span>');
-      } else if (lampOn && now - lastPerson > GONE_DELAY) {
-        lampOn = false; callAPI("/api/lamp/off"); setStatus('<span class="red">Niemand — lamp uit</span>');
+        const blocked = !timeAllowsLamp();
+        if (!lampOn && !blocked) { lampOn = true; callAPI("/api/lamp/on"); }
+        setStatus(`<span class="green">${persons.length} persoon${persons.length > 1 ? "en" : ""}</span> · ${ms} ms`
+          + (blocked ? " · lamp in stil-venster" : ""));
+      } else {
+        if (lampOn && now - lastPerson > 10000) { lampOn = false; callAPI("/api/lamp/off"); }
+        setStatus(`<span class="muted">geen persoon · ${ms} ms</span>`);
       }
+      // trager apparaat -> rustiger aan; tab op de achtergrond -> vaste 5s
+      schedule(document.hidden ? 5000 : Math.min(3000, Math.max(500, ms * 1.5)));
+    } catch (e) {
+      try { bmp && bmp.close(); } catch (_) {}
+      setStatus(`<span class="red">detectie-fout: ${e.message}</span>`);
+      schedule(2000);
     }
-    requestAnimationFrame(loop);
   }
-  loop();
 }
 
-if (img) {
-  img.addEventListener("error", () => {
-    setStatus('<span class="red">Geen camerabeeld</span>');
-  });
+// --------------------------------------------------------------------------- //
+// init: volg de Settings-toggle, ook zonder de pagina te herladen
+// --------------------------------------------------------------------------- //
+if (img) img.addEventListener("error", () => setStatus('<span class="red">Geen camerabeeld</span>'));
+
+async function syncWithConfig() {
+  let cfg = {};
+  try { cfg = await fetch("/api/config").then(r => r.json()); } catch (_) { return; }
+  const c = cfg.camera || {};
+  if (c.browser_detection && !detector) {
+    const t = Number(c.detect_threshold);
+    const qf = toMin(c.lamp_quiet_from), qt = toMin(c.lamp_quiet_to);
+    if (qf != null && qt != null) QUIET = { from: qf, to: qt };
+    startDetection(Number.isFinite(t) && t > 0 && t < 1 ? t : 0.5);
+  } else if (!c.browser_detection && detector) {
+    detector.stop();
+    setStatus('<span class="muted">Live (geen detectie)</span>');
+  }
 }
 
 (async function init() {
-  let cfg = {}, cam = {};
-  try { cfg = await fetch("/api/config").then(r => r.json()); } catch (e) {}
-  try { cam = await fetch("/api/camera_status").then(r => r.json()); } catch (e) {}
-
-  if (cam && cam.enabled === false) {
+  let cam = {};
+  try { cam = await fetch("/api/camera_status").then(r => r.json()); } catch (_) {}
+  if (cam.enabled === false) {
     if (img) img.style.display = "none";
     if (canvas) canvas.hidden = true;
     setStatus('<span class="muted">Camera staat uit (zet aan via Settings)</span>');
     return;
   }
-  if (cam && cam.error) {
-    setStatus(`<span class="red">${cam.error}</span>`);
-  }
-
-  if (cfg.camera && cfg.camera.browser_detection) {
-    const t = Number(cfg.camera.detect_threshold);
-    const qf = toMin(cfg.camera.lamp_quiet_from), qt = toMin(cfg.camera.lamp_quiet_to);
-    if (qf != null && qt != null) QUIET = { from: qf, to: qt };
-    startDetection(Number.isFinite(t) && t > 0 && t < 1 ? t : 0.5);
-  } else {
-    if (canvas) canvas.hidden = true;
-    setStatus('<span class="muted">Live (geen detectie)</span>');
-  }
+  setStatus(cam.error ? `<span class="red">${cam.error}</span>` : '<span class="muted">Live</span>');
+  await syncWithConfig();
+  setInterval(syncWithConfig, 15000);
 })();
