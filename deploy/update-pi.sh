@@ -46,11 +46,14 @@ if [ -f .venv/bin/pip ]; then
   ./.venv/bin/pip install -r "$REQ" -q
 fi
 
-if systemctl list-unit-files 2>/dev/null | grep -q '^kamer-dashboard\.service'; then
-  echo "==> systemctl restart kamer-dashboard"
+if systemctl cat kamer-dashboard.service >/dev/null 2>&1; then
+  echo "==> sudo systemctl restart kamer-dashboard"
   sudo systemctl restart kamer-dashboard
   sleep 1
-  sudo systemctl --no-pager --lines=5 status kamer-dashboard || true
+  sudo systemctl --no-pager --lines=6 status kamer-dashboard || true
 else
-  echo "!!  geen systemd-service gevonden — draai deploy/setup-pi.sh, of herstart handmatig."
+  echo "!!  Geen systemd-service gevonden."
+  echo "!!  Aanrader: 'bash deploy/setup-pi.sh' (dan herstart 'ie voortaan vanzelf)."
+  echo "!!  Nu even handmatig herstarten:"
+  echo "!!      fuser -k 5000/tcp ; .venv/bin/python -m rundashboard"
 fi
