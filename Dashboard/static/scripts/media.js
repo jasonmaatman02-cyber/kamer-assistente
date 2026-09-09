@@ -263,9 +263,9 @@ async function loadSpotifyDevices() {
   deviceFails = 0;
   box.innerHTML = ""; connectBtn.disabled = true; selectedDeviceId = null;
   if (!d.devices.length) {
-    box.innerHTML = '<p class="empty">Geen apparaten. Speakers (IKEA/Sonos) verschijnen ' +
-      'pas nadat je er één keer op hebt afgespeeld vanuit de Spotify-app. ' +
-      '<a href="#" id="dev-refresh" style="color:#00bfff">Ververs</a>.</p>';
+    box.innerHTML = `<p class="empty">Geen apparaten. Kies een speaker één keer in de
+      Spotify-app (Connect-icoon) — dan is het een Spotify Connect-apparaat en verschijnt
+      het hier. <a href="#" id="dev-refresh" style="color:#00bfff">Ververs</a>.</p>`;
     box.querySelector("#dev-refresh").addEventListener("click", e => { e.preventDefault(); loadSpotifyDevices(); });
     return;
   }
@@ -273,9 +273,11 @@ async function loadSpotifyDevices() {
     const div = document.createElement("div");
     div.className = "device-item";
     if (!dev.id) {
-      // Sonos/Cast: Spotify geeft geen id -> alleen tonen, niet aanklikbaar
-      div.textContent = `${dev.name} (${dev.type}) — speelt hier`;
+      // Sonos/Cast: Spotify geeft geen id -> niet bestuurbaar via de Web-API
+      div.innerHTML = `${esc(dev.name)} (${esc(dev.type)}) — <span class="muted">speelt hier, niet stuurbaar vanaf 't dashboard</span>`;
       div.style.opacity = "0.6";
+      div.title = "Kies deze speaker één keer in de Spotify-app (Connect-icoon). " +
+        "Daarna verschijnt 'ie hier mét knop.";
       box.appendChild(div);
       return;
     }
