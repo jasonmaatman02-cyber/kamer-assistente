@@ -297,6 +297,21 @@ def test_service_status_flags_no_device(monkeypatch):
     assert st["ok"] is True and st["no_device"] is True
     assert st["error"] == "geen apparaat actief"
 
+
+def test_service_status_probes_run_parallel(monkeypatch):
+    import time as _t
+
+    from Dashboard.backend import services
+
+    services._health_cache.clear()
+    monkeypatch.setattr(services, "_probe", lambda n: (_t.sleep(0.15) or (True, None)))
+    monkeypatch.setattr(services, "_spotify_has_device", lambda: True)
+    t0 = _t.time()
+    out = services.service_status()
+    dt = _t.time() - t0
+    assert set(out) == {"spotify", "radio", "weer", "agenda"}
+    assert dt < 0.45, f"probes lijken serieel ({dt:.2f}s, verwacht ~0.15s)"
+
     monkeypatch.setattr(services, "active_device_id", lambda sp: "dev123")
     services._health_cache.clear()
     st = services.service_status()["spotify"]

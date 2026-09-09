@@ -24,14 +24,17 @@ class SpotifyError(RuntimeError):
 class SpotifyDJ:
     def __init__(self):
         self.scope = SPOTIFY_SCOPE
-        self.sp = spotipy.Spotify(auth_manager=SpotifyOAuth(
-            client_id=config.secret("SPOTIFY_CLIENT_ID"),
-            client_secret=config.secret("SPOTIFY_CLIENT_SECRET"),
-            redirect_uri=config.secret("SPOTIFY_REDIRECT_URI", "http://127.0.0.1:8000/callback"),
-            scope=self.scope,
-            open_browser=False,
-            cache_path=_CACHE_PATH,
-        ))
+        self.sp = spotipy.Spotify(
+            requests_timeout=8, retries=1,      # niet eindeloos hangen op trage wifi
+            auth_manager=SpotifyOAuth(
+                client_id=config.secret("SPOTIFY_CLIENT_ID"),
+                client_secret=config.secret("SPOTIFY_CLIENT_SECRET"),
+                redirect_uri=config.secret("SPOTIFY_REDIRECT_URI", "http://127.0.0.1:8000/callback"),
+                scope=self.scope,
+                open_browser=False,
+                cache_path=_CACHE_PATH,
+            ),
+        )
 
     # ------------------------------------------------------------------ #
     def _call(self, what, fn, *a, **kw):

@@ -256,12 +256,20 @@ def _spotify_has_device() -> bool:
 
 def service_status() -> dict:
     now = time.time()
+    names = ("spotify", "radio", "weer", "agenda")
+
+    # verlopen probes parallel doen — scheelt seconden op trage wifi
+    stale = [n for n in names
+             if not (_health_cache.get(n) and _health_cache[n][2] >= now)]
+    if stale:
+        from concurrent.futures import ThreadPoolExecutor
+
+        with ThreadPoolExecutor(max_workers=len(stale)) as ex:
+            for n, res in zip(stale, ex.map(_probe, stale)):
+                _health_cache[n] = (res[0], res[1], now + _HEALTH_TTL)
+
     out = {}
-    for n in ("spotify", "radio", "weer", "agenda"):
-        cached = _health_cache.get(n)
-        if not cached or cached[2] < now:
-            ok, err = _probe(n)
-            _health_cache[n] = (ok, err, now + _HEALTH_TTL)
+    for n in names:
         ok, err, _ = _health_cache[n]
         out[n] = {"ok": ok, "error": err}
         if n == "spotify":
