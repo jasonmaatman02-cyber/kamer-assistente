@@ -24,8 +24,11 @@ class SpotifyError(RuntimeError):
 class SpotifyDJ:
     def __init__(self):
         self.scope = SPOTIFY_SCOPE
+        # requests_timeout blokkeert een eindeloze hang; retries op de default (3)
+        # laten -> een Sonos/SYMFONISK die Spotify traag opsomt (kort 503) valt
+        # anders uit sp.devices()
         self.sp = spotipy.Spotify(
-            requests_timeout=8, retries=1,      # niet eindeloos hangen op trage wifi
+            requests_timeout=10,
             auth_manager=SpotifyOAuth(
                 client_id=config.secret("SPOTIFY_CLIENT_ID"),
                 client_secret=config.secret("SPOTIFY_CLIENT_SECRET"),
