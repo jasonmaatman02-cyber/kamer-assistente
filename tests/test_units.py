@@ -307,6 +307,26 @@ def test_devices_includes_currently_playing(client, monkeypatch):
     assert d["devices"][0]["active"] is True
 
 
+def test_devices_shows_idless_sonos_as_playing(client, monkeypatch):
+    from Dashboard.backend import services
+
+    class FakeSp:
+        def devices(self):
+            return {"devices": [{"id": "phone1", "name": "iPhone", "type": "Smartphone", "is_active": False}]}
+        def current_playback(self):
+            # Sonos/Cast: Spotify geeft geen id terug
+            return {"device": {"id": None, "name": "Woonkamer", "type": "Speaker"}}
+
+    class FakeDJ:
+        sp = FakeSp()
+
+    monkeypatch.setitem(services._services, "spotify", FakeDJ())
+    devs = client.get("/api/devices").get_json()["devices"]
+    names = {x["name"]: x for x in devs}
+    assert "Woonkamer" in names and names["Woonkamer"]["id"] is None
+    assert names["Woonkamer"]["active"] is True
+
+
 # --- camera: kijkers begrenzen ----------------------------------------- #
 def test_camera_viewer_cap():
     import config

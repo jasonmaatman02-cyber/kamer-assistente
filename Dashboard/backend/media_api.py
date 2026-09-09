@@ -209,21 +209,26 @@ def devices():
                 devs[d["id"]] = d
     except Exception as exc:  # noqa: BLE001
         errors.append(str(exc))
-    # ...maar current_playback() kent 'm wel -> los toevoegen
+    # ...maar current_playback() kent 'm wel. Een Sonos/Cast krijgt van Spotify
+    # geen id (je kunt er niet via de Web-API naartoe schakelen) -> toch tonen,
+    # maar als 'speelt hier', niet als kies-doel.
+    playing = None
     try:
         dev = (sp.current_playback() or {}).get("device") or {}
         if dev.get("id"):
             devs.setdefault(dev["id"], dev)
+        elif dev.get("name"):
+            playing = {"id": None, "name": dev["name"], "type": dev.get("type", "Speaker"), "active": True}
     except Exception as exc:  # noqa: BLE001
         errors.append(str(exc))
 
-    if not devs and errors:
+    if not devs and not playing and errors:
         return jsonify({"success": False, "error": errors[0]}), 503
-    return jsonify({"success": True, "warning": errors[0] if errors else None, "devices": [
-        {"id": d["id"], "name": d.get("name", "?"), "type": d.get("type", "?"),
-         "active": bool(d.get("is_active"))}
-        for d in devs.values()
-    ]})
+    out = [{"id": d["id"], "name": d.get("name", "?"), "type": d.get("type", "?"),
+            "active": bool(d.get("is_active"))} for d in devs.values()]
+    if playing:
+        out.append(playing)
+    return jsonify({"success": True, "warning": errors[0] if errors else None, "devices": out})
 
 
 @media_bp.route("/api/set_device", methods=["POST"])

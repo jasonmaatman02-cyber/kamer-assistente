@@ -179,7 +179,7 @@ async function updateCurrentPlaying() {
   if (data.type === "spotify") {
     thumb.src = data.thumbnail || FALLBACK_ART;
     title.textContent = data.name;
-    artist.textContent = `${data.artist} • ${data.album}`;
+    artist.textContent = `${data.artist} • ${data.album}` + (data.device ? `  ·  ${data.device}` : "");
     progress.max = data.duration_ms;
     isPlaying = data.is_playing;
     btn.innerHTML = isPlaying ? "⏸" : "▶";
@@ -272,6 +272,13 @@ async function loadSpotifyDevices() {
   d.devices.forEach(dev => {
     const div = document.createElement("div");
     div.className = "device-item";
+    if (!dev.id) {
+      // Sonos/Cast: Spotify geeft geen id -> alleen tonen, niet aanklikbaar
+      div.textContent = `${dev.name} (${dev.type}) — speelt hier`;
+      div.style.opacity = "0.6";
+      box.appendChild(div);
+      return;
+    }
     div.textContent = `${dev.name} (${dev.type})${dev.active ? " ✅" : ""}`;
     div.addEventListener("click", () => {
       box.querySelectorAll(".device-item").forEach(x => x.classList.remove("selected"));
