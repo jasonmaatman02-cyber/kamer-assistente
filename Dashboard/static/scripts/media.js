@@ -262,7 +262,13 @@ async function loadSpotifyDevices() {
   }
   deviceFails = 0;
   box.innerHTML = ""; connectBtn.disabled = true; selectedDeviceId = null;
-  if (!d.devices.length) { box.innerHTML = '<p class="empty">Geen apparaten gevonden.</p>'; return; }
+  if (!d.devices.length) {
+    box.innerHTML = '<p class="empty">Geen apparaten. Speakers (IKEA/Sonos) verschijnen ' +
+      'pas nadat je er één keer op hebt afgespeeld vanuit de Spotify-app. ' +
+      '<a href="#" id="dev-refresh" style="color:#00bfff">Ververs</a>.</p>';
+    box.querySelector("#dev-refresh").addEventListener("click", e => { e.preventDefault(); loadSpotifyDevices(); });
+    return;
+  }
   d.devices.forEach(dev => {
     const div = document.createElement("div");
     div.className = "device-item";

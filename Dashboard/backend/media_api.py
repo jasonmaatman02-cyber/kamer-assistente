@@ -196,10 +196,19 @@ def seek():
 @media_bp.route("/api/devices")
 def devices():
     try:
-        devs = S.sp_dj().sp.devices()["devices"]
+        sp = S.sp_dj().sp
+        devs = {d["id"]: d for d in (sp.devices().get("devices") or []) if d.get("id")}
+        # het apparaat dat NU speelt staat er soms niet bij (Spotify Connect-quirk)
+        try:
+            dev = (sp.current_playback() or {}).get("device") or {}
+            if dev.get("id") and dev["id"] not in devs:
+                devs[dev["id"]] = dev
+        except Exception as exc:  # noqa: BLE001
+            S._degrade("devices/current_playback", exc)
         return jsonify({"success": True, "devices": [
-            {"id": d["id"], "name": d["name"], "type": d["type"], "active": d["is_active"]}
-            for d in devs
+            {"id": d["id"], "name": d.get("name", "?"), "type": d.get("type", "?"),
+             "active": bool(d.get("is_active"))}
+            for d in devs.values()
         ]})
     except Exception as exc:  # noqa: BLE001
         return jsonify({"success": False, "error": str(exc)}), 503
