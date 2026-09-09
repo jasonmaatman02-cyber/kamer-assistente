@@ -16,6 +16,22 @@ def _no_device_response():
     }), 409
 
 
+def _start_playback(sp, **kwargs):
+    """Speel af op het beste apparaat.
+
+    - Is er een apparaat mét id -> dat expliciet wekken en gebruiken.
+    - Geen id (bv. een Sonos die via z'n eigen Spotify speelt) -> zónder
+      device_id afspelen; Spotify stuurt het dan naar het actieve apparaat
+      (dat kan die Sonos zijn). Zoals de oude versie het deed.
+    - Vindt Spotify écht niks -> NO_ACTIVE_DEVICE, afgevangen door _play_error.
+    """
+    dev = S.active_device_id(sp)
+    if dev:
+        S.wake_device(sp, dev)
+        kwargs["device_id"] = dev
+    sp.start_playback(**kwargs)
+
+
 def _play_error(exc):
     msg = str(getattr(exc, "msg", "") or exc)
     if "NO_ACTIVE_DEVICE" in msg or "No active device" in msg:
@@ -96,12 +112,7 @@ def play_playlist():
     if not pid:
         return jsonify({"success": False, "error": "Geen playlist ID"}), 400
     try:
-        sp = S.sp_dj().sp
-        dev = S.active_device_id(sp)
-        if not dev:
-            return _no_device_response()
-        S.wake_device(sp, dev)
-        sp.start_playback(device_id=dev, context_uri=f"spotify:playlist:{pid}")
+        _start_playback(S.sp_dj().sp, context_uri=f"spotify:playlist:{pid}")
         return jsonify({"success": True})
     except Exception as exc:  # noqa: BLE001
         return _play_error(exc)
@@ -116,23 +127,18 @@ def play_track():
         return jsonify({"success": False, "error": "track_id ontbreekt"}), 400
     try:
         sp = S.sp_dj().sp
-        dev = S.active_device_id(sp)
-        if not dev:
-            return _no_device_response()
-        S.wake_device(sp, dev)
         track_uri = f"spotify:track:{track_id}"
         if playlist_id:
-            sp.start_playback(device_id=dev, context_uri=f"spotify:playlist:{playlist_id}",
-                              offset={"uri": track_uri})
+            _start_playback(sp, context_uri=f"spotify:playlist:{playlist_id}", offset={"uri": track_uri})
         else:
             try:
                 album_uri = sp.track(track_uri).get("album", {}).get("uri")
             except Exception:  # noqa: BLE001
                 album_uri = None
             if album_uri:
-                sp.start_playback(device_id=dev, context_uri=album_uri, offset={"uri": track_uri})
+                _start_playback(sp, context_uri=album_uri, offset={"uri": track_uri})
             else:
-                sp.start_playback(device_id=dev, uris=[track_uri])
+                _start_playback(sp, uris=[track_uri])
         return jsonify({"success": True, "track_id": track_id})
     except Exception as exc:  # noqa: BLE001
         return _play_error(exc)

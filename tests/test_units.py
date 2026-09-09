@@ -307,6 +307,27 @@ def test_devices_includes_currently_playing(client, monkeypatch):
     assert d["devices"][0]["active"] is True
 
 
+def test_start_playback_without_device_id_when_no_id(monkeypatch):
+    from Dashboard.backend import media_api, services
+
+    calls = []
+
+    class FakeSp:
+        def start_playback(self, **kw):
+            calls.append(kw)
+
+    # geen bestuurbaar apparaat (bv. Sonos zonder id)
+    monkeypatch.setattr(services, "active_device_id", lambda sp: None)
+    media_api._start_playback(FakeSp(), context_uri="spotify:playlist:x")
+    assert calls == [{"context_uri": "spotify:playlist:x"}]        # geen device_id -> Spotify's actieve apparaat
+
+    calls.clear()
+    monkeypatch.setattr(services, "active_device_id", lambda sp: "dev9")
+    monkeypatch.setattr(services, "wake_device", lambda sp, d: None)
+    media_api._start_playback(FakeSp(), uris=["spotify:track:1"])
+    assert calls == [{"uris": ["spotify:track:1"], "device_id": "dev9"}]
+
+
 def test_devices_shows_idless_sonos_as_playing(client, monkeypatch):
     from Dashboard.backend import services
 
