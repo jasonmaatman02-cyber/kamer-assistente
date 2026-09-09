@@ -346,7 +346,7 @@ def history(session: str = "voice") -> list:
 
 def reset_session(session: str = "voice") -> None:
     with _sessions_lock:
-        _sessions.pop(session, None)
+        _sessions.pop(session or "voice", None)
 
 
 def _trim(hist: list) -> None:
