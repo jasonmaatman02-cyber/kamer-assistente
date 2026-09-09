@@ -22,7 +22,13 @@ _lamp_conns: dict = {}
 _lamp_locks: dict = {}            # ip -> Lock (één verbinding per lamp tegelijk)
 _health_cache: dict = {}          # name -> (ok, error, expires_at)
 _HEALTH_TTL = 60
-_reg_lock = threading.RLock()     # beschermt het aanmaken van services/lampsloten
+_locks_lock = threading.Lock()    # beschermt _build_locks / _lamp_locks zelf
+_build_locks: dict = {}           # name -> Lock (per service, zodat er 4 tegelijk kunnen bouwen)
+
+
+def _named_lock(store: dict, key: str) -> threading.Lock:
+    with _locks_lock:
+        return store.setdefault(key, threading.Lock())
 
 
 def _build(name: str):
@@ -42,15 +48,16 @@ def _build(name: str):
 
 
 def svc(name: str):
-    """Return a shared service instance, or ``None`` if it can't be created."""
+    """Return a shared service instance, or ``None`` if it can't be created.
+    Per service een eigen bouw-lock: gelijktijdige requests voor verschillende
+    diensten (bv. de parallelle /api/overview-probes) bouwen wél tegelijk."""
     if name in _services:            # snelle weg, geen lock nodig
         return _services[name]
-    with _reg_lock:                  # één thread bouwt, de rest wacht
+    with _named_lock(_build_locks, name):
         if name in _services:
             return _services[name]
         try:
-            _services[name] = _build(name)
-            _errors.pop(name, None)
+            built = _build(name)
         except KeyError:
             return None
         except Exception as exc:  # noqa: BLE001 - één storing mag niet het hele dashboard slopen
@@ -60,7 +67,10 @@ def svc(name: str):
             print(f"[dashboard] service '{name}' niet beschikbaar: {exc}")
             if first_time:  # niet elke poll opnieuw in het logboek spammen
                 log("Service", f"{name} niet beschikbaar: {exc}")
-        return _services[name]
+            return None
+        _services[name] = built
+        _errors.pop(name, None)
+        return built
 
 
 def errors() -> dict:
@@ -69,18 +79,19 @@ def errors() -> dict:
 
 def reset_services():
     """Called after a settings/secret change so new config takes effect."""
-    with _reg_lock:
+    with _locks_lock:
         _services.clear()
         _errors.clear()
         _health_cache.clear()
         _lamp_conns.clear()
         _lamp_locks.clear()
+        _build_locks.clear()
     try:
         from Dashboard.backend.camera_api import camera
 
         camera.release()
-    except Exception:  # noqa: BLE001
-        pass
+    except Exception as exc:  # noqa: BLE001 - reload mag hier niet op stuk lopen
+        print(f"[services] camera.release bij reset: {exc!r}")
 
 
 def _is_expected(exc: BaseException) -> bool:
@@ -110,9 +121,7 @@ def lamp(ip: str):
     existing = _lamp_conns.get(ip)
     if existing is not None and existing.lamp is not None:
         return existing
-    with _reg_lock:
-        lk = _lamp_locks.setdefault(ip, threading.Lock())
-    with lk:
+    with _named_lock(_lamp_locks, ip):
         existing = _lamp_conns.get(ip)
         if existing is not None and existing.lamp is not None:
             return existing

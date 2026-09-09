@@ -262,6 +262,30 @@ def test_svc_builds_once_under_concurrency(monkeypatch):
     assert len({id(g) for g in got}) == 1     # iedereen kreeg hetzelfde object
 
 
+def test_svc_different_services_build_in_parallel(monkeypatch):
+    import threading
+    import time as _t
+
+    from Dashboard.backend import services
+
+    services._services.clear()
+    services._build_locks.clear()
+
+    def slow_build(name):
+        _t.sleep(0.15)
+        return object()
+
+    monkeypatch.setattr(services, "_build", slow_build)
+    t0 = _t.time()
+    threads = [threading.Thread(target=services.svc, args=(n,))
+               for n in ("spotify", "radio", "weer", "agenda")]
+    for x in threads:
+        x.start()
+    for x in threads:
+        x.join()
+    assert _t.time() - t0 < 0.45              # per-naam lock -> 4× parallel, niet serieel
+
+
 # --- camera: kijkers begrenzen ----------------------------------------- #
 def test_camera_viewer_cap():
     import config

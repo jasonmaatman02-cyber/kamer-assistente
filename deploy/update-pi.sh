@@ -17,9 +17,9 @@ if [ -n "$(git status --porcelain)" ]; then
   echo "==> tijdelijk geparkeerd in de stash ($STASH_MSG)"
 fi
 
-# ---- pull (fast-forward) ----
-echo "==> git pull --ff-only"
-if ! git pull --ff-only origin main; then
+# ---- pull (fast-forward) — fetch is hierboven al gedaan ----
+echo "==> git merge --ff-only origin/main"
+if ! git merge --ff-only origin/main; then
   echo
   echo "!!  Kon niet fast-forwarden — je Pi loopt voor op origin/main"
   echo "!!  (lokale commits?). Bekijk 'git log --oneline origin/main..HEAD'."
