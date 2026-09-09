@@ -24,6 +24,24 @@ class _Camera:
         self._stop = threading.Event()
         self.error = None
 
+    def _max_viewers(self) -> int:
+        # elke kijker houdt een waitress-worker bezig; laat er genoeg vrij
+        return max(1, int(config.get("camera.max_viewers", 3)))
+
+    def try_acquire(self) -> bool:
+        """Plek claimen voor één kijker (atomair). False = te vol."""
+        with self._lock:
+            if self._viewers >= self._max_viewers():
+                return False
+            self._viewers += 1
+            return True
+
+    def _release(self):
+        with self._lock:
+            self._viewers = max(0, self._viewers - 1)
+            if self._viewers == 0:
+                self._stop.set()
+
     def _open_source(self, w, h, fps):
         """(read_fn, close_fn) voor de beste beschikbare camera-backend.
 
@@ -112,9 +130,8 @@ class _Camera:
         self._stop.set()
 
     def frames(self):
+        """Aanroeper moet eerst try_acquire() gedaan hebben."""
         self._ensure_running()
-        with self._lock:
-            self._viewers += 1
         last = 0
         idle = 0
         try:
@@ -131,10 +148,7 @@ class _Camera:
                         break
                 time.sleep(1.0 / max(1, config.get("camera.fps", 10)))
         finally:
-            with self._lock:
-                self._viewers -= 1
-                if self._viewers <= 0:
-                    self._stop.set()
+            self._release()
 
 
 camera = _Camera()
@@ -145,6 +159,8 @@ camera = _Camera()
 def video_feed():
     if not config.get("camera.enabled", True):
         return Response("camera uit", status=503)
+    if not camera.try_acquire():
+        return Response("Te veel camerakijkers open — sluit een ander tabblad.", status=503)
     return Response(
         camera.frames(),
         mimetype="multipart/x-mixed-replace; boundary=frame",

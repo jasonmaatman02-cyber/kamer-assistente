@@ -186,6 +186,21 @@ def test_use_porcupine_respects_config(monkeypatch):
     assert Whisper._use_porcupine() is False          # geforceerd maar niet klaar
 
 
+# --- camera: kijkers begrenzen ----------------------------------------- #
+def test_camera_viewer_cap():
+    import config
+    from Dashboard.backend.camera_api import _Camera
+
+    config.set("camera.max_viewers", 2)
+    cam = _Camera()
+    assert cam.try_acquire() is True
+    assert cam.try_acquire() is True
+    assert cam.try_acquire() is False        # vol
+    cam._release()
+    assert cam.try_acquire() is True         # weer plek
+    assert cam._viewers == 2
+
+
 # --- spotify "geen apparaat"-status in /api/service_status --------------- #
 def test_service_status_flags_no_device(monkeypatch):
     from Dashboard.backend import services
