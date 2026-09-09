@@ -58,13 +58,15 @@ def service_status():
 
 @system_bp.route("/api/weather")
 def weather():
-    data = S.weather_data(request.args.get("city"))
+    # de losse route (Environment-pagina "verversen") wil verse data;
+    # /api/overview mag de cache van services gebruiken
+    data = S.weather_data(request.args.get("city"), fresh=True)
     return jsonify(data), (503 if data.get("error") else 200)
 
 
 @system_bp.route("/api/calendar_today")
 def calendar_today():
-    return jsonify(S.calendar_today())
+    return jsonify(S.calendar_today(fresh=True))
 
 
 @system_bp.route("/api/overview")

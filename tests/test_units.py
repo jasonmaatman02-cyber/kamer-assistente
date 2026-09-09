@@ -334,6 +334,26 @@ def test_degrade_only_flags_unexpected(capsys):
     assert "onverwachte fout" in capsys.readouterr().out
 
 
+def test_weather_data_is_cached(monkeypatch):
+    from Dashboard.backend import services
+
+    services._data_cache.clear()
+    calls = {"n": 0}
+
+    class FakeW:
+        def fetch_weather(self, city=None):
+            calls["n"] += 1
+            return {"temp": 12, "city": city or "Arnhem"}
+
+    monkeypatch.setitem(services._services, "weer", FakeW())
+
+    a = services.weather_data()
+    b = services.weather_data()                  # binnen TTL -> uit cache
+    assert a == b and calls["n"] == 1
+    services.weather_data(fresh=True)            # bypass
+    assert calls["n"] == 2
+
+
 def test_service_status_probes_run_parallel(monkeypatch):
     import time as _t
 

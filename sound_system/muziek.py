@@ -172,6 +172,7 @@ class SpotifyDJ:
                 "duration_ms": duration_ms,
                 "remaining_ms": duration_ms - progress_ms,
                 "is_playing": playback["is_playing"],
+                "volume": (playback.get("device") or {}).get("volume_percent", 50),
             }
         except Exception as e:  # noqa: BLE001
             return {"type": "error", "info": str(e)}

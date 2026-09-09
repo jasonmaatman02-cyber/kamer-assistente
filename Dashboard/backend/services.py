@@ -21,6 +21,7 @@ _errors: dict = {}
 _lamp_conns: dict = {}
 _lamp_locks: dict = {}            # ip -> Lock (één verbinding per lamp tegelijk)
 _health_cache: dict = {}          # name -> (ok, error, expires_at)
+_data_cache: dict = {}            # key -> (value, expires_at) — weer/agenda voor /api/overview
 _HEALTH_TTL = 60
 _locks_lock = threading.Lock()    # beschermt _build_locks / _lamp_locks zelf
 _build_locks: dict = {}           # name -> Lock (per service, zodat er 4 tegelijk kunnen bouwen)
@@ -83,6 +84,7 @@ def reset_services():
         _services.clear()
         _errors.clear()
         _health_cache.clear()
+        _data_cache.clear()
         _lamp_conns.clear()
         _lamp_locks.clear()
         _build_locks.clear()
@@ -306,21 +308,46 @@ def service_status() -> dict:
     return out
 
 
-def weather_data(city=None) -> dict:
-    w = svc("weer")
-    if not w:
-        return {"error": _errors.get("weer", "weer niet beschikbaar")}
-    return w.fetch_weather(city) or {"error": "geen weerdata"}
+# /api/overview wordt elke ~10s gepolld; weer/agenda hoeven niet zo vaak vers
+def _cached(key: str, ttl: float, produce):
+    now = time.time()
+    hit = _data_cache.get(key)
+    if hit and hit[1] >= now:
+        return hit[0]
+    val = produce()
+    # een foutresultaat kort cachen zodat we niet elke 10s opnieuw hameren
+    _data_cache[key] = (val, now + (20 if isinstance(val, dict) and val.get("error") else ttl))
+    return val
 
 
-def calendar_today() -> dict:
-    cal = svc("agenda")
-    if not cal:
-        return {"events": [], "error": _errors.get("agenda")}
-    try:
-        return {"events": cal.return_todays_events()}
-    except Exception as exc:  # noqa: BLE001
-        return {"events": [], "error": str(exc)}
+def weather_data(city=None, fresh: bool = False) -> dict:
+    key = f"weather:{city or '_'}"
+    if fresh:
+        _data_cache.pop(key, None)
+
+    def fetch():
+        w = svc("weer")
+        if not w:
+            return {"error": _errors.get("weer", "weer niet beschikbaar")}
+        return w.fetch_weather(city) or {"error": "geen weerdata"}
+
+    return _cached(key, 600, fetch)   # 10 min
+
+
+def calendar_today(fresh: bool = False) -> dict:
+    if fresh:
+        _data_cache.pop("calendar:today", None)
+
+    def fetch():
+        cal = svc("agenda")
+        if not cal:
+            return {"events": [], "error": _errors.get("agenda")}
+        try:
+            return {"events": cal.return_todays_events()}
+        except Exception as exc:  # noqa: BLE001
+            return {"events": [], "error": str(exc)}
+
+    return _cached("calendar:today", 300, fetch)           # 5 min
 
 
 def current_playing() -> dict:
@@ -329,8 +356,7 @@ def current_playing() -> dict:
         try:
             data = sp.current_track()
             if data.get("type") == "spotify":
-                pb = sp.sp.current_playback()
-                data["volume"] = (pb or {}).get("device", {}).get("volume_percent", 50)
+                data.setdefault("volume", 50)   # current_track levert 'm al mee
                 return data
         except Exception as exc:  # noqa: BLE001
             _degrade("current_playing/spotify", exc)
