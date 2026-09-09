@@ -5,9 +5,22 @@ hardware/network-y happens at import time — every external service is created
 lazily in :mod:`Dashboard.backend.services` and wrapped so one failure degrades
 a single card instead of the whole dashboard.
 """
-from flask import Flask
+from urllib.parse import urlparse
+
+from flask import Flask, request
 
 app = Flask(__name__, template_folder="../", static_folder="../static")
+
+
+@app.before_request
+def _csrf_guard():
+    """Blokkeer state-changing requests van een andere site (CSRF). Same-origin
+    browserverzoeken sturen een matchende Origin; curl/scripts sturen er geen."""
+    if request.method in ("GET", "HEAD", "OPTIONS"):
+        return
+    origin = request.headers.get("Origin")
+    if origin and urlparse(origin).netloc and urlparse(origin).netloc != request.host:
+        return ("cross-site verzoek geweigerd", 403)
 
 from Dashboard.backend.auth import auth_bp
 from Dashboard.backend.camera_api import camera_bp

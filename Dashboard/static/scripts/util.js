@@ -1,5 +1,12 @@
 // Shared helpers for every dashboard page.
 (function (w) {
+  // HTML-escape voor tekst die via innerHTML in de pagina komt (notities,
+  // logregels, agenda-items, routine-namen — kunnen <script>/<img onerror> bevatten)
+  const _E = { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" };
+  function esc(s) {
+    return String(s == null ? "" : s).replace(/[&<>"']/g, c => _E[c]);
+  }
+
   function jget(url, ms = 8000) {
     const c = new AbortController();
     const t = setTimeout(() => c.abort(), ms);
@@ -32,5 +39,6 @@
     el._t = setTimeout(() => (el.className = "toast" + (isErr ? " err" : "")), 3500);
   }
 
-  w.KT = { jget, jpost, jput, jdel, toast };
+  w.KT = { jget, jpost, jput, jdel, toast, esc };
+  w.esc = esc;   // ook los beschikbaar voor de pagina-scripts
 })(window);

@@ -130,16 +130,16 @@ function renderField(section, f) {
   let input;
   if (f.type === "select") {
     input = `<select id="${id}" data-section="${section}" data-path="${f.path}" data-type="text">` +
-      f.options.map(o => `<option value="${o}" ${String(val) === String(o) ? "selected" : ""}>${o}</option>`).join("") + `</select>`;
+      f.options.map(o => `<option value="${esc(o)}" ${String(val) === String(o) ? "selected" : ""}>${esc(o)}</option>`).join("") + `</select>`;
   } else if (f.type === "textarea") {
-    input = `<textarea id="${id}" rows="5" data-section="${section}" data-path="${f.path}" data-type="text">${val ?? ""}</textarea>`;
+    input = `<textarea id="${id}" rows="5" data-section="${section}" data-path="${f.path}" data-type="text">${esc(val ?? "")}</textarea>`;
   } else if (f.type === "list") {
-    input = `<input type="text" id="${id}" data-section="${section}" data-path="${f.path}" data-type="list" value="${Array.isArray(val) ? val.join(", ") : (val ?? "")}">`;
+    input = `<input type="text" id="${id}" data-section="${section}" data-path="${f.path}" data-type="list" value="${esc(Array.isArray(val) ? val.join(", ") : (val ?? ""))}">`;
   } else if (f.type === "number") {
     input = `<input type="number" id="${id}" data-section="${section}" data-path="${f.path}" data-type="number"
-      value="${val ?? ""}" ${f.min != null ? `min="${f.min}"` : ""} ${f.max != null ? `max="${f.max}"` : ""} ${f.step != null ? `step="${f.step}"` : ""}>`;
+      value="${esc(val ?? "")}" ${f.min != null ? `min="${f.min}"` : ""} ${f.max != null ? `max="${f.max}"` : ""} ${f.step != null ? `step="${f.step}"` : ""}>`;
   } else {
-    input = `<input type="text" id="${id}" data-section="${section}" data-path="${f.path}" data-type="text" value="${val ?? ""}">`;
+    input = `<input type="text" id="${id}" data-section="${section}" data-path="${f.path}" data-type="text" value="${esc(val ?? "")}">`;
   }
   return `<div class="field"><label for="${id}">${f.label}</label>${input}${hint}</div>`;
 }
@@ -148,8 +148,8 @@ function renderLamps() {
   const lamps = (CURRENT.devices && CURRENT.devices.lamps) || [];
   const rows = lamps.map((l, i) => `
     <div class="field row" data-lamp-row="${i}">
-      <input type="text" class="lamp-name" data-i="${i}" value="${l.name || ""}" placeholder="Naam" style="flex:1">
-      <input type="text" class="lamp-ip" data-i="${i}" value="${l.ip || ""}" placeholder="192.168.x.x" style="flex:1">
+      <input type="text" class="lamp-name" data-i="${i}" value="${esc(l.name || "")}" placeholder="Naam" style="flex:1">
+      <input type="text" class="lamp-ip" data-i="${i}" value="${esc(l.ip || "")}" placeholder="192.168.x.x" style="flex:1">
       <button type="button" class="btn small danger" data-remove-lamp="${i}">×</button>
     </div>`).join("");
   return `<div class="card"><h3><i class="fa fa-lightbulb"></i> Lampen (Tapo)</h3>
@@ -306,9 +306,9 @@ function lockedCard(d) {
 
 function field(key, label, type, s) {
   const ph = s.set ? (s.hint || "••••••") : "niet ingesteld";
-  return `<div class="field"><label>${label}</label>
-    <input type="${type === "password" ? "password" : "text"}" data-secret="${key}"
-      placeholder="${ph}" autocomplete="off"></div>`;
+  return `<div class="field"><label>${esc(label)}</label>
+    <input type="${type === "password" ? "password" : "text"}" data-secret="${esc(key)}"
+      placeholder="${esc(ph)}" autocomplete="off"></div>`;
 }
 
 function unlockedCards(d) {

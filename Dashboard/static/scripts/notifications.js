@@ -30,8 +30,8 @@ function render() {
   body.innerHTML = rows.map(n => {
     const isNew = seen && keyOf(n) > seen;
     return `<tr${isNew ? ' style="background:#16202f"' : ""}>
-      <td class="muted">${n.time || ""}${isNew ? ' <i class="fa fa-circle" style="color:#00bfff;font-size:7px"></i>' : ""}</td>
-      <td>${n.subject || ""}</td><td>${n.message || ""}</td></tr>`;
+      <td class="muted">${esc(n.time || "")}${isNew ? ' <i class="fa fa-circle" style="color:#00bfff;font-size:7px"></i>' : ""}</td>
+      <td>${esc(n.subject || "")}</td><td>${esc(n.message || "")}</td></tr>`;
   }).join("");
 }
 
@@ -47,7 +47,7 @@ async function load() {
     const sel = $("f-subject");
     const cur = sel.value;
     sel.innerHTML = '<option value="">Alle onderwerpen</option>' +
-      subs.map(s => `<option${s === cur ? " selected" : ""}>${s}</option>`).join("");
+      subs.map(s => `<option${s === cur ? " selected" : ""}>${esc(s)}</option>`).join("");
     // nieuw sinds vorige keer
     const seen = lastSeen();
     const n = seen ? ALL.filter(x => keyOf(x) > seen).length : 0;

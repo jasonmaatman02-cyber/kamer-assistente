@@ -29,7 +29,7 @@ function bar(pct) {
   return `<div class="bar"><span class="${cls}" style="width:${Math.min(100, pct)}%"></span></div>`;
 }
 function renderSystem(d) {
-  if (!d || d.error) { $("sys-stats").innerHTML = `<p class="empty">${d?.error || "niet beschikbaar"}</p>`; return; }
+  if (!d || d.error) { $("sys-stats").innerHTML = `<p class="empty">${esc(d?.error || "niet beschikbaar")}</p>`; return; }
   const rows = [
     ["CPU", d.cpu_percent, `${d.cpu_percent}%`],
     ["Memory", d.mem_percent, `${d.mem_used_mb}/${d.mem_total_mb} MB`],
@@ -49,8 +49,8 @@ function renderServices(d) {
   $("service-status").innerHTML = Object.entries(d).map(([k, v]) => {
     const extra = v.needs_relink
       ? ` <a href="/settings" style="color:#00bfff">opnieuw koppelen</a>`
-      : v.error ? ` <span class="muted">(${v.error})</span>` : "";
-    return `<p><i class="fa fa-circle ${v.ok ? "green" : "red"}"></i> ${label[k] || k}${extra}</p>`;
+      : v.error ? ` <span class="muted">(${esc(v.error)})</span>` : "";
+    return `<p><i class="fa fa-circle ${v.ok ? "green" : "red"}"></i> ${esc(label[k] || k)}${extra}</p>`;
   }).join("");
   const conn = $("conn-status");
   const down = Object.values(d).filter(v => !v.ok).length;
@@ -71,13 +71,13 @@ function renderWeather(d) {
 function renderAgenda(d) {
   const box = document.querySelector(".agenda-list");
   box.innerHTML = (d && d.events && d.events.length)
-    ? d.events.map(ev => `<p>${ev}</p>`).join("")
-    : `<p class="empty">${d && d.error ? "Agenda: " + d.error : "Geen events vandaag."}</p>`;
+    ? d.events.map(ev => `<p>${esc(ev)}</p>`).join("")
+    : `<p class="empty">${d && d.error ? "Agenda: " + esc(d.error) : "Geen events vandaag."}</p>`;
 }
 function renderNotes(notes) {
   const box = $("notes-list");
   box.innerHTML = (notes && notes.length)
-    ? notes.slice(-6).reverse().map(n => `<p>• ${n}</p>`).join("")
+    ? notes.slice(-6).reverse().map(n => `<p>• ${esc(n)}</p>`).join("")
     : '<p class="empty">Nog geen notities.</p>';
 }
 let npState = { type: "none" };
@@ -172,14 +172,14 @@ $("note-input").addEventListener("keydown", e => { if (e.key === "Enter") { e.pr
     if (d.status === "running") { body.innerHTML = MEET; btn.disabled = true; return; }
     btn.disabled = false;
     if (d.status === "error") {
-      body.innerHTML = `<p class="empty">Mislukt: ${d.error || "?"}</p>`;
+      body.innerHTML = `<p class="empty">Mislukt: ${esc(d.error || "?")}</p>`;
     } else if (d.result) {
       const r = d.result;
       body.innerHTML =
-        `<div class="stat-row"><span>Download</span><span>${r.down_mbps} Mbit/s</span></div>` +
-        `<div class="stat-row"><span>Upload</span><span>${r.up_mbps} Mbit/s</span></div>` +
-        `<div class="stat-row"><span>Ping</span><span>${r.ping_ms} ms</span></div>` +
-        `<p class="muted" style="margin-top:6px">${[r.server, r.tested_at].filter(Boolean).join(" • ")}</p>`;
+        `<div class="stat-row"><span>Download</span><span>${Number(r.down_mbps)} Mbit/s</span></div>` +
+        `<div class="stat-row"><span>Upload</span><span>${Number(r.up_mbps)} Mbit/s</span></div>` +
+        `<div class="stat-row"><span>Ping</span><span>${Number(r.ping_ms)} ms</span></div>` +
+        `<p class="muted" style="margin-top:6px">${esc([r.server, r.tested_at].filter(Boolean).join(" • "))}</p>`;
     } else {
       body.innerHTML = '<p class="muted">Nog niet getest.</p>';
     }

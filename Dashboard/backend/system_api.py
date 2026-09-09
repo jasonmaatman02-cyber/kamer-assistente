@@ -21,6 +21,7 @@ def get_settings():
 
 
 @system_bp.route("/api/settings", methods=["POST"])
+@require_password
 def set_settings():
     patch = request.get_json(silent=True) or {}
     if not isinstance(patch, dict):

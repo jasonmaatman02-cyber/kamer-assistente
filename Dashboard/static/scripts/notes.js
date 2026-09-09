@@ -16,7 +16,7 @@ async function load() {
       return;
     }
     body.innerHTML = d.notes.map((n, i) =>
-      `<tr><td>${n}</td><td style="width:40px;text-align:right">
+      `<tr><td>${esc(n)}</td><td style="width:40px;text-align:right">
         <button class="btn small danger" data-del="${i}">×</button></td></tr>`
     ).join("");
     body.querySelectorAll("[data-del]").forEach(b => b.addEventListener("click", async () => {
@@ -53,7 +53,7 @@ async function loadAlarm() {
   try {
     const [al, rl] = await Promise.all([j("/api/alarm"), j("/api/routines")]);
     aRoutine.innerHTML = (rl.routines || []).map(r =>
-      `<option value="${r.id}" ${r.id === al.routine ? "selected" : ""}>${r.name}</option>`).join("");
+      `<option value="${esc(r.id)}" ${r.id === al.routine ? "selected" : ""}>${esc(r.name)}</option>`).join("");
     if (al.set) {
       aStatus.textContent = `Staat aan: ${al.when} → ${al.routine}`;
       aStatus.className = "";

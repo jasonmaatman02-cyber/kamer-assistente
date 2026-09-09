@@ -16,10 +16,10 @@ async function load() {
     const d = await j("/api/routines");
     grid.innerHTML = d.routines.map(r => `
       <div class="card">
-        <h3><i class="fa ${ICONS[r.id] || "fa-bolt"}"></i> ${r.name}</h3>
-        <p class="muted">${r.desc || ""}</p>
-        <button class="btn primary" data-run="${r.id}"><i class="fa fa-play"></i> Nu uitvoeren</button>
-        ${r.builtin ? "" : `<button class="btn small danger" data-del="${r.id}" style="margin-left:6px"><i class="fa fa-trash"></i></button>`}
+        <h3><i class="fa ${ICONS[r.id] || "fa-bolt"}"></i> ${esc(r.name)}</h3>
+        <p class="muted">${esc(r.desc || "")}</p>
+        <button class="btn primary" data-run="${esc(r.id)}"><i class="fa fa-play"></i> Nu uitvoeren</button>
+        ${r.builtin ? "" : `<button class="btn small danger" data-del="${esc(r.id)}" style="margin-left:6px"><i class="fa fa-trash"></i></button>`}
       </div>`).join("");
     grid.querySelectorAll("[data-run]").forEach(btn => btn.addEventListener("click", async () => {
       btn.disabled = true;

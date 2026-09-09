@@ -83,7 +83,7 @@ async function fetchPlaylists() {
   const { ok, d } = await jget("/api/playlists").catch(() => ({ ok: false, d: null }));
   if (!ok || !Array.isArray(d)) {
     checkRelink(d);
-    box.innerHTML = `<p class="empty">${(d && d.error) ? "Spotify: " + d.error : "Spotify niet verbonden."}</p>`;
+    box.innerHTML = `<p class="empty">${(d && d.error) ? "Spotify: " + esc(d.error) : "Spotify niet verbonden."}</p>`;
     return;
   }
   if (!d.length) { box.innerHTML = '<p class="empty">Geen playlists.</p>'; return; }
@@ -92,9 +92,9 @@ async function fetchPlaylists() {
     const div = document.createElement("div");
     div.className = "playlist-item";
     div.innerHTML = `
-      <img src="${p.thumbnail || FALLBACK_ART}" class="playlist-thumb" onerror="this.src='${FALLBACK_ART}'">
-      <div class="playlist-info"><h4>${p.naam || "?"}</h4><p>${[p.tracks_count ? p.tracks_count + " nummers" : "", p.duur].filter(Boolean).join(" • ") || " "}</p></div>
-      <button class="play-btn" data-id="${p.id}"><i class="fa fa-play"></i></button>`;
+      <img src="${esc(p.thumbnail || FALLBACK_ART)}" class="playlist-thumb" onerror="this.src='${FALLBACK_ART}'">
+      <div class="playlist-info"><h4>${esc(p.naam || "?")}</h4><p>${esc([p.tracks_count ? p.tracks_count + " nummers" : "", p.duur].filter(Boolean).join(" • ") || " ")}</p></div>
+      <button class="play-btn" data-id="${esc(p.id)}"><i class="fa fa-play"></i></button>`;
     box.appendChild(div);
     div.querySelector(".play-btn").addEventListener("click", async e => {
       e.stopPropagation();
@@ -112,7 +112,7 @@ async function openPlaylistOverlay(playlistId) {
   const list = $("tracks-list");
   list.innerHTML = '<p class="empty">laden…</p>';
   const { ok, d } = await jget(`/api/playlist_tracks/${playlistId}`).catch(() => ({ ok: false }));
-  if (!ok || !d || d.error) { list.innerHTML = `<p class="empty">${(d && d.error) || "Kan playlist niet laden"}</p>`; return; }
+  if (!ok || !d || d.error) { list.innerHTML = `<p class="empty">${esc((d && d.error) || "Kan playlist niet laden")}</p>`; return; }
   $("overlay-thumb").src = d.thumbnail || FALLBACK_ART;
   $("overlay-title").textContent = d.name || "";
   const tr = d.tracks || [];
@@ -123,8 +123,8 @@ async function openPlaylistOverlay(playlistId) {
     const div = document.createElement("div");
     div.className = "track";
     div.innerHTML = `
-      <div class="track-info"><h4>${i + 1}. ${track.name}</h4><p>${track.artist}</p></div>
-      <div><span>${track.duration}</span><button class="track-play" data-id="${track.id}">▶</button></div>`;
+      <div class="track-info"><h4>${i + 1}. ${esc(track.name)}</h4><p>${esc(track.artist)}</p></div>
+      <div><span>${esc(track.duration)}</span><button class="track-play" data-id="${esc(track.id)}">▶</button></div>`;
     list.appendChild(div);
     div.querySelector(".track-play").addEventListener("click", async () => {
       await playAction("/api/play_track", { track_id: track.id, playlist_id: overlay.dataset.playlistId });
@@ -147,10 +147,10 @@ async function loadRadioStations() {
   d.forEach(s => {
     const div = document.createElement("div");
     div.className = "station";
-    div.innerHTML = `<span>${s.name}</span>
+    div.innerHTML = `<span>${esc(s.name)}</span>
       <div class="station-controls">
-        <button class="play" data-name="${s.name}">▶</button>
-        <button class="stop" data-name="${s.name}">■</button>
+        <button class="play" data-name="${esc(s.name)}">▶</button>
+        <button class="stop" data-name="${esc(s.name)}">■</button>
       </div>`;
     box.appendChild(div);
     div.querySelector(".play").addEventListener("click", async () => {
@@ -293,15 +293,15 @@ searchInput.addEventListener("input", () => {
   searchTimer = setTimeout(async () => {
     const { d } = await jget(`/api/search_spotify?query=${encodeURIComponent(q)}`).catch(() => ({ d: {} }));
     const tracks = (d && d.tracks) || [];
-    if (!tracks.length) { results.innerHTML = `<p class="empty">${(d && d.error) ? d.error : "Geen resultaten."}</p>`; return; }
+    if (!tracks.length) { results.innerHTML = `<p class="empty">${(d && d.error) ? esc(d.error) : "Geen resultaten."}</p>`; return; }
     results.innerHTML = "";
     tracks.forEach(track => {
       const div = document.createElement("div");
       div.className = "search-result-item";
       div.innerHTML = `
-        <img src="${track.thumbnail || FALLBACK_ART}" onerror="this.src='${FALLBACK_ART}'">
-        <div class="search-result-info"><h4>${track.name}</h4><p>${track.artist}</p></div>
-        <button class="play-track-btn" data-id="${track.id}">▶</button>`;
+        <img src="${esc(track.thumbnail || FALLBACK_ART)}" onerror="this.src='${FALLBACK_ART}'">
+        <div class="search-result-info"><h4>${esc(track.name)}</h4><p>${esc(track.artist)}</p></div>
+        <button class="play-track-btn" data-id="${esc(track.id)}">▶</button>`;
       div.querySelector(".play-track-btn").addEventListener("click", async e => {
         e.stopPropagation();
         await playAction("/api/play_track", { track_id: track.id });

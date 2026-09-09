@@ -173,6 +173,23 @@ def test_speedtest_start_needs_password(client, monkeypatch):
     assert client.post("/api/speedtest").status_code == 401
 
 
+def test_settings_post_needs_password(client, monkeypatch):
+    monkeypatch.setenv("DASHBOARD_PASSWORD", "geheim")
+    assert client.post("/api/settings", json={"camera": {"fps": 9}}).status_code == 401
+    client.post("/api/login", json={"password": "geheim"})
+    assert client.post("/api/settings", json={"camera": {"fps": 9}}).status_code == 200
+
+
+def test_csrf_guard_blocks_foreign_origin(client):
+    # zelfde-origin / geen Origin -> ok
+    assert client.post("/api/alarm", json={"time": "07:00"}).status_code in (200, 400)
+    client.delete("/api/alarm")
+    # andere site -> 403, nog voor de route draait
+    r = client.post("/api/alarm", json={"time": "07:00"},
+                    headers={"Origin": "http://evil.example"})
+    assert r.status_code == 403
+
+
 def test_alarm_set_and_clear(client):
     from Dashboard.backend import routines_api
 
