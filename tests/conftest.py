@@ -32,6 +32,11 @@ def _offline(monkeypatch, tmp_path):
     services._errors.clear()
     services._health_cache.clear()
 
+    # verse chat-sessies per test
+    from logic import gpt_handler
+
+    gpt_handler._sessions.clear()
+
 
 @pytest.fixture()
 def client():

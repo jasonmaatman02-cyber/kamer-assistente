@@ -100,10 +100,30 @@ def test_verwerk_input_stream_plain(monkeypatch):
     monkeypatch.setattr(llm, "chat_stream", fake_stream)
     from logic import gpt_handler
 
-    monkeypatch.setattr(gpt_handler, "conversation_history", [{"role": "system", "content": "x"}])
-    out = "".join(gpt_handler.verwerk_input_stream("hoi"))
+    gpt_handler.reset_session("t1")
+    out = "".join(gpt_handler.verwerk_input_stream("hoi", session="t1"))
     assert out == "Hallo!"
-    assert gpt_handler.conversation_history[-1] == {"role": "assistant", "content": "Hallo!"}
+    assert gpt_handler.history("t1")[-1] == {"role": "assistant", "content": "Hallo!"}
+
+
+def test_chat_sessions_are_isolated(monkeypatch):
+    import ai.llm as llm
+    from logic import gpt_handler
+
+    seen = {}
+
+    def fake_stream(messages, tools=None):
+        seen["n"] = len(messages)          # hoeveel berichten ziet de LLM?
+        yield {"type": "done", "content": "ok"}
+
+    monkeypatch.setattr(llm, "chat_stream", fake_stream)
+    gpt_handler.reset_session("a")
+    gpt_handler.reset_session("b")
+    "".join(gpt_handler.verwerk_input_stream("hoi 1", session="a"))
+    "".join(gpt_handler.verwerk_input_stream("hoi 2", session="a"))
+    "".join(gpt_handler.verwerk_input_stream("hoi", session="b"))
+    assert seen["n"] == 2                  # sessie b: alleen system + 1 user, niet die van a
+    assert len(gpt_handler.history("a")) == 5   # system + 2×(user+assistant)
 
 
 def test_llm_model_missing_skips_openai_fallback(monkeypatch):
@@ -138,9 +158,9 @@ def test_verwerk_input_stream_tool(monkeypatch):
     monkeypatch.setattr(llm, "chat_stream", fake_stream)
     from logic import gpt_handler
 
-    monkeypatch.setattr(gpt_handler, "conversation_history", [{"role": "system", "content": "x"}])
+    gpt_handler.reset_session("t2")
     monkeypatch.setitem(gpt_handler.functies_dispatcher, "lees_notities", lambda: "Geen notities.")
-    out = "".join(gpt_handler.verwerk_input_stream("lees mijn notities"))
+    out = "".join(gpt_handler.verwerk_input_stream("lees mijn notities", session="t2"))
     assert out == "Geen notities."
 
 

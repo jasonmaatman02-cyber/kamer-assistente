@@ -4,6 +4,16 @@ const chatWindow = document.getElementById('chatWindow');
 const HIST_KEY = 'kamer_chat';
 let busy = false;
 
+// stabiele sessie-id per browser, zodat de servergeschiedenis van deze tab
+// niet met de spraakassistent of een andere tab mengt
+const CHAT_SID = (() => {
+  try {
+    let s = localStorage.getItem('kamer_chat_sid');
+    if (!s) { s = Date.now().toString(36) + Math.random().toString(36).slice(2, 8); localStorage.setItem('kamer_chat_sid', s); }
+    return s;
+  } catch (e) { return 'web'; }
+})();
+
 // ---- history (localStorage, per-browser) ----
 function loadHistory() {
   let hist = [];
@@ -66,7 +76,7 @@ async function send() {
 
   const bubble = showThinking();
   let got = '';
-  const es = new EventSource('/api/chat_stream?message=' + encodeURIComponent(text));
+  const es = new EventSource('/api/chat_stream?message=' + encodeURIComponent(text) + '&sid=' + encodeURIComponent(CHAT_SID));
   const timer = setTimeout(() => { es.close(); finish('Time-out — probeer een kortere vraag of een kleiner model.'); }, 120000);
 
   function finish(errText) {

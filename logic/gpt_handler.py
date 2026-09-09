@@ -7,6 +7,8 @@ otherwise we return the model's plain reply.
 from __future__ import annotations
 
 import asyncio
+import threading
+import time
 
 import config
 from ai import llm
@@ -313,22 +315,43 @@ def _system_prompt() -> dict:
     return {"role": "system", "content": config.get("assistant.system_prompt")}
 
 
-conversation_history: list = [_system_prompt()]
+# Per gesprek een eigen historie + lock. De spraakassistent gebruikt "voice";
+# elke chat-tab stuurt zijn eigen sid mee (zie chat_api). Zo lopen sessies niet
+# door elkaar en is er geen race op één gedeelde lijst.
+_sessions: dict[str, dict] = {}
+_sessions_lock = threading.Lock()
+_SESSION_TTL = 24 * 3600
 
 
-def _trim_history():
+def _session(key: str) -> dict:
+    key = key or "voice"
+    now = time.time()
+    with _sessions_lock:
+        s = _sessions.get(key)
+        if s is None:
+            s = {"history": [_system_prompt()], "lock": threading.Lock(), "seen": now}
+            _sessions[key] = s
+        else:
+            s["seen"] = now
+        for old in [k for k, v in _sessions.items() if k != key and now - v["seen"] > _SESSION_TTL]:
+            _sessions.pop(old, None)
+        return s
+
+
+def history(session: str = "voice") -> list:
+    """De levende berichtenlijst van een sessie (gebruikt door tests)."""
+    return _session(session)["history"]
+
+
+def reset_session(session: str = "voice") -> None:
+    with _sessions_lock:
+        _sessions.pop(session, None)
+
+
+def _trim(hist: list) -> None:
     limit = int(config.get("ai.max_history", 20))
-    if len(conversation_history) > limit + 1:
-        del conversation_history[1:len(conversation_history) - limit]
-
-
-def gpt_verwerk(prompt: str) -> dict:
-    conversation_history.append({"role": "user", "content": prompt})
-    _trim_history()
-    result = llm.chat(conversation_history, tools=functions)
-    if result.get("content"):
-        conversation_history.append({"role": "assistant", "content": result["content"]})
-    return result
+    if len(hist) > limit + 1:
+        del hist[1:len(hist) - limit]
 
 
 def _dispatch(call) -> str:
@@ -340,42 +363,52 @@ def _dispatch(call) -> str:
     return str(uitkomst)
 
 
-def verwerk_input(text: str) -> str:
-    try:
-        result = gpt_verwerk(text)
-        for call in result.get("tool_calls", []):
-            return _dispatch(call)
-        return result.get("content") or "Ik heb daar geen antwoord op."
-    except Exception as exc:  # noqa: BLE001
-        log("ERROR", f"Fout bij verwerken input: {exc}")
-        return f"Fout bij verwerken input: {exc}"
+def verwerk_input(text: str, session: str = "voice") -> str:
+    s = _session(session)
+    with s["lock"]:
+        hist = s["history"]
+        try:
+            hist.append({"role": "user", "content": text})
+            _trim(hist)
+            result = llm.chat(hist, tools=functions)
+            if result.get("content"):
+                hist.append({"role": "assistant", "content": result["content"]})
+            for call in result.get("tool_calls", []):
+                return _dispatch(call)
+            return result.get("content") or "Ik heb daar geen antwoord op."
+        except Exception as exc:  # noqa: BLE001
+            log("ERROR", f"Fout bij verwerken input: {exc}")
+            return f"Fout bij verwerken input: {exc}"
 
 
-def verwerk_input_stream(text: str):
+def verwerk_input_stream(text: str, session: str = "voice"):
     """Generator van tekst-stukjes. Doet eerst de tool-check (stream), en zodra
     de assistent een functie kiest wordt die uitgevoerd en het resultaat als
     één stuk teruggegeven. Anders komt het antwoord token voor token."""
-    conversation_history.append({"role": "user", "content": text})
-    _trim_history()
-    answer = ""
-    try:
-        for ev in llm.chat_stream(conversation_history, tools=functions):
-            if ev["type"] == "chunk":
-                answer += ev["text"]
-                yield ev["text"]
-            elif ev["type"] == "tool_calls":
-                for call in ev["calls"]:
-                    result = _dispatch(call)
-                    conversation_history.append({"role": "assistant", "content": result})
-                    yield result
-                return
-            elif ev["type"] == "done":
-                if not answer and ev.get("content"):
-                    answer = ev["content"]
-                    yield answer
-    except Exception as exc:  # noqa: BLE001
-        log("ERROR", f"Fout bij streamen: {exc}")
-        yield f"\n[fout: {exc}]"
-        return
-    if answer:
-        conversation_history.append({"role": "assistant", "content": answer})
+    s = _session(session)
+    with s["lock"]:
+        hist = s["history"]
+        hist.append({"role": "user", "content": text})
+        _trim(hist)
+        answer = ""
+        try:
+            for ev in llm.chat_stream(hist, tools=functions):
+                if ev["type"] == "chunk":
+                    answer += ev["text"]
+                    yield ev["text"]
+                elif ev["type"] == "tool_calls":
+                    for call in ev["calls"]:
+                        result = _dispatch(call)
+                        hist.append({"role": "assistant", "content": result})
+                        yield result
+                    return
+                elif ev["type"] == "done":
+                    if not answer and ev.get("content"):
+                        answer = ev["content"]
+                        yield answer
+        except Exception as exc:  # noqa: BLE001
+            log("ERROR", f"Fout bij streamen: {exc}")
+            yield f"\n[fout: {exc}]"
+            return
+        if answer:
+            hist.append({"role": "assistant", "content": answer})
