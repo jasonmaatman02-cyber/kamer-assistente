@@ -175,14 +175,18 @@ def all_settings() -> dict:
 
 
 def get(path: str, default=None):
-    """Read a dotted path, e.g. ``get("camera.fps")``."""
+    """Read a dotted path, e.g. ``get("camera.fps")``.
+
+    Dict/list-waarden worden gekopieerd teruggegeven zodat een aanroeper de
+    in-memory cache niet per ongeluk kan muteren. Scalars (het gros van de
+    aanroepen: fps, ms, booleans, strings) gaan zonder overhead."""
     node = _load()
     for part in path.split("."):
         if isinstance(node, dict) and part in node:
             node = node[part]
         else:
             return default
-    return node
+    return copy.deepcopy(node) if isinstance(node, (dict, list)) else node
 
 
 def set(path: str, value) -> None:

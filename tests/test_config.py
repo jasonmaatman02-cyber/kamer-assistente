@@ -18,6 +18,16 @@ def test_set_persists_only_diff(tmp_path, monkeypatch):
     assert (tmp_path / "s.json").read_text().strip() == "{}"
 
 
+def test_get_returns_a_copy_not_the_cache():
+    lamps = config.get("devices.lamps")
+    lamps.append({"name": "hack", "ip": "0.0.0.0"})
+    lamps[0]["ip"] = "9.9.9.9"
+    # de cache mag niet meegemuteerd zijn
+    fresh = config.get("devices.lamps")
+    assert all(e["name"] != "hack" for e in fresh)
+    assert fresh[0]["ip"] != "9.9.9.9"
+
+
 def test_secret_status_masks(monkeypatch):
     monkeypatch.setenv("OPENAI_API_KEY", "sk-verysecretvalue123")
     monkeypatch.setenv("EMAIL_ADDRESS", "me@example.com")
