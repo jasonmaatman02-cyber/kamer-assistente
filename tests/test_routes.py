@@ -9,7 +9,7 @@ READ_ONLY = [
     "/api/weather", "/api/calendar_today", "/api/overview", "/api/notes",
     "/api/routines", "/api/lamps", "/api/thermostat", "/api/camera_status",
     "/api/secrets", "/api/auth/status", "/api/current_playing",
-    "/api/radio_stations", "/api/alarm", "/api/speedtest",
+    "/api/radio_stations", "/api/alarm", "/api/speedtest", "/api/health",
 ]
 
 
@@ -21,6 +21,14 @@ def test_get_no_5xx(client, path):
 
 def test_unknown_page_404(client):
     assert client.get("/zomaarwat").status_code == 404
+
+
+def test_health_shape(client):
+    h = client.get("/api/health").get_json()
+    assert h["ok"] is True
+    for key in ("git", "python", "server", "system", "services", "camera", "alarm", "threads"):
+        assert key in h
+    assert isinstance(h["threads"], list)
 
 
 def test_settings_roundtrip(client):

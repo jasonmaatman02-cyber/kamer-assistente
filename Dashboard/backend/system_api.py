@@ -2,6 +2,7 @@
 import json
 import shutil
 import subprocess
+import sys
 import threading
 import time
 
@@ -9,7 +10,7 @@ from flask import Blueprint, jsonify, request
 
 import config
 from Dashboard.backend import services as S
-from Dashboard.backend.auth import require_password
+from Dashboard.backend.auth import mail_ready, password_set, require_password
 
 system_bp = Blueprint("system", __name__)
 
@@ -163,6 +164,70 @@ def speedtest_start():
         _speed.update(status="running", error=None)
     threading.Thread(target=_run_speedtest, daemon=True, name="speedtest").start()
     return jsonify({"status": "running"})
+
+
+# --------------------------------------------------------------------------- #
+# Health — één plek om over SSH/curl te zien of alles nog leeft
+# --------------------------------------------------------------------------- #
+_git_cache = {"sha": None}
+
+
+def _git_sha() -> str | None:
+    if _git_cache["sha"] is None:
+        try:
+            from pathlib import Path
+
+            root = Path(__file__).resolve().parent.parent.parent
+            out = subprocess.run(["git", "-C", str(root), "rev-parse", "--short", "HEAD"],
+                                 capture_output=True, text=True, timeout=5)
+            _git_cache["sha"] = out.stdout.strip() or "?"
+        except Exception:  # noqa: BLE001
+            _git_cache["sha"] = "?"
+    return _git_cache["sha"]
+
+
+def _ollama_reachable() -> bool | None:
+    if (config.get("ai.backend") or "ollama").lower() != "ollama":
+        return None
+    try:
+        import requests
+
+        url = (config.get("ai.ollama_url") or "http://localhost:11434").rstrip("/")
+        return requests.get(f"{url}/api/tags", timeout=2).ok
+    except Exception:  # noqa: BLE001
+        return False
+
+
+@system_bp.route("/api/health")
+def health():
+    from Dashboard.backend import routines_api
+    from Dashboard.backend.camera_api import camera
+
+    dt = routines_api._alarm.alarm_time
+    return jsonify({
+        "ok": True,
+        "time": time.strftime("%Y-%m-%d %H:%M:%S"),
+        "git": _git_sha(),                       # commit op schijf (herstart nodig na pull)
+        "python": sys.version.split()[0],
+        "server": "waitress" if "waitress" in sys.modules else "flask-dev",
+        "system": S.system_stats(),
+        "services": S.service_status(),
+        "camera": {
+            "error": camera.error,
+            "viewers": camera._viewers,
+            "thread_alive": bool(camera._thread and camera._thread.is_alive()),
+        },
+        "alarm": {"set": dt is not None, "when": dt.strftime("%Y-%m-%d %H:%M") if dt else None},
+        "ollama_reachable": _ollama_reachable(),
+        "mail_ready": mail_ready(),
+        "password_set": password_set(),
+        "thread_count": threading.active_count(),
+        # alleen de 'eigen' threads; waitress/idle-ruis weggelaten
+        "threads": sorted(
+            t.name for t in threading.enumerate()
+            if t.is_alive() and not t.name.startswith(("waitress-", "Thread-"))
+        ),
+    })
 
 
 @system_bp.route("/api/notifications")
