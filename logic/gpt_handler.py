@@ -354,13 +354,35 @@ def _trim(hist: list) -> None:
         del hist[1:len(hist) - limit]
 
 
+_MAX_TOOLS_PER_TURN = 4
+
+
 def _dispatch(call) -> str:
-    fn = functies_dispatcher.get(call["name"])
+    """Eén tool draaien; een fout wordt een nette string i.p.v. een traceback."""
+    name = call.get("name", "?")
+    fn = functies_dispatcher.get(name)
     if not fn:
-        return f"Functie '{call['name']}' niet gevonden."
-    uitkomst = fn(**(call.get("arguments") or {}))
-    log("AI", f"Functie {call['name']} -> {uitkomst}")
-    return str(uitkomst)
+        return f"(onbekende functie '{name}')"
+    try:
+        uitkomst = fn(**(call.get("arguments") or {}))
+        log("AI", f"Functie {name} -> {uitkomst}")
+        return str(uitkomst)
+    except Exception as exc:  # noqa: BLE001
+        log("ERROR", f"Functie {name} faalde: {exc}")
+        return f"(kon '{name}' niet uitvoeren: {exc})"
+
+
+def _run_tools(calls) -> list[tuple[str, str]]:
+    return [(c.get("name", "?"), _dispatch(c)) for c in (calls or [])[:_MAX_TOOLS_PER_TURN]]
+
+
+def _phrase_prompt(results: list[tuple[str, str]]) -> dict:
+    body = "\n".join(f"- {n}: {r}" for n, r in results)
+    return {"role": "user", "content": (
+        "Resultaten van de zojuist uitgevoerde functies:\n" + body +
+        "\n\nGeef hiermee één kort, natuurlijk antwoord in het Nederlands. "
+        "Geen opsomming, geen functienamen noemen."
+    )}
 
 
 def verwerk_input(text: str, session: str = "voice") -> str:
@@ -371,20 +393,31 @@ def verwerk_input(text: str, session: str = "voice") -> str:
             hist.append({"role": "user", "content": text})
             _trim(hist)
             result = llm.chat(hist, tools=functions)
-            if result.get("content"):
-                hist.append({"role": "assistant", "content": result["content"]})
-            for call in result.get("tool_calls", []):
-                return _dispatch(call)
-            return result.get("content") or "Ik heb daar geen antwoord op."
+            calls = result.get("tool_calls") or []
+            if not calls:
+                answer = result.get("content") or "Ik heb daar geen antwoord op."
+                hist.append({"role": "assistant", "content": answer})
+                return answer
+
+            results = _run_tools(calls)
+            answer = ""
+            try:  # één natuurlijke afronding; lukt dat niet, geef de rauwe uitkomst
+                followup = llm.chat(hist + [_phrase_prompt(results)])
+                answer = (followup.get("content") or "").strip()
+            except Exception:  # noqa: BLE001
+                pass
+            answer = answer or "  ".join(r for _, r in results)
+            hist.append({"role": "assistant", "content": answer})
+            return answer
         except Exception as exc:  # noqa: BLE001
             log("ERROR", f"Fout bij verwerken input: {exc}")
             return f"Fout bij verwerken input: {exc}"
 
 
 def verwerk_input_stream(text: str, session: str = "voice"):
-    """Generator van tekst-stukjes. Doet eerst de tool-check (stream), en zodra
-    de assistent een functie kiest wordt die uitgevoerd en het resultaat als
-    één stuk teruggegeven. Anders komt het antwoord token voor token."""
+    """Generator van tekst-stukjes. Streamt eerst het model; kiest het een of
+    meer functies, dan worden die uitgevoerd en volgt één natuurlijke afronding
+    (ook gestreamd). Anders komt het antwoord meteen token voor token."""
     s = _session(session)
     with s["lock"]:
         hist = s["history"]
@@ -392,20 +425,35 @@ def verwerk_input_stream(text: str, session: str = "voice"):
         _trim(hist)
         answer = ""
         try:
+            calls = None
             for ev in llm.chat_stream(hist, tools=functions):
                 if ev["type"] == "chunk":
                     answer += ev["text"]
                     yield ev["text"]
                 elif ev["type"] == "tool_calls":
-                    for call in ev["calls"]:
-                        result = _dispatch(call)
-                        hist.append({"role": "assistant", "content": result})
-                        yield result
-                    return
+                    calls = ev["calls"]
+                    break
                 elif ev["type"] == "done":
                     if not answer and ev.get("content"):
                         answer = ev["content"]
                         yield answer
+
+            if calls:
+                results = _run_tools(calls)
+                phrased = ""
+                try:
+                    for ev in llm.chat_stream(hist + [_phrase_prompt(results)]):
+                        if ev["type"] == "chunk":
+                            phrased += ev["text"]
+                            yield ev["text"]
+                        elif ev["type"] == "done" and not phrased and ev.get("content"):
+                            phrased = ev["content"]
+                            yield phrased
+                except Exception:  # noqa: BLE001
+                    pass
+                answer = phrased.strip() or "  ".join(r for _, r in results)
+                if not phrased:
+                    yield answer
         except Exception as exc:  # noqa: BLE001
             log("ERROR", f"Fout bij streamen: {exc}")
             yield f"\n[fout: {exc}]"

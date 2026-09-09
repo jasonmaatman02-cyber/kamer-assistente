@@ -164,6 +164,41 @@ def test_verwerk_input_stream_tool(monkeypatch):
     assert out == "Geen notities."
 
 
+def test_stream_tool_then_natural_answer(monkeypatch):
+    import ai.llm as llm
+    from logic import gpt_handler
+
+    step = {"n": 0}
+
+    def fake_stream(messages, tools=None):
+        step["n"] += 1
+        if step["n"] == 1:
+            yield {"type": "tool_calls", "calls": [{"name": "haal_temp_op", "arguments": {}}]}
+        else:                                   # de afronding zonder tools
+            assert tools is None
+            yield {"type": "chunk", "text": "Het is "}
+            yield {"type": "chunk", "text": "12 graden."}
+            yield {"type": "done", "content": "Het is 12 graden."}
+
+    monkeypatch.setattr(llm, "chat_stream", fake_stream)
+    monkeypatch.setitem(gpt_handler.functies_dispatcher, "haal_temp_op", lambda: "12 graden")
+    gpt_handler.reset_session("tp")
+    out = "".join(gpt_handler.verwerk_input_stream("hoe warm is het", session="tp"))
+    assert out == "Het is 12 graden."
+    assert gpt_handler.history("tp")[-1] == {"role": "assistant", "content": "Het is 12 graden."}
+
+
+def test_tool_failure_is_friendly(monkeypatch):
+    from logic import gpt_handler
+
+    def boom(**kw):
+        raise RuntimeError("lamp offline")
+
+    monkeypatch.setitem(gpt_handler.functies_dispatcher, "zet_lamp", boom)
+    r = gpt_handler._dispatch({"name": "zet_lamp", "arguments": {"aan": True}})
+    assert "zet_lamp" in r and "lamp offline" in r and "Traceback" not in r
+
+
 # --- wake-word backend keuze ---------------------------------------------- #
 def test_use_porcupine_respects_config(monkeypatch):
     pytest.importorskip("sounddevice")
