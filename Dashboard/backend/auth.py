@@ -28,6 +28,24 @@ _UNLOCK_TTL = 30 * 60
 _OTP_TTL = 10 * 60
 _OTP_MAX_FAILS = 5
 
+# rate-limit op het *aanvragen* van codes (elke aanvraag stuurt een mail)
+_code_rl = {"last": 0.0, "day": "", "count": 0}
+_CODE_COOLDOWN = 60
+_CODE_DAILY_MAX = 10
+
+
+def _code_rate_limited() -> str | None:
+    """None = mag; anders een uitlegtekst waarom niet."""
+    now = time.time()
+    today = time.strftime("%Y-%m-%d")
+    if _code_rl["day"] != today:
+        _code_rl.update(day=today, count=0)
+    if now - _code_rl["last"] < _CODE_COOLDOWN:
+        return f"Wacht nog {int(_CODE_COOLDOWN - (now - _code_rl['last']))}s voor een nieuwe code."
+    if _code_rl["count"] >= _CODE_DAILY_MAX:
+        return "Te veel codes aangevraagd vandaag. Probeer het morgen weer."
+    return None
+
 
 def mail_ready() -> bool:
     return bool(
@@ -54,6 +72,12 @@ def request_code():
             "error": "Mail nog niet ingesteld. Vul EMAIL_ADDRESS, EMAIL_PASSWORD en "
                      "RECEIVER eenmalig in via het .env-bestand op de Pi.",
         }), 400
+
+    blocked = _code_rate_limited()
+    if blocked:
+        return jsonify({"ok": False, "error": blocked}), 429
+    _code_rl.update(last=time.time(), count=_code_rl["count"] + 1)
+
     from logic.mail_sender import send_email_message
 
     code = f"{_secrets.randbelow(1_000_000):06d}"

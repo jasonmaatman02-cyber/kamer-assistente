@@ -96,6 +96,25 @@ def test_routines_write_needs_password(client, monkeypatch):
     assert client.delete("/api/routines/a").status_code == 401
 
 
+def test_request_code_rate_limited(client, monkeypatch):
+    from Dashboard.backend import auth
+
+    auth._code_rl.update(last=0.0, day="", count=0)
+    monkeypatch.setattr(auth, "mail_ready", lambda: True)
+    sent = []
+    monkeypatch.setattr("logic.mail_sender.send_email_message", lambda *a, **k: sent.append(1) or "ok")
+
+    assert client.post("/api/auth/request-code").get_json()["ok"] is True
+    # tweede meteen erna -> 429, geen extra mail
+    r = client.post("/api/auth/request-code")
+    assert r.status_code == 429 and r.get_json()["ok"] is False
+    assert len(sent) == 1
+
+    # dagcap
+    auth._code_rl.update(last=0.0, count=auth._CODE_DAILY_MAX)
+    assert client.post("/api/auth/request-code").status_code == 429
+
+
 def test_speedtest_flow(client, monkeypatch):
     import time as _t
 
