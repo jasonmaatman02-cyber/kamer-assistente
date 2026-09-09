@@ -199,6 +199,21 @@ def test_tool_failure_is_friendly(monkeypatch):
     assert "zet_lamp" in r and "lamp offline" in r and "Traceback" not in r
 
 
+def test_run_tools_dedupes_identical_calls(monkeypatch):
+    from logic import gpt_handler
+
+    hits = []
+    monkeypatch.setitem(gpt_handler.functies_dispatcher, "voeg_notitie_toe",
+                        lambda inhoud: hits.append(inhoud) or "ok")
+    calls = [
+        {"name": "voeg_notitie_toe", "arguments": {"inhoud": "melk"}},
+        {"name": "voeg_notitie_toe", "arguments": {"inhoud": "melk"}},   # dubbel
+        {"name": "voeg_notitie_toe", "arguments": {"inhoud": "brood"}},
+    ]
+    out = gpt_handler._run_tools(calls)
+    assert len(out) == 2 and hits == ["melk", "brood"]
+
+
 # --- wake-word backend keuze ---------------------------------------------- #
 def test_use_porcupine_respects_config(monkeypatch):
     pytest.importorskip("sounddevice")

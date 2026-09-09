@@ -102,9 +102,13 @@ async function send() {
 
 sendBtn.addEventListener('click', send);
 
-// wissen
+// wissen — ook de serverkant van deze sessie leegmaken
 const clearBtn = document.getElementById('clearChat');
 if (clearBtn) clearBtn.addEventListener('click', () => {
   localStorage.removeItem(HIST_KEY);
   chatWindow.innerHTML = '<div class="chat-bubble ai">Hey Jason! Hoe kan ik je helpen?</div>';
+  fetch('/api/chat/reset', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ sid: CHAT_SID }),
+  }).catch(() => {});
 });

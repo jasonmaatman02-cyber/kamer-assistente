@@ -169,21 +169,20 @@ def speedtest_start():
 # --------------------------------------------------------------------------- #
 # Health — één plek om over SSH/curl te zien of alles nog leeft
 # --------------------------------------------------------------------------- #
-_git_cache = {"sha": None}
+def _git_sha() -> str:
+    """De commit die NU op schijf staat (kan nieuwer zijn dan wat er draait)."""
+    try:
+        from pathlib import Path
+
+        root = Path(__file__).resolve().parent.parent.parent
+        out = subprocess.run(["git", "-C", str(root), "rev-parse", "--short", "HEAD"],
+                             capture_output=True, text=True, timeout=5)
+        return out.stdout.strip() or "?"
+    except Exception:  # noqa: BLE001
+        return "?"
 
 
-def _git_sha() -> str | None:
-    if _git_cache["sha"] is None:
-        try:
-            from pathlib import Path
-
-            root = Path(__file__).resolve().parent.parent.parent
-            out = subprocess.run(["git", "-C", str(root), "rev-parse", "--short", "HEAD"],
-                                 capture_output=True, text=True, timeout=5)
-            _git_cache["sha"] = out.stdout.strip() or "?"
-        except Exception:  # noqa: BLE001
-            _git_cache["sha"] = "?"
-    return _git_cache["sha"]
+_BOOT_SHA = _git_sha()   # vastgelegd bij het starten van dit proces
 
 
 def _ollama_reachable() -> bool | None:
@@ -204,10 +203,13 @@ def health():
     from Dashboard.backend.camera_api import camera
 
     dt = routines_api._alarm.alarm_time
+    on_disk = _git_sha()
     return jsonify({
         "ok": True,
         "time": time.strftime("%Y-%m-%d %H:%M:%S"),
-        "git": _git_sha(),                       # commit op schijf (herstart nodig na pull)
+        "git": on_disk,                          # commit op schijf
+        "git_running": _BOOT_SHA,                # commit waarmee dit proces startte
+        "restart_pending": on_disk != _BOOT_SHA and "?" not in (on_disk, _BOOT_SHA),
         "python": sys.version.split()[0],
         "server": "waitress" if "waitress" in sys.modules else "flask-dev",
         "system": S.system_stats(),

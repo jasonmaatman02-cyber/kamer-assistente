@@ -7,6 +7,7 @@ otherwise we return the model's plain reply.
 from __future__ import annotations
 
 import asyncio
+import json
 import threading
 import time
 
@@ -373,7 +374,19 @@ def _dispatch(call) -> str:
 
 
 def _run_tools(calls) -> list[tuple[str, str]]:
-    return [(c.get("name", "?"), _dispatch(c)) for c in (calls or [])[:_MAX_TOOLS_PER_TURN]]
+    """Elke unieke functie-aanroep één keer draaien (kleine modellen herhalen
+    soms dezelfde call — vervelend bij o.a. e-mail versturen)."""
+    out: list[tuple[str, str]] = []
+    seen: set = set()
+    for c in calls or []:
+        key = (c.get("name"), json.dumps(c.get("arguments") or {}, sort_keys=True, default=str))
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append((c.get("name", "?"), _dispatch(c)))
+        if len(out) >= _MAX_TOOLS_PER_TURN:
+            break
+    return out
 
 
 def _phrase_prompt(results: list[tuple[str, str]]) -> dict:

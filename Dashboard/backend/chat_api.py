@@ -18,6 +18,15 @@ def _sid(raw) -> str:
     return f"{base}:{tab}"
 
 
+@chat_bp.route("/api/chat/reset", methods=["POST"])
+@require_password
+def chat_reset():
+    from logic.gpt_handler import reset_session
+
+    reset_session(_sid((request.get_json(silent=True) or {}).get("sid")))
+    return jsonify({"ok": True})
+
+
 @chat_bp.route("/api/send_message", methods=["POST"])
 @require_password
 def send_message():

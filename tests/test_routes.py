@@ -26,9 +26,26 @@ def test_unknown_page_404(client):
 def test_health_shape(client):
     h = client.get("/api/health").get_json()
     assert h["ok"] is True
-    for key in ("git", "python", "server", "system", "services", "camera", "alarm", "threads"):
+    for key in ("git", "git_running", "restart_pending", "python", "server",
+                "system", "services", "camera", "alarm", "threads"):
         assert key in h
     assert isinstance(h["threads"], list)
+    assert isinstance(h["restart_pending"], bool)
+
+
+def test_chat_reset_clears_server_session(client, monkeypatch):
+    import ai.llm as llm
+    from logic import gpt_handler
+    from Dashboard.backend.chat_api import _sid
+
+    monkeypatch.setattr(llm, "chat_stream",
+                        lambda m, tools=None: iter([{"type": "done", "content": "ok"}]))
+    with client.application.test_request_context("/api/chat/reset"):
+        sid = _sid("tab1")                           # zelfde sleutel als het endpoint
+    list(gpt_handler.verwerk_input_stream("hoi", session=sid))
+    assert len(gpt_handler.history(sid)) > 1
+    assert client.post("/api/chat/reset", json={"sid": "tab1"}).get_json()["ok"] is True
+    assert len(gpt_handler.history(sid)) == 1        # alleen de system-prompt
 
 
 def test_settings_roundtrip(client):
