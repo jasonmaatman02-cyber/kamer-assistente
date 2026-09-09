@@ -83,6 +83,22 @@ def reset_services():
         pass
 
 
+def _is_expected(exc: BaseException) -> bool:
+    """Netwerk/API-fouten zijn normaal (dienst even weg); alles anders
+    (KeyError, AttributeError, TypeError...) wijst op een bug en hoort in
+    het journaal."""
+    import spotipy
+
+    return isinstance(exc, (spotipy.SpotifyException, OSError))
+
+
+def _degrade(where: str, exc: BaseException) -> None:
+    """Stil bij een verwachte storing; anders een breadcrumb naar stdout
+    (journalctl), niet naar het notificatie-logboek — geen spam daar."""
+    if not _is_expected(exc):
+        print(f"[services] {where}: onverwachte fout {exc!r}")
+
+
 # --------------------------------------------------------------------------- #
 # Lamps
 # --------------------------------------------------------------------------- #
@@ -160,14 +176,14 @@ def active_device_id(sp):
         pb = sp.current_playback()
         if pb and pb.get("device", {}).get("id"):
             return pb["device"]["id"]
-    except Exception:  # noqa: BLE001
-        pass
+    except Exception as exc:  # noqa: BLE001
+        _degrade("active_device_id/current_playback", exc)
     try:
         for d in sp.devices().get("devices", []):
             if d.get("id"):
                 return d["id"]
-    except Exception:  # noqa: BLE001
-        pass
+    except Exception as exc:  # noqa: BLE001
+        _degrade("active_device_id/devices", exc)
     return None
 
 
@@ -180,8 +196,8 @@ def wake_device(sp, device_id):
         if not active:
             sp.transfer_playback(device_id, force_play=True)
             time.sleep(0.5)
-    except Exception:  # noqa: BLE001
-        pass
+    except Exception as exc:  # noqa: BLE001
+        _degrade("wake_device", exc)
 
 
 # --------------------------------------------------------------------------- #
@@ -307,8 +323,8 @@ def current_playing() -> dict:
                 pb = sp.sp.current_playback()
                 data["volume"] = (pb or {}).get("device", {}).get("volume_percent", 50)
                 return data
-        except Exception:  # noqa: BLE001
-            pass
+        except Exception as exc:  # noqa: BLE001
+            _degrade("current_playing/spotify", exc)
     r = svc("radio")
     if r:
         try:
@@ -317,6 +333,6 @@ def current_playing() -> dict:
                 rd["volume"] = r.player.audio_get_volume()
                 rd["elapsed"] = int(time.time() - r.start_time) if getattr(r, "start_time", None) else 0
                 return rd
-        except Exception:  # noqa: BLE001
-            pass
+        except Exception as exc:  # noqa: BLE001
+            _degrade("current_playing/radio", exc)
     return {"type": "none"}

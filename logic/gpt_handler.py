@@ -135,13 +135,13 @@ def _audio_active():
     try:
         if _get("spotify").current_track().get("type") == "spotify":
             return "spotify"
-    except Exception:  # noqa: BLE001
-        pass
+    except Exception as exc:  # noqa: BLE001 - dienst even weg is normaal
+        print(f"[gpt] _audio_active/spotify: {exc!r}")
     try:
         if _get("radio").current_station().get("type") == "radio":
             return "radio"
-    except Exception:  # noqa: BLE001
-        pass
+    except Exception as exc:  # noqa: BLE001
+        print(f"[gpt] _audio_active/radio: {exc!r}")
     return None
 
 
@@ -417,8 +417,8 @@ def verwerk_input(text: str, session: str = "voice") -> str:
             try:  # één natuurlijke afronding; lukt dat niet, geef de rauwe uitkomst
                 followup = llm.chat(hist + [_phrase_prompt(results)])
                 answer = (followup.get("content") or "").strip()
-            except Exception:  # noqa: BLE001
-                pass
+            except Exception as exc:  # noqa: BLE001
+                log("ERROR", f"Afronding na tool-call mislukt: {exc}")
             answer = answer or "  ".join(r for _, r in results)
             hist.append({"role": "assistant", "content": answer})
             return answer
@@ -462,8 +462,8 @@ def verwerk_input_stream(text: str, session: str = "voice"):
                         elif ev["type"] == "done" and not phrased and ev.get("content"):
                             phrased = ev["content"]
                             yield phrased
-                except Exception:  # noqa: BLE001
-                    pass
+                except Exception as exc:  # noqa: BLE001
+                    log("ERROR", f"Afronding na tool-call (stream) mislukt: {exc}")
                 answer = phrased.strip() or "  ".join(r for _, r in results)
                 if not phrased:
                     yield answer

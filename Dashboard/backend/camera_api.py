@@ -120,8 +120,8 @@ class _Camera:
         finally:
             try:
                 close()
-            except Exception:  # noqa: BLE001
-                pass
+            except Exception as exc:  # noqa: BLE001
+                print(f"[camera] kon bron niet sluiten: {exc!r}")
             with self._lock:
                 self._latest = None
 

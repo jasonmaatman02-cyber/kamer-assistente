@@ -298,6 +298,18 @@ def test_service_status_flags_no_device(monkeypatch):
     assert st["error"] == "geen apparaat actief"
 
 
+def test_degrade_only_flags_unexpected(capsys):
+    import spotipy
+
+    from Dashboard.backend import services
+
+    services._degrade("x", spotipy.SpotifyException(404, -1, "no device"))
+    services._degrade("y", OSError("connection reset"))
+    assert capsys.readouterr().out == ""          # verwachte storingen -> stil
+    services._degrade("z", KeyError("device"))     # shape-bug -> breadcrumb
+    assert "onverwachte fout" in capsys.readouterr().out
+
+
 def test_service_status_probes_run_parallel(monkeypatch):
     import time as _t
 
