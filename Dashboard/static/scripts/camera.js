@@ -12,10 +12,18 @@ function setStatus(html) { if (statusEl) statusEl.innerHTML = "Status: " + html;
 
 function loadScript(src) {
   return new Promise((resolve, reject) => {
-    const s = document.createElement("script");
+    const fail = () => reject(new Error("kan niet laden: " + src.split("/").pop()));
+    let s = [...document.scripts].find(x => x.src === src);
+    if (s) {                              // al bezig/geladen -> niet nog een tag toevoegen
+      if (s.dataset.loaded) return resolve();
+      s.addEventListener("load", () => resolve());
+      s.addEventListener("error", fail);
+      return;
+    }
+    s = document.createElement("script");
     s.src = src;
-    s.onload = resolve;
-    s.onerror = () => reject(new Error("kan niet laden: " + src.split("/").pop()));
+    s.onload = () => { s.dataset.loaded = "1"; resolve(); };
+    s.onerror = fail;
     document.head.appendChild(s);
   });
 }
@@ -64,16 +72,24 @@ function getModel() {
 // detectie-lus
 // --------------------------------------------------------------------------- //
 let detector = null;   // { stop() } zolang detectie loopt
+let _modelFailAt = 0;  // na een mislukte modellaad niet elke 15s opnieuw hameren
 
 function startDetection(threshold) {
   if (detector) return;
-  let stopped = false;
+  let stopped = false, paused = false;
   const octx = canvas.getContext("2d");
   let model = null, lampOn = false, lastPerson = Date.now(), missing = 0;
+
+  // op de achtergrond niet scannen (batterij/CPU); meteen weer bij terugkomst
+  const onVis = () => {
+    if (!document.hidden && paused && !stopped) { paused = false; tick(); }
+  };
+  document.addEventListener("visibilitychange", onVis);
 
   detector = {
     stop() {
       stopped = true;
+      document.removeEventListener("visibilitychange", onVis);
       try { octx.clearRect(0, 0, canvas.width, canvas.height); } catch (_) {}
       detector = null;
     },
@@ -86,7 +102,8 @@ function startDetection(threshold) {
     setStatus('<span class="green">model geladen</span>');
     tick();
   }).catch(e => {
-    setStatus(`<span class="red">model laden mislukt: ${e.message}</span>`);
+    setStatus(`<span class="red">model laden mislukt: ${e.message} — opnieuw over 1 min</span>`);
+    _modelFailAt = Date.now();
     detector = null;
   });
 
@@ -101,6 +118,11 @@ function startDetection(threshold) {
 
   async function tick() {
     if (stopped) return;
+    if (document.hidden) {   // pauze; visibilitychange hervat 'm
+      paused = true;
+      setStatus('<span class="muted">op pauze (tabblad op de achtergrond)</span>');
+      return;
+    }
     const t0 = performance.now();
     let bmp;
     try {
@@ -141,8 +163,7 @@ function startDetection(threshold) {
         if (lampOn && now - lastPerson > 10000) { lampOn = false; callAPI("/api/lamp/off"); }
         setStatus(`<span class="muted">geen persoon · ${ms} ms</span>`);
       }
-      // trager apparaat -> rustiger aan; tab op de achtergrond -> vaste 5s
-      schedule(document.hidden ? 5000 : Math.min(3000, Math.max(500, ms * 1.5)));
+      schedule(Math.min(3000, Math.max(500, ms * 1.5)));   // trager apparaat -> rustiger aan
     } catch (e) {
       try { bmp && bmp.close(); } catch (_) {}
       setStatus(`<span class="red">detectie-fout: ${e.message}</span>`);
@@ -160,7 +181,7 @@ async function syncWithConfig() {
   let cfg = {};
   try { cfg = await fetch("/api/config").then(r => r.json()); } catch (_) { return; }
   const c = cfg.camera || {};
-  if (c.browser_detection && !detector) {
+  if (c.browser_detection && !detector && Date.now() - _modelFailAt > 60000) {
     const t = Number(c.detect_threshold);
     const qf = toMin(c.lamp_quiet_from), qt = toMin(c.lamp_quiet_to);
     if (qf != null && qt != null) QUIET = { from: qf, to: qt };

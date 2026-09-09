@@ -22,6 +22,7 @@ class _Camera:
         self._seq = 0
         self._viewers = 0
         self._stop = threading.Event()
+        self._last_grab = 0.0        # laatste losse snapshot-aanvraag
         self.error = None
 
     def _max_viewers(self) -> int:
@@ -104,6 +105,9 @@ class _Camera:
         self.error = None
         try:
             while not self._stop.is_set():
+                # niemand kijkt (geen MJPEG-viewer) en al 30s geen snapshot -> stop
+                if self._viewers == 0 and time.time() - self._last_grab > 30:
+                    break
                 q = int(config.get("camera.jpeg_quality", 55))
                 delay = 1.0 / max(1, config.get("camera.fps", 10))
                 ok, frame = read()
@@ -186,6 +190,7 @@ def camera_snapshot():
     (een <img> met een MJPEG-stream levert geen leesbare pixels)."""
     if not config.get("camera.enabled", True):
         return Response("camera uit", status=503)
+    camera._last_grab = time.time()
     camera._ensure_running()
     latest = camera._latest
     if not latest:
