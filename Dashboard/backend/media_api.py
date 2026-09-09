@@ -219,7 +219,7 @@ def devices():
 
     if not devs and errors:
         return jsonify({"success": False, "error": errors[0]}), 503
-    return jsonify({"success": True, "devices": [
+    return jsonify({"success": True, "warning": errors[0] if errors else None, "devices": [
         {"id": d["id"], "name": d.get("name", "?"), "type": d.get("type", "?"),
          "active": bool(d.get("is_active"))}
         for d in devs.values()

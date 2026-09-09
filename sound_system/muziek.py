@@ -165,6 +165,7 @@ class SpotifyDJ:
             imgs = track.get("album", {}).get("images") or []
             progress_ms = playback.get("progress_ms", 0)
             duration_ms = track["duration_ms"]
+            dev = playback.get("device") or {}
             return {
                 "type": "spotify",
                 "name": track["name"],
@@ -175,7 +176,9 @@ class SpotifyDJ:
                 "duration_ms": duration_ms,
                 "remaining_ms": duration_ms - progress_ms,
                 "is_playing": playback["is_playing"],
-                "volume": (playback.get("device") or {}).get("volume_percent", 50),
+                "volume": dev.get("volume_percent", 50),
+                "device": dev.get("name"),
+                "device_id": dev.get("id"),
             }
         except Exception as e:  # noqa: BLE001
             return {"type": "error", "info": str(e)}
