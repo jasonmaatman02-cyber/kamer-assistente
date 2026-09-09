@@ -165,11 +165,16 @@ $("note-input").addEventListener("keydown", e => { if (e.key === "Enter") { e.pr
 (function wifiSpeedTest() {
   const body = $("speed-body"), btn = $("speed-run");
   if (!body || !btn) return;              // kaart niet op de pagina -> stil overslaan
-  const MEET = '<p class="muted"><i class="fa fa-spinner fa-pulse"></i> Meten… (~30s, gebruikt data)</p>';
+  const meet = s => `<p class="muted"><i class="fa fa-spinner fa-pulse"></i> Meten…${s ? ` (${s}s)` : ""} — kan op een Pi 1–2 min duren, gebruikt data</p>`;
   let poll = null;
 
   function render(d) {
-    if (d.status === "running") { body.innerHTML = MEET; btn.disabled = true; return; }
+    if (d.status === "running") {
+      const s = d.started ? Math.round(Date.now() / 1000 - d.started) : 0;
+      body.innerHTML = meet(s > 0 && s < 600 ? s : 0);
+      btn.disabled = true;
+      return;
+    }
     btn.disabled = false;
     if (d.status === "error") {
       body.innerHTML = `<p class="empty">Mislukt: ${esc(d.error || "?")}</p>`;
@@ -194,10 +199,18 @@ $("note-input").addEventListener("keydown", e => { if (e.key === "Enter") { e.pr
   }
   btn.addEventListener("click", async () => {
     btn.disabled = true;
-    body.innerHTML = MEET;
-    try { await jpost("/api/speedtest"); } catch (e) {}
+    body.innerHTML = meet(0);
+    let r = null;
+    try { r = await jpost("/api/speedtest"); } catch (e) {}
+    if (r && r.login_required) {
+      body.innerHTML = '<p class="empty">Log eerst in (Settings) om te testen.</p>';
+      btn.disabled = false;
+      return;
+    }
     checkStatus();
   });
+  // meteen bijwerken als het tabblad weer op de voorgrond komt
+  document.addEventListener("visibilitychange", () => { if (!document.hidden) checkStatus(); });
   checkStatus();
 })();
 

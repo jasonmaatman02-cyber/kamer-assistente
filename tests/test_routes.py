@@ -170,9 +170,16 @@ def test_speedtest_flow(client, monkeypatch):
     assert r["status"] == "done" and r["result"]["down_mbps"] == 42.0
 
 
-def test_speedtest_start_needs_password(client, monkeypatch):
-    monkeypatch.setenv("DASHBOARD_PASSWORD", "x")  # not logged in
-    assert client.post("/api/speedtest").status_code == 401
+def test_speedtest_start_is_open(client, monkeypatch):
+    # de kaart staat op de open Overview -> geen wachtwoord nodig, ook niet
+    # als er er een gezet is
+    monkeypatch.setenv("DASHBOARD_PASSWORD", "x")
+    from Dashboard.backend import system_api
+
+    monkeypatch.setattr(system_api, "_run_speedtest", lambda: None)
+    with system_api._speed_lock:
+        system_api._speed.update(status="idle", result=None, error=None)
+    assert client.post("/api/speedtest").get_json()["status"] == "running"
 
 
 def test_login_is_session_only_by_default(client, monkeypatch):

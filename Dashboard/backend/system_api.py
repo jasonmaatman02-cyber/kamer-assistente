@@ -87,7 +87,8 @@ def overview():
 # --------------------------------------------------------------------------- #
 # Wifi-snelheidstest (on-demand; verbruikt echte data, dus nooit automatisch)
 # --------------------------------------------------------------------------- #
-_speed = {"status": "idle", "result": None, "error": None}  # idle|running|done|error
+_speed = {"status": "idle", "result": None, "error": None, "started": 0.0}  # idle|running|done|error
+_SPEED_STALE_AFTER = 240   # een 'running' die langer hangt is vastgelopen -> opnieuw mogen
 _speed_lock = threading.Lock()
 
 
@@ -159,12 +160,14 @@ def speedtest_status():
 
 
 @system_bp.route("/api/speedtest", methods=["POST"])
-@require_password
 def speedtest_start():
+    # De kaart staat op de open Overview; een 'running'-guard voorkomt spam.
+    # Geen wachtwoord dus, net als de andere LAN-bediening.
+    now = time.time()
     with _speed_lock:
-        if _speed["status"] == "running":
+        if _speed["status"] == "running" and now - _speed["started"] < _SPEED_STALE_AFTER:
             return jsonify({"status": "running"})
-        _speed.update(status="running", error=None)
+        _speed.update(status="running", error=None, started=now)
     threading.Thread(target=_run_speedtest, daemon=True, name="speedtest").start()
     return jsonify({"status": "running"})
 
