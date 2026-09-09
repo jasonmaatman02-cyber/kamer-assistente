@@ -197,21 +197,33 @@ def seek():
 def devices():
     try:
         sp = S.sp_dj().sp
-        devs = {d["id"]: d for d in (sp.devices().get("devices") or []) if d.get("id")}
-        # het apparaat dat NU speelt staat er soms niet bij (Spotify Connect-quirk)
-        try:
-            dev = (sp.current_playback() or {}).get("device") or {}
-            if dev.get("id") and dev["id"] not in devs:
-                devs[dev["id"]] = dev
-        except Exception as exc:  # noqa: BLE001
-            S._degrade("devices/current_playback", exc)
-        return jsonify({"success": True, "devices": [
-            {"id": d["id"], "name": d.get("name", "?"), "type": d.get("type", "?"),
-             "active": bool(d.get("is_active"))}
-            for d in devs.values()
-        ]})
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:  # noqa: BLE001 - geen Spotify-koppeling
         return jsonify({"success": False, "error": str(exc)}), 503
+
+    devs: dict = {}
+    errors = []
+    # sp.devices() laat een Sonos/SYMFONISK vaak weg, óók terwijl 'ie speelt...
+    try:
+        for d in (sp.devices().get("devices") or []):
+            if d.get("id"):
+                devs[d["id"]] = d
+    except Exception as exc:  # noqa: BLE001
+        errors.append(str(exc))
+    # ...maar current_playback() kent 'm wel -> los toevoegen
+    try:
+        dev = (sp.current_playback() or {}).get("device") or {}
+        if dev.get("id"):
+            devs.setdefault(dev["id"], dev)
+    except Exception as exc:  # noqa: BLE001
+        errors.append(str(exc))
+
+    if not devs and errors:
+        return jsonify({"success": False, "error": errors[0]}), 503
+    return jsonify({"success": True, "devices": [
+        {"id": d["id"], "name": d.get("name", "?"), "type": d.get("type", "?"),
+         "active": bool(d.get("is_active"))}
+        for d in devs.values()
+    ]})
 
 
 @media_bp.route("/api/set_device", methods=["POST"])

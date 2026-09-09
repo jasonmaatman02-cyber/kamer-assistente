@@ -286,6 +286,27 @@ def test_svc_different_services_build_in_parallel(monkeypatch):
     assert _t.time() - t0 < 0.45              # per-naam lock -> 4× parallel, niet serieel
 
 
+# --- /api/devices: actief (Sonos) apparaat meenemen ------------------- #
+def test_devices_includes_currently_playing(client, monkeypatch):
+    from Dashboard.backend import services
+
+    class FakeSp:
+        def devices(self):
+            return {"devices": []}                       # Spotify laat de Sonos weg
+        def current_playback(self):
+            return {"device": {"id": "sonos1", "name": "Woonkamer",
+                               "type": "Speaker", "is_active": True}}
+
+    class FakeDJ:
+        sp = FakeSp()
+
+    monkeypatch.setitem(services._services, "spotify", FakeDJ())
+    d = client.get("/api/devices").get_json()
+    assert d["success"] is True
+    assert [x["name"] for x in d["devices"]] == ["Woonkamer"]
+    assert d["devices"][0]["active"] is True
+
+
 # --- camera: kijkers begrenzen ----------------------------------------- #
 def test_camera_viewer_cap():
     import config
