@@ -28,19 +28,25 @@ class _Camera:
         # elke kijker houdt een waitress-worker bezig; laat er genoeg vrij
         return max(1, int(config.get("camera.max_viewers", 3)))
 
-    def try_acquire(self) -> bool:
-        """Plek claimen voor één kijker (atomair). False = te vol."""
+    def acquire(self):
+        """Reserveer één kijkplek (atomair). Geeft een idempotente release-
+        functie terug, of ``None`` als het vol zit."""
         with self._lock:
             if self._viewers >= self._max_viewers():
-                return False
+                return None
             self._viewers += 1
-            return True
+        released = [False]
 
-    def _release(self):
-        with self._lock:
-            self._viewers = max(0, self._viewers - 1)
-            if self._viewers == 0:
-                self._stop.set()
+        def release():
+            with self._lock:
+                if released[0]:
+                    return
+                released[0] = True
+                self._viewers = max(0, self._viewers - 1)
+                if self._viewers == 0:
+                    self._stop.set()
+
+        return release
 
     def _open_source(self, w, h, fps):
         """(read_fn, close_fn) voor de beste beschikbare camera-backend.
@@ -129,8 +135,10 @@ class _Camera:
     def release(self):
         self._stop.set()
 
-    def frames(self):
-        """Aanroeper moet eerst try_acquire() gedaan hebben."""
+    def frames(self, on_exit=lambda: None):
+        """Aanroeper doet eerst acquire(); ``on_exit`` is de release-functie
+        daarvan (ook geregistreerd via response.call_on_close voor het geval
+        de stream nooit start)."""
         self._ensure_running()
         last = 0
         idle = 0
@@ -148,7 +156,7 @@ class _Camera:
                         break
                 time.sleep(1.0 / max(1, config.get("camera.fps", 10)))
         finally:
-            self._release()
+            on_exit()
 
 
 camera = _Camera()
@@ -159,13 +167,16 @@ camera = _Camera()
 def video_feed():
     if not config.get("camera.enabled", True):
         return Response("camera uit", status=503)
-    if not camera.try_acquire():
+    release = camera.acquire()
+    if release is None:
         return Response("Te veel camerakijkers open — sluit een ander tabblad.", status=503)
-    return Response(
-        camera.frames(),
+    resp = Response(
+        camera.frames(release),
         mimetype="multipart/x-mixed-replace; boundary=frame",
         headers={"Cache-Control": "no-cache, no-store, must-revalidate", "Pragma": "no-cache", "Expires": "0"},
     )
+    resp.call_on_close(release)   # vangt ook 'stream nooit gestart' af
+    return resp
 
 
 @camera_bp.route("/api/camera_status")

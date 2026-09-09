@@ -243,12 +243,16 @@ def test_camera_viewer_cap():
 
     config.set("camera.max_viewers", 2)
     cam = _Camera()
-    assert cam.try_acquire() is True
-    assert cam.try_acquire() is True
-    assert cam.try_acquire() is False        # vol
-    cam._release()
-    assert cam.try_acquire() is True         # weer plek
-    assert cam._viewers == 2
+    r1 = cam.acquire()
+    r2 = cam.acquire()
+    assert r1 and r2
+    assert cam.acquire() is None             # vol
+    r1()                                     # plek terug
+    assert cam._viewers == 1
+    r1()                                     # idempotent — telt niet dubbel
+    assert cam._viewers == 1
+    r3 = cam.acquire()
+    assert r3 and cam._viewers == 2
 
 
 # --- spotify "geen apparaat"-status in /api/service_status --------------- #
