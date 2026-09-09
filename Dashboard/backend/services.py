@@ -7,6 +7,7 @@ of crashing the whole dashboard.
 from __future__ import annotations
 
 import asyncio
+import threading
 import time
 
 import config
@@ -18,42 +19,48 @@ from logic.logger import log
 _services: dict = {}
 _errors: dict = {}
 _lamp_conns: dict = {}
+_lamp_locks: dict = {}            # ip -> Lock (één verbinding per lamp tegelijk)
 _health_cache: dict = {}          # name -> (ok, error, expires_at)
 _HEALTH_TTL = 60
+_reg_lock = threading.RLock()     # beschermt het aanmaken van services/lampsloten
+
+
+def _build(name: str):
+    if name == "spotify":
+        from sound_system.muziek import SpotifyDJ
+        return SpotifyDJ()
+    if name == "radio":
+        from sound_system.radio import RadioPlayer
+        return RadioPlayer()
+    if name == "weer":
+        from weer.weer import WeerAPI
+        return WeerAPI()
+    if name == "agenda":
+        from scheduler.agenda import AppleCalendarMultiAccount
+        return AppleCalendarMultiAccount()
+    raise KeyError(name)
 
 
 def svc(name: str):
     """Return a shared service instance, or ``None`` if it can't be created."""
-    if name in _services:
+    if name in _services:            # snelle weg, geen lock nodig
         return _services[name]
-    try:
-        if name == "spotify":
-            from sound_system.muziek import SpotifyDJ
-
-            _services[name] = SpotifyDJ()
-        elif name == "radio":
-            from sound_system.radio import RadioPlayer
-
-            _services[name] = RadioPlayer()
-        elif name == "weer":
-            from weer.weer import WeerAPI
-
-            _services[name] = WeerAPI()
-        elif name == "agenda":
-            from scheduler.agenda import AppleCalendarMultiAccount
-
-            _services[name] = AppleCalendarMultiAccount()
-        else:
+    with _reg_lock:                  # één thread bouwt, de rest wacht
+        if name in _services:
+            return _services[name]
+        try:
+            _services[name] = _build(name)
+            _errors.pop(name, None)
+        except KeyError:
             return None
-        _errors.pop(name, None)
-    except Exception as exc:  # noqa: BLE001 - één storing mag niet het hele dashboard slopen
-        first_time = _errors.get(name) != str(exc)
-        _errors[name] = str(exc)
-        _services[name] = None
-        print(f"[dashboard] service '{name}' niet beschikbaar: {exc}")
-        if first_time:  # niet elke poll opnieuw in het logboek spammen
-            log("Service", f"{name} niet beschikbaar: {exc}")
-    return _services[name]
+        except Exception as exc:  # noqa: BLE001 - één storing mag niet het hele dashboard slopen
+            first_time = _errors.get(name) != str(exc)
+            _errors[name] = str(exc)
+            _services[name] = None
+            print(f"[dashboard] service '{name}' niet beschikbaar: {exc}")
+            if first_time:  # niet elke poll opnieuw in het logboek spammen
+                log("Service", f"{name} niet beschikbaar: {exc}")
+        return _services[name]
 
 
 def errors() -> dict:
@@ -62,10 +69,12 @@ def errors() -> dict:
 
 def reset_services():
     """Called after a settings/secret change so new config takes effect."""
-    _services.clear()
-    _errors.clear()
-    _health_cache.clear()
-    _lamp_conns.clear()
+    with _reg_lock:
+        _services.clear()
+        _errors.clear()
+        _health_cache.clear()
+        _lamp_conns.clear()
+        _lamp_locks.clear()
     try:
         from Dashboard.backend.camera_api import camera
 
@@ -78,16 +87,23 @@ def reset_services():
 # Lamps
 # --------------------------------------------------------------------------- #
 def lamp(ip: str):
-    """Return a connected SlimmeLamp for ``ip``, reusing the connection."""
+    """Return a connected SlimmeLamp for ``ip``, reusing the connection.
+    Eén verbindingspoging per lamp tegelijk (connect() is een trage netwerkcall)."""
     from devices.Lights import SlimmeLamp
 
     existing = _lamp_conns.get(ip)
     if existing is not None and existing.lamp is not None:
         return existing
-    obj = SlimmeLamp(config.secret("TAPO_USER"), config.secret("TAPO_PASSWORD"), ip)
-    asyncio.run(obj.connect())
-    _lamp_conns[ip] = obj
-    return obj
+    with _reg_lock:
+        lk = _lamp_locks.setdefault(ip, threading.Lock())
+    with lk:
+        existing = _lamp_conns.get(ip)
+        if existing is not None and existing.lamp is not None:
+            return existing
+        obj = SlimmeLamp(config.secret("TAPO_USER"), config.secret("TAPO_PASSWORD"), ip)
+        asyncio.run(obj.connect())
+        _lamp_conns[ip] = obj
+        return obj
 
 
 def drop_lamp(ip: str):

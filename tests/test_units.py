@@ -236,6 +236,32 @@ def test_use_porcupine_respects_config(monkeypatch):
     assert Whisper._use_porcupine() is False          # geforceerd maar niet klaar
 
 
+# --- services: geen dubbele constructie onder gelijktijdige requests --- #
+def test_svc_builds_once_under_concurrency(monkeypatch):
+    import threading
+    import time as _t
+
+    from Dashboard.backend import services
+
+    services._services.clear()
+    builds = []
+
+    def slow_build(name):
+        builds.append(name)
+        _t.sleep(0.05)
+        return object()
+
+    monkeypatch.setattr(services, "_build", slow_build)
+    got = []
+    threads = [threading.Thread(target=lambda: got.append(services.svc("weer"))) for _ in range(8)]
+    for x in threads:
+        x.start()
+    for x in threads:
+        x.join()
+    assert builds == ["weer"]                 # precies één keer gebouwd
+    assert len({id(g) for g in got}) == 1     # iedereen kreeg hetzelfde object
+
+
 # --- camera: kijkers begrenzen ----------------------------------------- #
 def test_camera_viewer_cap():
     import config
