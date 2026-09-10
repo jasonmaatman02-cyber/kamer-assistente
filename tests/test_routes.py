@@ -218,6 +218,12 @@ def test_csrf_guard_blocks_foreign_origin(client):
     r = client.post("/api/alarm", json={"time": "07:00"},
                     headers={"Origin": "http://evil.example"})
     assert r.status_code == 403
+    # maar Sec-Fetch-Site: same-origin wint (bv. achter een reverse proxy die
+    # de Host herschrijft) -> niet blokkeren
+    r = client.post("/api/alarm", json={"time": "07:00"},
+                    headers={"Origin": "http://evil.example", "Sec-Fetch-Site": "same-origin"})
+    assert r.status_code in (200, 400)
+    client.delete("/api/alarm")
 
 
 def test_alarm_set_and_clear(client):

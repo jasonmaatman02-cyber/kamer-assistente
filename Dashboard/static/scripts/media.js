@@ -11,7 +11,16 @@ function jget(url, ms = 8000) {
 const jpost = (url, body) => fetch(url, {
   method: "POST", headers: { "Content-Type": "application/json" },
   body: body ? JSON.stringify(body) : undefined,
-}).then(r => r.json()).catch(() => ({}));
+}).then(async r => {
+  // niet stilzwijgend slikken: een 403 (CSRF) of 500 met platte tekst
+  // moet ook een melding geven i.p.v. "er gebeurt niks"
+  const txt = await r.text();
+  let d;
+  try { d = txt ? JSON.parse(txt) : {}; } catch (_) { d = { error: txt.slice(0, 200) }; }
+  if (!r.ok && d.success === undefined) d.success = false;
+  if (!r.ok && !d.error) d.error = `HTTP ${r.status}`;
+  return d;
+}).catch(e => ({ success: false, error: "netwerkfout: " + (e && e.message || e) }));
 const $ = id => document.getElementById(id);
 
 function notify(msg, isErr) {
