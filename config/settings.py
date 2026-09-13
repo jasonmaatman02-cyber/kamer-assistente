@@ -92,6 +92,21 @@ DEFAULTS: dict = {
         "poll_system_ms": 10000,
     },
     "alarm": {"time": "", "routine": "morning"},   # handmatige dashboard-wekker
+    "presence": {
+        # server-side (Pi-native) mensen-tellen via de bestaande camera, drijft
+        # de automatische lamp aan. Los van 'camera.browser_detection' (dat is
+        # client-side, in de browser van wie er kijkt — deze draait altijd,
+        # ongeacht of iemand het dashboard open heeft staan).
+        "enabled": False,
+        "interval_s": 3.0,             # PEOPLE_DETECTION_INTERVAL: hoe vaak een frame checken
+        "consecutive_required": 2,     # zoveel opeenvolgende positieve detecties voor OCCUPIED
+        "empty_grace_s": 20.0,         # zo lang wachten met EMPTY na de laatste detectie
+        "auto_light_enabled": False,   # AUTO_LIGHT_ENABLED
+        "lamp": 0,                     # welke lamp (index/naam) de presence-logica bedient
+        # AUTO_LIGHT_BLOCK_AFTER: harde regel — na dit tijdstip mag de lamp
+        # nooit meer automatisch AAN (uitzetten mag wel). "" = geen blokkade.
+        "auto_light_block_after": "21:30",
+    },
     "security": {
         # 0 = elke browsersessie opnieuw inloggen (cookie weg bij afsluiten),
         # met een harde serverlimiet van 24u. >0 = zoveel dagen onthouden.

@@ -23,7 +23,16 @@ class _Camera:
         self._viewers = 0
         self._stop = threading.Event()
         self._last_grab = 0.0        # laatste losse snapshot-aanvraag
+        self._keep_alive = False     # bv. aanwezigheidsdetectie: blijf draaien zonder kijkers
         self.error = None
+
+    def keep_alive(self, on: bool) -> None:
+        """Voorkom dat de capture-thread stopt als er geen MJPEG-kijkers of
+        snapshot-aanvragen zijn (gebruikt door de aanwezigheidsdetectie, die
+        continu frames nodig heeft ongeacht of er een browser openstaat)."""
+        self._keep_alive = bool(on)
+        if on:
+            self._ensure_running()
 
     def _max_viewers(self) -> int:
         # elke kijker houdt een waitress-worker bezig; laat er genoeg vrij
@@ -105,8 +114,9 @@ class _Camera:
         self.error = None
         try:
             while not self._stop.is_set():
-                # niemand kijkt (geen MJPEG-viewer) en al 30s geen snapshot -> stop
-                if self._viewers == 0 and time.time() - self._last_grab > 30:
+                # niemand kijkt (geen MJPEG-viewer), geen snapshot in 30s, en niemand
+                # vraagt om 'm actief te houden (aanwezigheidsdetectie) -> stop
+                if not self._keep_alive and self._viewers == 0 and time.time() - self._last_grab > 30:
                     break
                 q = int(config.get("camera.jpeg_quality", 55))
                 delay = 1.0 / max(1, config.get("camera.fps", 10))
@@ -135,6 +145,11 @@ class _Camera:
                 self._stop.clear()
                 self._thread = threading.Thread(target=self._run, daemon=True)
                 self._thread.start()
+
+    def latest_jpeg(self) -> bytes | None:
+        """Het nieuwste frame als JPEG-bytes, of ``None`` als er nog niks is."""
+        with self._lock:
+            return self._latest[0] if self._latest else None
 
     def release(self):
         self._stop.set()

@@ -497,3 +497,197 @@ def test_run_routine_unknown_action_isolated(monkeypatch):
     }])
     routines_api._run_routine("testroutine2")
     assert said == ["toch"]
+
+
+# --- people_detect: NMS + count_people robuustheid ----------------------- #
+def test_non_max_suppression_dedupes_overlapping_boxes():
+    from logic.people_detect import non_max_suppression
+
+    boxes = [
+        (0, 0, 100, 200),      # persoon A
+        (5, 5, 105, 205),      # zelfde persoon A, licht verschoven detectie
+        (300, 0, 400, 200),    # persoon B, ver weg
+    ]
+    scores = [0.9, 0.8, 0.7]
+    keep = non_max_suppression(boxes, scores)
+    assert len(keep) == 2                     # A en B, niet de dubbele A
+
+
+def test_non_max_suppression_empty():
+    from logic.people_detect import non_max_suppression
+
+    assert non_max_suppression([], []) == []
+
+
+def test_count_people_blank_frame_is_zero():
+    pytest.importorskip("cv2")
+    import numpy as np
+
+    from logic.people_detect import count_people
+
+    frame = np.zeros((240, 320, 3), dtype="uint8")   # effen zwart beeld
+    assert count_people(frame) == 0
+
+
+def test_count_people_never_raises(monkeypatch):
+    import logic.people_detect as pd
+
+    def boom():
+        raise RuntimeError("geen HOG beschikbaar")
+
+    monkeypatch.setattr(pd, "_get_detector", boom)
+
+    class FakeFrame:
+        size = 10
+
+    assert pd.count_people(FakeFrame()) == 0   # gevangen, geen exception
+
+
+def test_count_people_none_frame_is_zero():
+    from logic.people_detect import count_people
+
+    assert count_people(None) == 0
+
+
+# --- presence: de 21:30-regel (pure, tijd-onafhankelijk testbaar) -------- #
+def test_auto_light_block_before_and_after_2130():
+    import config
+    from Dashboard.backend.presence import is_auto_light_blocked
+
+    config.set("presence.auto_light_block_after", "21:30")
+    assert is_auto_light_blocked(datetime.datetime(2026, 1, 5, 21, 29)) is False
+    assert is_auto_light_blocked(datetime.datetime(2026, 1, 5, 21, 30)) is True    # grens = geblokkeerd
+    assert is_auto_light_blocked(datetime.datetime(2026, 1, 5, 21, 31)) is True
+    assert is_auto_light_blocked(datetime.datetime(2026, 1, 5, 23, 59)) is True
+
+
+def test_auto_light_block_resets_after_midnight():
+    """Zelfde dag na 21:30 -> geblokkeerd; de volgende dag vóór 21:30 (ook
+    vlak na middernacht) -> weer toegestaan. Puur op kloktijd, geen
+    datum-staleness-bug."""
+    import config
+    from Dashboard.backend.presence import is_auto_light_blocked
+
+    config.set("presence.auto_light_block_after", "21:30")
+    assert is_auto_light_blocked(datetime.datetime(2026, 1, 5, 23, 59)) is True
+    assert is_auto_light_blocked(datetime.datetime(2026, 1, 6, 0, 0)) is False
+    assert is_auto_light_blocked(datetime.datetime(2026, 1, 6, 0, 5)) is False
+    assert is_auto_light_blocked(datetime.datetime(2026, 1, 6, 21, 29)) is False
+    assert is_auto_light_blocked(datetime.datetime(2026, 1, 6, 21, 30)) is True
+
+
+def test_auto_light_block_disabled_when_empty():
+    import config
+    from Dashboard.backend.presence import is_auto_light_blocked
+
+    config.set("presence.auto_light_block_after", "")
+    assert is_auto_light_blocked(datetime.datetime(2026, 1, 5, 23, 59)) is False
+    config.set("presence.auto_light_block_after", "21:30")   # terugzetten voor andere tests
+
+
+def test_auto_light_block_bad_value_falls_back(monkeypatch):
+    import config
+    from Dashboard.backend.presence import is_auto_light_blocked
+
+    config.set("presence.auto_light_block_after", "onzin")
+    # valt terug op de default 21:30 i.p.v. te crashen of nooit te blokkeren
+    assert is_auto_light_blocked(datetime.datetime(2026, 1, 5, 21, 31)) is True
+    assert is_auto_light_blocked(datetime.datetime(2026, 1, 5, 21, 29)) is False
+    config.set("presence.auto_light_block_after", "21:30")
+
+
+# --- presence: state machine (hysteresis, grace period, geen spam-lamp) -- #
+def test_presence_worker_hysteresis_and_grace(monkeypatch):
+    import config
+    from Dashboard.backend.presence import PresenceWorker
+    import logic.people_detect as pd
+
+    config.set("presence.consecutive_required", 2)
+    config.set("presence.empty_grace_s", 10.0)
+    config.set("presence.auto_light_enabled", True)
+    config.set("presence.auto_light_block_after", "")   # niet laten meespelen in deze test
+
+    w = PresenceWorker()
+    monkeypatch.setattr(w, "_get_frame", lambda: object())   # niet None -> "er is beeld"
+
+    lamp_calls = []
+    monkeypatch.setattr(w, "_auto_light", lambda on: lamp_calls.append(on))
+
+    clock = {"t": 1_000_000.0}
+    monkeypatch.setattr("time.time", lambda: clock["t"])
+
+    # 1e detectie: nog niet genoeg (consecutive_required=2) -> blijft EMPTY
+    monkeypatch.setattr(pd, "count_people", lambda frame: 1)
+    w._tick()
+    assert w.room_state == "EMPTY" and lamp_calls == []
+
+    # 2e opeenvolgende detectie -> nu pas OCCUPIED, lamp-aan geprobeerd
+    clock["t"] += 3
+    w._tick()
+    assert w.room_state == "OCCUPIED" and lamp_calls == [True]
+
+    # blijft bezet over meerdere ticks -> geen nieuwe lamp-actie (geen spam,
+    # en respecteert een eventuele handmatige uitzet-actie ondertussen)
+    clock["t"] += 3
+    w._tick()
+    clock["t"] += 3
+    w._tick()
+    assert lamp_calls == [True]
+
+    # 1 gemist frame (count=0) -> mag niet meteen EMPTY worden (grace period)
+    monkeypatch.setattr(pd, "count_people", lambda frame: 0)
+    clock["t"] += 3
+    w._tick()
+    assert w.room_state == "OCCUPIED" and lamp_calls == [True]
+
+    # grace period (10s) verstreken zonder nieuwe detectie -> nu pas EMPTY + lamp-uit
+    clock["t"] += 8   # totaal >10s sinds de laatste positieve detectie
+    w._tick()
+    assert w.room_state == "EMPTY" and lamp_calls == [True, False]
+
+
+def test_presence_worker_blocks_auto_on_after_2130(monkeypatch):
+    import config
+    import Dashboard.backend.presence as presence_mod
+    from Dashboard.backend.presence import PresenceWorker
+
+    config.set("presence.consecutive_required", 1)
+    config.set("presence.auto_light_enabled", True)
+
+    w = PresenceWorker()
+    monkeypatch.setattr(w, "_get_frame", lambda: object())
+    monkeypatch.setattr("logic.people_detect.count_people", lambda frame: 1)
+    monkeypatch.setattr(presence_mod, "is_auto_light_blocked", lambda: True)
+
+    def must_not_be_called(ip):
+        raise AssertionError("lamp mag niet aangeroepen worden na 21:30")
+
+    monkeypatch.setattr(presence_mod.S, "lamp_ip", lambda x: "192.168.1.50")
+    monkeypatch.setattr(presence_mod.S, "lamp", must_not_be_called)
+
+    w._tick()
+    assert w.room_state == "OCCUPIED"     # detectie blijft gewoon werken...
+    # ...maar de lamp is niet aangeraakt (must_not_be_called zou anders falen)
+
+
+def test_presence_worker_lamp_failure_does_not_raise(monkeypatch):
+    import config
+    from Dashboard.backend.presence import PresenceWorker
+    import Dashboard.backend.presence as presence_mod
+
+    config.set("presence.consecutive_required", 1)
+    config.set("presence.auto_light_enabled", True)
+    config.set("presence.auto_light_block_after", "")
+
+    w = PresenceWorker()
+    monkeypatch.setattr(w, "_get_frame", lambda: object())
+    monkeypatch.setattr("logic.people_detect.count_people", lambda frame: 1)
+    monkeypatch.setattr(presence_mod.S, "lamp_ip", lambda x: "192.168.1.50")
+
+    def boom(ip):
+        raise RuntimeError("Tapo offline")
+
+    monkeypatch.setattr(presence_mod.S, "lamp", boom)
+    w._tick()   # mag niet crashen
+    assert w.room_state == "OCCUPIED"
+    config.set("presence.auto_light_block_after", "21:30")

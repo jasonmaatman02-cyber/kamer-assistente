@@ -11,6 +11,15 @@ HOST, PORT = "0.0.0.0", 5000
 
 def main():
     log("dashboard", "dashboard gestart")
+
+    # Aanwezigheidsdetectie: één achtergrond-thread, doet niks zolang
+    # presence.enabled uit staat (Settings). Hoort hier en niet in
+    # Dashboard/backend/main.py — dat mag geen hardware aanraken bij import
+    # (de testsuite importeert die module continu).
+    from Dashboard.backend.presence import worker as presence_worker
+
+    presence_worker.start()
+
     try:
         from waitress import serve
 

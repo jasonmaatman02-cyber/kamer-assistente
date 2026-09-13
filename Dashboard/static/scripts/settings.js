@@ -77,6 +77,22 @@ const SCHEMA = [
     ],
   },
   {
+    key: "presence", title: "Aanwezigheidsdetectie", icon: "fa-person",
+    fields: [
+      { path: "enabled", label: "Mensen tellen (op de Pi zelf)", type: "bool",
+        hint: "Gebruikt de camera-thread; werkt ook als er niemand naar het dashboard kijkt." },
+      { path: "interval_s", label: "Detectie-interval (s)", type: "number", step: "0.5", min: 0.5, max: 30,
+        hint: "Hoger = minder CPU-gebruik op de Pi." },
+      { path: "consecutive_required", label: "Opeenvolgende detecties voor 'bezet'", type: "number", min: 1, max: 10 },
+      { path: "empty_grace_s", label: "Wachttijd voor 'leeg' (s)", type: "number", min: 0, max: 300,
+        hint: "Eén gemist frame maakt de kamer nog niet meteen leeg." },
+      { path: "auto_light_enabled", label: "Automatische lamp op aanwezigheid", type: "bool" },
+      { path: "lamp", label: "Welke lamp (index of naam)", type: "text" },
+      { path: "auto_light_block_after", label: "Automatisch AAN geblokkeerd na", type: "text",
+        hint: "Harde regel, bv. 21:30 — daarna zet aanwezigheid de lamp nooit automatisch aan (uitzetten mag wel). Leeg = geen blokkade." },
+    ],
+  },
+  {
     key: "dashboard", title: "Dashboard verversen (ms)", icon: "fa-arrows-rotate",
     fields: [
       { path: "poll_now_playing_ms", label: "Now playing", type: "number", min: 1000, step: 500,

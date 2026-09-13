@@ -35,12 +35,13 @@ from Dashboard.backend.chat_api import chat_bp
 from Dashboard.backend.devices_api import devices_bp
 from Dashboard.backend.media_api import media_bp
 from Dashboard.backend.pages import pages_bp
+from Dashboard.backend.presence import presence_bp
 from Dashboard.backend.routines_api import routines_bp
 from Dashboard.backend.secrets_api import secrets_bp
 from Dashboard.backend.system_api import system_bp
 
 for bp in (auth_bp, system_bp, secrets_bp, media_bp, devices_bp,
-           camera_bp, chat_bp, routines_bp, pages_bp):
+           camera_bp, chat_bp, routines_bp, pages_bp, presence_bp):
     app.register_blueprint(bp)
 
 # backwards-compat re-exports
