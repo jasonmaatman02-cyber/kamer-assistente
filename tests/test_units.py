@@ -740,3 +740,62 @@ def test_presence_get_frame_handles_camera_full(monkeypatch):
 
     assert w._get_frame() is None     # geen crash, gewoon geen frame
     assert w._get_frame() is None     # blijft netjes None bij herhaling
+
+
+# --- audio: mic die 16kHz niet ondersteunt (USB-webcam-quirk, echt gezien --
+# --- op de Pi: "CC HD webcam" mist 16/22.05kHz, heeft wel 44.1kHz) ------- #
+def test_record_falls_back_to_device_rate_and_resamples(monkeypatch):
+    import numpy as np
+
+    from voice import Whisper
+
+    class FakeSD:
+        def check_input_settings(self, samplerate, channels):
+            if samplerate == Whisper.SAMPLERATE:
+                raise RuntimeError("Invalid sample rate [PaErrorCode -9997]")
+            # 44100 (en andere) wél ok
+
+        def query_devices(self, kind=None):
+            return {"name": "CC HD webcam: USB Audio", "default_samplerate": 44100.0}
+
+        def rec(self, n, samplerate, channels, dtype):
+            self.last_n, self.last_rate = n, samplerate
+            return np.ones((n, channels), dtype=dtype) * 0.5
+
+        def wait(self):
+            pass
+
+    fake = FakeSD()
+    monkeypatch.setattr(Whisper, "sd", fake)
+    monkeypatch.setattr(Whisper, "_record_rate_cache", None)
+
+    assert Whisper.mic_available() is True        # gedegradeerd naar 44.1kHz, niet False
+    assert Whisper._record_rate_cache == 44100
+
+    audio = Whisper._record(1.0)
+    assert fake.last_rate == 44100                 # opgenomen op de rate die de mic wél kan
+    # terug naar SAMPLERATE geresampled (binnen afrondingsmarge van linspace/interp)
+    assert abs(audio.shape[0] - Whisper.SAMPLERATE) <= 1
+
+
+def test_record_uses_16khz_directly_when_supported(monkeypatch):
+    import numpy as np
+
+    from voice import Whisper
+
+    class FakeSD:
+        def check_input_settings(self, samplerate, channels):
+            pass  # alles ok, ook 16kHz
+
+        def rec(self, n, samplerate, channels, dtype):
+            self.last_rate = n, samplerate
+            return np.zeros((n, channels), dtype=dtype)
+
+        def wait(self):
+            pass
+
+    fake = FakeSD()
+    monkeypatch.setattr(Whisper, "sd", fake)
+    monkeypatch.setattr(Whisper, "_record_rate_cache", None)
+
+    assert Whisper._pick_record_rate() == Whisper.SAMPLERATE   # geen omweg nodig

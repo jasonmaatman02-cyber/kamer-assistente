@@ -68,11 +68,48 @@ class NoMicError(RuntimeError):
     pass
 
 
+_record_rate_cache: int | None = None
+
+
+def _pick_record_rate() -> int:
+    """Kies een samplerate die de mic ECHT ondersteunt. SAMPLERATE (16 kHz) is
+    wat de rest van de pijplijn (faster-whisper) verwacht, maar sommige
+    USB-webcam-microfoons ondersteunen alleen een vaste set (bv. 8/32/44.1/48
+    kHz — mist dan juist 16 kHz). In dat geval nemen we de eigen default-rate
+    van het apparaat op en resamplen we terug naar SAMPLERATE (zie _record).
+    Gooit door als er helemaal geen bruikbare invoer-rate is."""
+    global _record_rate_cache
+    if _record_rate_cache is not None:
+        return _record_rate_cache
+    try:
+        sd.check_input_settings(samplerate=SAMPLERATE, channels=1)
+        _record_rate_cache = SAMPLERATE
+        return _record_rate_cache
+    except Exception:  # noqa: BLE001
+        pass
+    default_rate = int(sd.query_devices(kind="input")["default_samplerate"])
+    sd.check_input_settings(samplerate=default_rate, channels=1)  # gooit door als dit ook niet lukt
+    print(f"[AUDIO] mic ondersteunt {SAMPLERATE}Hz niet, gebruik native {default_rate}Hz + resample")
+    _record_rate_cache = default_rate
+    return _record_rate_cache
+
+
+def _resample(audio, orig_rate: int, target_rate: int):
+    """Lichte, dependency-vrije lineaire resample — ruim voldoende voor
+    spraak/wake-word-herkenning, geen extra scipy-afhankelijkheid nodig."""
+    if orig_rate == target_rate or audio.size == 0:
+        return audio
+    target_len = max(1, int(round(audio.shape[0] * target_rate / orig_rate)))
+    orig_idx = np.arange(audio.shape[0])
+    target_idx = np.linspace(0, audio.shape[0] - 1, num=target_len)
+    return np.interp(target_idx, orig_idx, audio).astype(audio.dtype)
+
+
 def mic_available() -> bool:
     if sd is None:
         return False
     try:
-        sd.check_input_settings(samplerate=SAMPLERATE, channels=1)
+        _pick_record_rate()
         return True
     except Exception:  # noqa: BLE001
         return False
@@ -82,11 +119,14 @@ def _record(seconds: float):
     if sd is None or np is None:
         raise NoMicError("sounddevice/numpy niet geïnstalleerd")
     try:
-        audio = sd.rec(int(SAMPLERATE * seconds), samplerate=SAMPLERATE, channels=1, dtype="float32")
+        rate = _pick_record_rate()
+        audio = sd.rec(int(rate * seconds), samplerate=rate, channels=1, dtype="float32")
         sd.wait()
     except Exception as exc:  # noqa: BLE001 - sounddevice/PortAudio errors
         raise NoMicError(str(exc)) from exc
     audio = np.squeeze(audio)
+    if rate != SAMPLERATE:
+        audio = _resample(audio, rate, SAMPLERATE)
     peak = np.max(np.abs(audio)) if audio.size else 0
     return audio / peak if peak > 0 else audio
 
