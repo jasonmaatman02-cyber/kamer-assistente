@@ -87,6 +87,7 @@ sed -e "s|/home/pi/kamer-assistente|$REPO_DIR|g" \
     -e "s|^User=pi$|User=$SERVICE_USER|" \
     deploy/kamer-dashboard.service > "$TMP_UNIT"
 sudo cp "$TMP_UNIT" /etc/systemd/system/kamer-dashboard.service
+sudo chmod 644 /etc/systemd/system/kamer-dashboard.service   # mktemp geeft 600 mee; cp behoudt dat -> systemctl cat faalt dan zonder sudo
 rm -f "$TMP_UNIT"
 sudo systemctl daemon-reload
 sudo systemctl enable --now kamer-dashboard.service

@@ -46,7 +46,12 @@ if [ -f .venv/bin/pip ]; then
   ./.venv/bin/pip install -r "$REQ" -q
 fi
 
-if systemctl cat kamer-dashboard.service >/dev/null 2>&1; then
+# 'systemctl cat' leest het unit-bestand zelf en faalt met Permission denied
+# als dat niet wereld-leesbaar is (bv. 600 i.p.v. 644 na een 'sudo cp') — ook
+# als de service prima draait. 'is-enabled'/'is-active' vragen de daemon zelf
+# via de systemd-bus, dat werkt altijd zonder sudo. Exit 4 = unit bestaat niet.
+if systemctl is-enabled kamer-dashboard.service >/dev/null 2>&1 \
+   || systemctl is-active kamer-dashboard.service >/dev/null 2>&1; then
   echo "==> sudo systemctl restart kamer-dashboard"
   sudo systemctl restart kamer-dashboard
   sleep 1
