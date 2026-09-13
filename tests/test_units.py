@@ -691,3 +691,52 @@ def test_presence_worker_lamp_failure_does_not_raise(monkeypatch):
     w._tick()   # mag niet crashen
     assert w.room_state == "OCCUPIED"
     config.set("presence.auto_light_block_after", "21:30")
+
+
+# --- presence: camera-herstel na reset_services() (settings-save) -------- #
+def test_presence_get_frame_calls_keep_alive_every_tick(monkeypatch):
+    """reset_services() (draait bij elke instellingen-opslag) stopt de
+    camera-capture-thread altijd, ook als presence 'm levend probeert te
+    houden. _get_frame() moet daarom ELKE tick keep_alive(True) aanroepen
+    (goedkoop/idempotent) zodat detectie na zo'n reset vanzelf herstelt,
+    i.p.v. voorgoed op 0 te blijven hangen."""
+    import config
+    from Dashboard.backend.presence import PresenceWorker
+
+    config.set("camera.enabled", True)
+    w = PresenceWorker()
+
+    calls = {"acquire": 0, "keep_alive": []}
+    fake_camera = type("FakeCam", (), {})()
+    fake_camera.acquire = lambda: (calls.__setitem__("acquire", calls["acquire"] + 1) or (lambda: None))
+    fake_camera.keep_alive = lambda on: calls["keep_alive"].append(on)
+    fake_camera.latest_jpeg = lambda: None
+
+    import Dashboard.backend.camera_api as camera_api
+    monkeypatch.setattr(camera_api, "camera", fake_camera)
+
+    w._get_frame()
+    w._get_frame()
+    w._get_frame()
+
+    assert calls["acquire"] == 1                  # viewer-slot maar 1x geclaimd (geen lek)
+    assert calls["keep_alive"] == [True, True, True]   # maar wél elke tick "blijf leven"
+
+
+def test_presence_get_frame_handles_camera_full(monkeypatch):
+    import config
+    from Dashboard.backend.presence import PresenceWorker
+
+    config.set("camera.enabled", True)
+    w = PresenceWorker()
+
+    fake_camera = type("FakeCam", (), {})()
+    fake_camera.acquire = lambda: None    # camera vol
+    fake_camera.keep_alive = lambda on: None
+    fake_camera.latest_jpeg = lambda: None
+
+    import Dashboard.backend.camera_api as camera_api
+    monkeypatch.setattr(camera_api, "camera", fake_camera)
+
+    assert w._get_frame() is None     # geen crash, gewoon geen frame
+    assert w._get_frame() is None     # blijft netjes None bij herhaling

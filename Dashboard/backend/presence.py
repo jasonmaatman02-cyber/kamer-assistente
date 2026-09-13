@@ -78,6 +78,7 @@ class PresenceWorker:
         self._positive_streak = 0
         self._last_positive_at: float | None = None
         self._camera_hold = None   # release-functie van camera.acquire(), of None
+        self._camera_full_warned = False
 
     # ------------------------------------------------------------------ #
     # Lifecycle
@@ -120,7 +121,16 @@ class PresenceWorker:
             return None
         if self._camera_hold is None:
             self._camera_hold = camera.acquire()
-            camera.keep_alive(True)
+            if self._camera_hold is None:
+                if not self._camera_full_warned:
+                    log("PEOPLE", "Camera vol (max_viewers) — probeer later opnieuw")
+                    self._camera_full_warned = True
+                return None
+            self._camera_full_warned = False
+        # Elke tick opnieuw (goedkoop, idempotent): een settings-wijziging elders
+        # (reset_services()) stopt de capture-thread altijd, ook al houden wij
+        # 'm 'levend' — dit herstart 'm dan vanzelf i.p.v. voorgoed op 0 te blijven.
+        camera.keep_alive(True)
         jpeg = camera.latest_jpeg()
         if not jpeg:
             return None
