@@ -216,7 +216,8 @@ def test_run_tools_dedupes_identical_calls(monkeypatch):
 
 # --- wake-word backend keuze ---------------------------------------------- #
 def test_use_porcupine_respects_config(monkeypatch):
-    pytest.importorskip("sounddevice")
+    # voice.Whisper is nu altijd importeerbaar (zie test hieronder), ook
+    # zonder sounddevice geïnstalleerd -> geen importorskip meer nodig.
     import config
     from voice import Whisper
 
@@ -234,6 +235,30 @@ def test_use_porcupine_respects_config(monkeypatch):
     assert Whisper._use_porcupine() is False          # niet klaar -> whisper
     config.set("assistant.wake_backend", "porcupine")
     assert Whisper._use_porcupine() is False          # geforceerd maar niet klaar
+
+
+# --- audio: ontbrekende sounddevice mag scheduler.routines niet meeslepen --- #
+def test_voice_stack_degrades_without_sounddevice(monkeypatch):
+    """Regressietest voor de 'wekkers werken niet, sounddevice-fout'-bug:
+    scheduler.routines (dus ook de dashboard-wekker/-routines) moet altijd
+    importeerbaar en bruikbaar blijven, ook zonder sounddevice/numpy
+    (dashboard-only install, requirements-dashboard.txt)."""
+    from voice import Whisper
+
+    monkeypatch.setattr(Whisper, "sd", None)
+    monkeypatch.setattr(Whisper, "np", None)
+
+    assert Whisper.mic_available() is False
+    with pytest.raises(Whisper.NoMicError):
+        Whisper._record(0.1)
+
+    # de hele keten die scheduler.routines nodig heeft blijft werken
+    import scheduler.routines as routines
+    import voice.Whisper_short as whisper_short
+
+    assert callable(routines.morning_routine)
+    assert callable(routines.bedtime_routine)
+    assert callable(whisper_short.shortwhisper)
 
 
 # --- services: geen dubbele constructie onder gelijktijdige requests --- #

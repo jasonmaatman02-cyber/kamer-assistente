@@ -11,14 +11,27 @@ import re
 import string
 import time
 
-import numpy as np
-import sounddevice as sd
-
 import config
 from ai import stt
 from logic.gpt_handler import verwerk_input
 from logic.logger import log
 from voice.tts_output import speak
+
+# sounddevice/numpy zijn alleen in de volledige voice-stack (requirements.txt),
+# niet in een dashboard-only install (requirements-dashboard.txt). Een missende
+# of kapotte PortAudio-lib mag dit module NIET onimporteerbaar maken — anders
+# valt alles wat 'm transitief importeert (o.a. scheduler.routines, en dus de
+# hele wekker/routine-functionaliteit in het dashboard) stil mee om.
+try:
+    import numpy as np
+except Exception as exc:  # noqa: BLE001
+    np = None
+    print(f"[AUDIO] numpy niet beschikbaar, spraakinvoer uitgeschakeld: {exc}")
+try:
+    import sounddevice as sd
+except Exception as exc:  # noqa: BLE001
+    sd = None
+    print(f"[AUDIO] sounddevice niet beschikbaar, spraakinvoer uitgeschakeld: {exc}")
 
 try:
     from voice.porcupine_wake import detect_wakeword_porcupine, porcupine_ready
@@ -56,6 +69,8 @@ class NoMicError(RuntimeError):
 
 
 def mic_available() -> bool:
+    if sd is None:
+        return False
     try:
         sd.check_input_settings(samplerate=SAMPLERATE, channels=1)
         return True
@@ -63,7 +78,9 @@ def mic_available() -> bool:
         return False
 
 
-def _record(seconds: float) -> np.ndarray:
+def _record(seconds: float):
+    if sd is None or np is None:
+        raise NoMicError("sounddevice/numpy niet geïnstalleerd")
     try:
         audio = sd.rec(int(SAMPLERATE * seconds), samplerate=SAMPLERATE, channels=1, dtype="float32")
         sd.wait()
