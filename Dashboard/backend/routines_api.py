@@ -53,6 +53,9 @@ def routines_delete(rid):
 
 
 def _run_step(step):
+    """Eén stap van een custom routine. Gooit door bij een fout — de caller
+    (``_run_routine``) vangt 'm op zodat één kapotte stap niet de rest van
+    de routine afbreekt."""
     kind = step.get("action")
     if kind == "lamp":
         ip = S.lamp_ip(step.get("lamp", 0))
@@ -73,10 +76,15 @@ def _run_step(step):
         from voice.tts_output import speak
 
         speak(step.get("text", ""))
+    else:
+        raise ValueError(f"onbekende actie: {kind}")
 
 
 def _run_routine(rid):
-    """Voer een routine uit (ingebouwd of custom). Gooit bij een onbekende id."""
+    """Voer een routine uit (ingebouwd of custom). Gooit alleen bij een
+    onbekende id — een fout in één stap van een custom routine wordt hier
+    afgevangen zodat de rest van de routine gewoon doorgaat (zie _run_step)."""
+    log("ROUTINE", f"Starting routine '{rid}'")
     if rid == "morning":
         from scheduler.routines import morning_routine
 
@@ -86,14 +94,26 @@ def _run_routine(rid):
 
         bedtime_routine()
     elif rid in ("party", "desk"):
-        lamp = S.lamp(S.lamp_ip(0))
-        asyncio.run(lamp.party() if rid == "party" else lamp.bureau())
+        try:
+            lamp = S.lamp(S.lamp_ip(0))
+            asyncio.run(lamp.party() if rid == "party" else lamp.bureau())
+        except Exception as exc:  # noqa: BLE001
+            log("ROUTINE", f"Light action failed: {exc}")
     else:
         custom = {r["id"]: r for r in (config.get("routines", []) or [])}
         if rid not in custom:
             raise ValueError(f"onbekende routine: {rid}")
-        for step in custom[rid].get("steps", []):
-            _run_step(step)
+        for i, step in enumerate(custom[rid].get("steps", []), 1):
+            try:
+                _run_step(step)
+            except Exception as exc:  # noqa: BLE001 - one bad step mag de rest niet stoppen
+                kind = step.get("action", "?")
+                label = "Light action failed" if kind == "lamp" else f"Step {i} ({kind}) failed"
+                log("ROUTINE", f"{label}: {exc}")
+            else:
+                continue
+            log("ROUTINE", "Continuing with next action")
+    log("ROUTINE", f"Finished routine '{rid}'")
 
 
 @routines_bp.route("/api/routines/run", methods=["POST"])

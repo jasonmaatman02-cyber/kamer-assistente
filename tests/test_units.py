@@ -459,3 +459,41 @@ def test_service_status_probes_run_parallel(monkeypatch):
     services._health_cache.clear()
     st = services.service_status()["spotify"]
     assert "no_device" not in st and st["error"] is None
+
+
+# --- routines: één kapotte stap mag de rest niet stoppen ----------------- #
+def test_custom_routine_step_isolation(monkeypatch):
+    """Regressietest: 'Tapo werkt niet' mag niet 'hele routine stopt' betekenen."""
+    import config
+    from Dashboard.backend import routines_api
+
+    def boom(ip):
+        raise RuntimeError("Tapo offline")
+
+    monkeypatch.setattr(routines_api.S, "lamp", boom)
+    said = []
+    monkeypatch.setattr("voice.tts_output.speak", lambda text: said.append(text))
+
+    config.set("routines", [{
+        "id": "testroutine", "name": "Test", "desc": "",
+        "steps": [
+            {"action": "lamp", "lamp": 0, "mode": "on"},   # faalt (Tapo offline)
+            {"action": "say", "text": "tweede stap"},       # moet alsnog draaien
+        ],
+    }])
+    routines_api._run_routine("testroutine")               # gooit niet door
+    assert said == ["tweede stap"]
+
+
+def test_run_routine_unknown_action_isolated(monkeypatch):
+    import config
+    from Dashboard.backend import routines_api
+
+    said = []
+    monkeypatch.setattr("voice.tts_output.speak", lambda text: said.append(text))
+    config.set("routines", [{
+        "id": "testroutine2", "name": "Test2", "desc": "",
+        "steps": [{"action": "onbekend"}, {"action": "say", "text": "toch"}],
+    }])
+    routines_api._run_routine("testroutine2")
+    assert said == ["toch"]
