@@ -38,6 +38,10 @@ from Dashboard.backend import services as S
 from logic.logger import log
 
 _DEFAULT_BLOCK_AFTER = "21:30"
+# Zoveel keer een mislukte automatische lampactie herproberen (op de eerstvolgende
+# presence-ticks, dus met de bestaande interval_s -- geen extra loop) voordat we
+# opgeven tot de volgende EMPTY<->OCCUPIED-overgang.
+_MAX_LIGHT_RETRIES = 3
 
 
 def _parse_hhmm(s: str, default: str = _DEFAULT_BLOCK_AFTER) -> datetime.time | None:
@@ -80,6 +84,11 @@ class PresenceWorker:
         self._camera_hold = None   # release-functie van camera.acquire(), of None
         self._camera_full_warned = False
 
+        # Retry-status voor een mislukte automatische lampactie (zie _retry_light).
+        # None = geen mislukte poging openstaand -> retry-tick doet dan niets.
+        self._pending_light: bool | None = None
+        self._light_retries = 0
+
     # ------------------------------------------------------------------ #
     # Lifecycle
     # ------------------------------------------------------------------ #
@@ -102,6 +111,8 @@ class PresenceWorker:
                     self._release_camera()
                     self.room_state = "EMPTY"
                     self._positive_streak = 0
+                    self._pending_light = None
+                    self._light_retries = 0
             except Exception as exc:  # noqa: BLE001 - deze thread mag nooit doodgaan
                 log("PEOPLE", f"Onverwachte fout in aanwezigheids-worker: {exc}")
             self._stop.wait(interval)
@@ -181,36 +192,62 @@ class PresenceWorker:
             and (now - self._last_positive_at) >= grace
         ):
             self._transition("EMPTY", count)
+        else:
+            # Geen nieuwe overgang deze tick -> eventueel een eerder mislukte
+            # automatische lampactie herproberen (zelfde interval_s, geen extra loop).
+            self._retry_light()
 
     def _transition(self, new_state: str, count: int):
         self.room_state = new_state
         label = "person" if count == 1 else "people"
         log("PEOPLE", f"Detected: {count} {label}")
         log("PEOPLE", f"Room state: {new_state}")
-        if new_state == "OCCUPIED":
-            self._auto_light(True)
-        else:
-            self._auto_light(False)
+        # Een nieuwe overgang start altijd met een schone retry-lei.
+        self._pending_light = None
+        self._light_retries = 0
+        want_on = new_state == "OCCUPIED"
+        if not self._auto_light(want_on):
+            self._pending_light = want_on
 
     # ------------------------------------------------------------------ #
     # Lamp-automatisering
     # ------------------------------------------------------------------ #
-    def _auto_light(self, on: bool):
+    def _auto_light(self, on: bool) -> bool:
+        """Probeer de lamp te zetten. Geeft True terug bij succes, of als er
+        bewust niets gedaan is (automatiek uit / geen lamp / 21:30-regel --
+        dat zijn geen fouten, dus daar hoeft niet op geretried te worden).
+        False betekent een echte mislukking (netwerk/Tapo-fout) waarvoor
+        _retry_light() het later opnieuw mag proberen."""
         if not config.get("presence.auto_light_enabled", False):
-            return
+            return True
         if on and is_auto_light_blocked():
             log("LIGHT", "Automatic ON blocked: after 21:30")
-            return
+            return True
         try:
             ip = S.lamp_ip(config.get("presence.lamp", 0))
             if not ip:
                 log("LIGHT", "Geen lamp geconfigureerd voor aanwezigheidsautomatisering")
-                return
+                return True
             lamp = S.lamp(ip)
             asyncio.run(lamp.aan() if on else lamp.uit())
             log("LIGHT", "Automatic light ON" if on else "Automatic light OFF")
+            return True
         except Exception as exc:  # noqa: BLE001 - Tapo offline mag de worker niet slopen
             log("LIGHT", f"Automatic light {'ON' if on else 'OFF'} failed: {exc}")
+            return False
+
+    def _retry_light(self):
+        """Herprobeer een mislukte automatische lampactie, hooguit
+        _MAX_LIGHT_RETRIES keer, zolang er geen nieuwe overgang is geweest
+        (die reset dit zelf al via _transition). Verandert nooit room_state,
+        en stuurt nooit een commando als er geen mislukte poging openstaat --
+        raakt dus nooit een handmatige actie."""
+        if self._pending_light is None or self._light_retries >= _MAX_LIGHT_RETRIES:
+            return
+        self._light_retries += 1
+        if self._auto_light(self._pending_light):
+            self._pending_light = None
+            self._light_retries = 0
 
     # ------------------------------------------------------------------ #
     # Status (voor het dashboard)

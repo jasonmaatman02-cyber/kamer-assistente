@@ -611,7 +611,7 @@ def test_presence_worker_hysteresis_and_grace(monkeypatch):
     monkeypatch.setattr(w, "_get_frame", lambda: object())   # niet None -> "er is beeld"
 
     lamp_calls = []
-    monkeypatch.setattr(w, "_auto_light", lambda on: lamp_calls.append(on))
+    monkeypatch.setattr(w, "_auto_light", lambda on: (lamp_calls.append(on), True)[1])
 
     clock = {"t": 1_000_000.0}
     monkeypatch.setattr("time.time", lambda: clock["t"])
@@ -691,6 +691,234 @@ def test_presence_worker_lamp_failure_does_not_raise(monkeypatch):
     w._tick()   # mag niet crashen
     assert w.room_state == "OCCUPIED"
     config.set("presence.auto_light_block_after", "21:30")
+
+
+# --- presence: retry van een mislukte automatische lampactie ------------- #
+def test_presence_retry_after_failed_auto_on(monkeypatch):
+    """ON mislukt bij de overgang -> de eerstvolgende tick (zonder nieuwe
+    overgang) probeert 'm opnieuw."""
+    import config
+    from Dashboard.backend.presence import PresenceWorker
+    import Dashboard.backend.presence as presence_mod
+
+    config.set("presence.consecutive_required", 1)
+    config.set("presence.auto_light_enabled", True)
+    config.set("presence.auto_light_block_after", "")
+
+    w = PresenceWorker()
+    monkeypatch.setattr(w, "_get_frame", lambda: object())
+    monkeypatch.setattr("logic.people_detect.count_people", lambda frame: 1)
+    monkeypatch.setattr(presence_mod.S, "lamp_ip", lambda x: "192.168.1.50")
+
+    calls = []
+
+    def boom(ip):
+        calls.append(ip)
+        raise RuntimeError("Tapo offline")
+
+    monkeypatch.setattr(presence_mod.S, "lamp", boom)
+
+    w._tick()   # overgang naar OCCUPIED, ON mislukt
+    assert w.room_state == "OCCUPIED"
+    assert len(calls) == 1
+    assert w._pending_light is True and w._light_retries == 0
+
+    w._tick()   # zelfde staat, geen nieuwe overgang -> retry
+    assert len(calls) == 2
+    assert w._pending_light is True and w._light_retries == 1
+
+
+def test_presence_retry_success_clears_pending(monkeypatch):
+    """Lukt de retry wel, dan wordt de retry-status meteen gewist en komt er
+    geen volgende poging meer, ook al blijft de kamer bezet."""
+    import config
+    from Dashboard.backend.presence import PresenceWorker
+    import Dashboard.backend.presence as presence_mod
+
+    config.set("presence.consecutive_required", 1)
+    config.set("presence.auto_light_enabled", True)
+    config.set("presence.auto_light_block_after", "")
+
+    w = PresenceWorker()
+    monkeypatch.setattr(w, "_get_frame", lambda: object())
+    monkeypatch.setattr("logic.people_detect.count_people", lambda frame: 1)
+    monkeypatch.setattr(presence_mod.S, "lamp_ip", lambda x: "192.168.1.50")
+
+    class FakeLamp:
+        async def aan(self):
+            return None
+
+    calls = {"n": 0}
+
+    def flaky(ip):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise RuntimeError("Tapo offline")
+        return FakeLamp()
+
+    monkeypatch.setattr(presence_mod.S, "lamp", flaky)
+
+    w._tick()   # overgang -> 1e poging mislukt
+    assert calls["n"] == 1 and w._pending_light is True
+
+    w._tick()   # retry -> lukt nu
+    assert calls["n"] == 2
+    assert w._pending_light is None and w._light_retries == 0
+
+    w._tick()   # kamer blijft bezet, niks openstaand -> geen nieuwe poging
+    assert calls["n"] == 2
+
+
+def test_presence_retry_gives_up_after_max_attempts(monkeypatch):
+    """Blijft de lamp onbereikbaar, dan stopt het na _MAX_LIGHT_RETRIES
+    retries met proberen (geen eindeloze retries) totdat er een nieuwe
+    overgang komt."""
+    import config
+    from Dashboard.backend.presence import PresenceWorker
+    from Dashboard.backend.presence import _MAX_LIGHT_RETRIES
+    import Dashboard.backend.presence as presence_mod
+
+    config.set("presence.consecutive_required", 1)
+    config.set("presence.auto_light_enabled", True)
+    config.set("presence.auto_light_block_after", "")
+
+    w = PresenceWorker()
+    monkeypatch.setattr(w, "_get_frame", lambda: object())
+    monkeypatch.setattr("logic.people_detect.count_people", lambda frame: 1)
+    monkeypatch.setattr(presence_mod.S, "lamp_ip", lambda x: "192.168.1.50")
+
+    calls = []
+
+    def boom(ip):
+        calls.append(ip)
+        raise RuntimeError("offline")
+
+    monkeypatch.setattr(presence_mod.S, "lamp", boom)
+
+    w._tick()   # overgang: 1e (mislukte) poging
+    for _ in range(_MAX_LIGHT_RETRIES):
+        w._tick()
+    assert len(calls) == 1 + _MAX_LIGHT_RETRIES   # 1 overgang + max retries, geen meer
+
+    # extra ticks in dezelfde staat -> écht geen nieuwe poging meer
+    w._tick()
+    w._tick()
+    assert len(calls) == 1 + _MAX_LIGHT_RETRIES
+    assert w._pending_light is True   # blijft "openstaand" tot een nieuwe overgang
+
+
+def test_presence_new_transition_resets_retry_state(monkeypatch):
+    """Een nieuwe EMPTY<->OCCUPIED-overgang reset eerdere retry-status, ook
+    als de vorige retry-reeks nog niet was opgegeven."""
+    import config
+    from Dashboard.backend.presence import PresenceWorker
+    import Dashboard.backend.presence as presence_mod
+
+    config.set("presence.consecutive_required", 1)
+    config.set("presence.empty_grace_s", 5.0)
+    config.set("presence.auto_light_enabled", True)
+    config.set("presence.auto_light_block_after", "")
+
+    w = PresenceWorker()
+    monkeypatch.setattr(w, "_get_frame", lambda: object())
+    monkeypatch.setattr(presence_mod.S, "lamp_ip", lambda x: "192.168.1.50")
+
+    class FakeLamp:
+        async def aan(self):
+            raise RuntimeError("ON mislukt")
+
+        async def uit(self):
+            return None   # OFF lukt altijd
+
+    monkeypatch.setattr(presence_mod.S, "lamp", lambda ip: FakeLamp())
+
+    clock = {"t": 1_000_000.0}
+    monkeypatch.setattr("time.time", lambda: clock["t"])
+
+    monkeypatch.setattr("logic.people_detect.count_people", lambda frame: 1)
+    w._tick()   # overgang naar OCCUPIED, ON mislukt
+    assert w.room_state == "OCCUPIED" and w._pending_light is True
+
+    clock["t"] += 1
+    w._tick()   # 1 retry (mislukt ook, blijft "aan" proberen)
+    assert w._light_retries == 1 and w._pending_light is True
+
+    # nu weg -> na de grace period EMPTY, een verse overgang
+    monkeypatch.setattr("logic.people_detect.count_people", lambda frame: 0)
+    clock["t"] += 6   # > empty_grace_s
+    w._tick()
+    assert w.room_state == "EMPTY"
+    # de nieuwe overgang (OFF, die lukt) heeft de oude ON-retry-status gewist
+    assert w._pending_light is None and w._light_retries == 0
+
+
+def test_presence_retry_respects_2130_rule(monkeypatch):
+    """De 21:30-regel geldt ook tijdens een retry: zodra 'ie geblokkeerd is,
+    wordt er geen ON-commando meer gestuurd, en stopt de retry vanzelf."""
+    import config
+    from Dashboard.backend.presence import PresenceWorker
+    import Dashboard.backend.presence as presence_mod
+
+    config.set("presence.consecutive_required", 1)
+    config.set("presence.auto_light_enabled", True)
+
+    w = PresenceWorker()
+    monkeypatch.setattr(w, "_get_frame", lambda: object())
+    monkeypatch.setattr("logic.people_detect.count_people", lambda frame: 1)
+    monkeypatch.setattr(presence_mod.S, "lamp_ip", lambda x: "192.168.1.50")
+
+    # 1e keer (overgang) nog niet geblokkeerd, maar de Tapo-call mislukt zelf
+    # (netwerkfout) -> pending blijft staan. Daarna is het ineens 21:30 geweest.
+    blocked = {"v": False}
+    monkeypatch.setattr(presence_mod, "is_auto_light_blocked", lambda: blocked["v"])
+
+    def boom(ip):
+        raise RuntimeError("Tapo tijdelijk onbereikbaar")
+
+    monkeypatch.setattr(presence_mod.S, "lamp", boom)
+
+    w._tick()   # overgang -> ON geprobeerd (niet geblokkeerd), mislukt door netwerkfout
+    assert w._pending_light is True
+
+    blocked["v"] = True   # simuleer dat de klok nu voorbij 21:30 is
+
+    def must_not_be_called(ip):
+        raise AssertionError("na 21:30 mag ON nooit meer geprobeerd worden, ook niet als retry")
+
+    monkeypatch.setattr(presence_mod.S, "lamp", must_not_be_called)
+
+    w._tick()   # retry -> moet nu geblokkeerd worden, geen lamp-commando
+    assert w._pending_light is None   # geblokkeerd telt niet als "nog te retrien"
+    assert w._light_retries == 0
+
+
+def test_presence_retry_never_touches_manual_control(monkeypatch):
+    """Zonder een openstaande mislukte automatische actie mag de retry-logica
+    nooit een lampcommando sturen -- anders zou 'ie een handmatige actie
+    kunnen overschrijven."""
+    import config
+    from Dashboard.backend.presence import PresenceWorker
+    import Dashboard.backend.presence as presence_mod
+
+    config.set("presence.consecutive_required", 1)
+    config.set("presence.auto_light_enabled", True)
+    config.set("presence.auto_light_block_after", "")
+
+    w = PresenceWorker()
+
+    def must_not_be_called(ip):
+        raise AssertionError("geen pending failure -> retry mag de lamp niet aanraken")
+
+    monkeypatch.setattr(presence_mod.S, "lamp_ip", lambda x: "192.168.1.50")
+    monkeypatch.setattr(presence_mod.S, "lamp", must_not_be_called)
+
+    assert w._pending_light is None
+    w._retry_light()   # direct aangeroepen zonder openstaande mislukking
+
+    # ook via een "stabiele" tick (geen overgang, niks openstaand) blijft de lamp met rust
+    monkeypatch.setattr(w, "_get_frame", lambda: object())
+    monkeypatch.setattr("logic.people_detect.count_people", lambda frame: 0)
+    w._tick()
 
 
 # --- presence: camera-herstel na reset_services() (settings-save) -------- #
