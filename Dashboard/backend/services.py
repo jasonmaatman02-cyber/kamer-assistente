@@ -205,27 +205,45 @@ def spotify_oauth():
 # herstart niet opnieuw hoeft in te loggen.
 #
 # De auth-url-aanvraag en de token-uitwisseling zijn twee losse HTTP-
-# requests (en dus twee losse Flow-objecten) -- de CSRF-state die Google
-# genereert moet daarom expliciet tussen die twee bewaard en meegegeven
-# worden, anders wordt 'ie stilzwijgend niet gevalideerd. _google_oauth_state
-# is bewust een simpele, met een lock beschermde losse waarde (net als
-# _lamp_conns hierboven) -- dit dashboard heeft maar één operator tegelijk.
+# requests (en dus twee losse Flow-objecten) -- zowel de CSRF-state ALS de
+# PKCE code_verifier die Google's Flow.authorization_url() genereert (zie
+# google_calendar_oauth() hieronder) moeten daarom expliciet tussen die twee
+# bewaard en aan het tweede Flow-object meegegeven worden. Zonder de
+# code_verifier stuurt fetch_token() 'm als None mee en weigert Google de
+# uitwisseling met "invalid_grant: Missing code verifier"; zonder de state
+# wordt de CSRF-check stilzwijgend overgeslagen.
+#
+# state en code_verifier horen bij precies dezelfde inlogpoging, dus samen
+# als één paar bewaard/uitgelezen (nooit de state van de ene poging met de
+# verifier van een andere combineren). _google_oauth_pending is bewust een
+# simpele, met een lock beschermde losse waarde (net als _lamp_conns
+# hierboven) -- dit dashboard heeft maar één operator tegelijk; start een
+# tweede "Verbind met Google"-klik een nieuwe poging, dan overschrijft die
+# het paar van een nog lopende poging, waarna die oude poging bij het
+# inwisselen alsnog netjes afgewezen wordt (state komt niet meer overeen) --
+# nooit een mismatch tussen state en verifier van twee verschillende
+# pogingen.
 # --------------------------------------------------------------------------- #
-_google_oauth_state: dict = {"value": None}
+_google_oauth_pending: dict = {"state": None, "code_verifier": None}
 _google_oauth_lock = threading.Lock()
 
 
-def set_google_oauth_state(state: str) -> None:
+def set_google_oauth_pending(state: str, code_verifier: str) -> None:
     with _google_oauth_lock:
-        _google_oauth_state["value"] = state
+        _google_oauth_pending["state"] = state
+        _google_oauth_pending["code_verifier"] = code_verifier
 
 
-def pop_google_oauth_state() -> str | None:
-    """Eenmalig uitleesbaar (CSRF-nonce, geen replay) -- leest en wist in één keer."""
+def pop_google_oauth_pending():
+    """Eenmalig uitleesbaar (CSRF-state + PKCE-verifier, geen replay) --
+    leest en wist allebei in één keer, zodat een mislukte of verlopen
+    poging nooit hergebruikt kan worden bij een volgende login."""
     with _google_oauth_lock:
-        state = _google_oauth_state["value"]
-        _google_oauth_state["value"] = None
-        return state
+        state = _google_oauth_pending["state"]
+        code_verifier = _google_oauth_pending["code_verifier"]
+        _google_oauth_pending["state"] = None
+        _google_oauth_pending["code_verifier"] = None
+        return state, code_verifier
 
 
 def _is_loopback_redirect(uri: str) -> bool:
@@ -234,7 +252,7 @@ def _is_loopback_redirect(uri: str) -> bool:
     return (urlparse(uri).hostname or "").lower() in ("127.0.0.1", "localhost", "::1")
 
 
-def google_calendar_oauth(state: str | None = None):
+def google_calendar_oauth(state: str | None = None, code_verifier: str | None = None):
     import os
 
     from google_auth_oauthlib.flow import Flow
@@ -263,7 +281,13 @@ def google_calendar_oauth(state: str | None = None):
         }
     }
     return Flow.from_client_config(
-        client_config, scopes=GOOGLE_SCOPES, redirect_uri=redirect_uri, state=state
+        client_config, scopes=GOOGLE_SCOPES, redirect_uri=redirect_uri,
+        state=state, code_verifier=code_verifier,
+        # Geen code_verifier meegegeven (1e request, auth-url) -> laat PKCE 'm
+        # zelf genereren, zoals altijd. Wél meegegeven (2e request, token-
+        # uitwisseling) -> nooit stilzwijgend een NIEUWE laten genereren, die
+        # zou toch niet meer matchen met de code_challenge die Google al kreeg.
+        autogenerate_code_verifier=(code_verifier is None),
     )
 
 

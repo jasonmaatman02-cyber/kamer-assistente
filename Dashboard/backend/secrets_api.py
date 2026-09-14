@@ -95,9 +95,12 @@ def google_calendar_auth_url():
         return jsonify({"ok": False, "error": "Vul eerst GOOGLE_CLIENT_ID en GOOGLE_CLIENT_SECRET in"}), 400
     url, state = flow.authorization_url(access_type="offline", prompt="consent")
     # Auth-url en token-uitwisseling zijn twee losse requests (dus twee losse
-    # Flow-objecten) -- de CSRF-state moet expliciet bewaard worden, anders
-    # wordt 'ie bij het inwisselen stilzwijgend niet gevalideerd.
-    S.set_google_oauth_state(state)
+    # Flow-objecten) -- zowel de CSRF-state als de PKCE code_verifier die
+    # authorization_url() net op DIT Flow-object heeft gezet (flow.code_verifier)
+    # moeten expliciet bewaard worden. Zonder de verifier weigert Google de
+    # uitwisseling later met "invalid_grant: Missing code verifier"; zonder de
+    # state wordt de CSRF-check stilzwijgend overgeslagen.
+    S.set_google_oauth_pending(state, flow.code_verifier)
     return jsonify({"ok": True, "url": url})
 
 
@@ -105,13 +108,13 @@ def google_calendar_auth_url():
 def google_calendar_token():
     if not unlocked():
         return jsonify({"ok": False, "error": "Niet ontgrendeld"}), 403
-    expected_state = S.pop_google_oauth_state()
-    if not expected_state:
+    expected_state, code_verifier = S.pop_google_oauth_pending()
+    if not expected_state or not code_verifier:
         return jsonify({
             "ok": False,
             "error": "Geen lopende Google-koppeling gevonden -- klik eerst opnieuw op 'Verbind met Google'",
         }), 400
-    flow = S.google_calendar_oauth(state=expected_state)
+    flow = S.google_calendar_oauth(state=expected_state, code_verifier=code_verifier)
     if not flow:
         return jsonify({"ok": False, "error": "Vul eerst GOOGLE_CLIENT_ID en GOOGLE_CLIENT_SECRET in"}), 400
     # Alleen de rand van de geplakte tekst trimmen; querystring-parameters

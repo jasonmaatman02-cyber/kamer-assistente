@@ -1,25 +1,34 @@
 """Google Agenda OAuth-koppeling (/api/google_calendar/auth-url + /token).
 
-Achtergrond van de bug die dit test-bestand vastlegt: de gebruiker meldde
-dat de volledige callback-URL (met state/iss/code/scope) "niet goed
-verwerkt leek te worden" na een geslaagde Google-login. Live onderzoek wees
-géén UI-lengtebeperking aan als daadwerkelijke oorzaak, maar twee echte
-bugs in de OAuth-uitwisseling zelf:
+Achtergrond van de bugs die dit bestand vastlegt -- twee losse HTTP-requests
+(dus twee losse Flow-objecten) voor auth-url en token-uitwisseling:
 
 1. oauthlib weigert standaard elke http-redirect-URI (InsecureTransportError)
-   -- de code zette OAUTHLIB_INSECURE_TRANSPORT nergens, dus fetch_token()
-   faalde altijd, voor elke geplakte URL, ongeacht de inhoud.
-2. auth-url en token-uitwisseling zijn twee losse HTTP-requests, dus twee
-   losse Flow-objecten. Zonder de CSRF-state expliciet tussen die twee te
-   bewaren en opnieuw mee te geven, wordt 'ie bij het inwisselen
-   stilzwijgend NIET gevalideerd (geen foutmelding, gewoon geen check).
+   -- gefixt door OAUTHLIB_INSECURE_TRANSPORT alleen voor een loopback-
+   redirect-URI toe te staan.
+2. De CSRF-state werd niet bewaard tussen de twee requests -> de check werd
+   stilzwijgend overgeslagen. Gefixt: state wordt bewaard en meegegeven aan
+   het tweede Flow-object.
+3. (deze fix) De PKCE code_verifier die Flow.authorization_url() op het EERSTE
+   Flow-object genereert (flow.code_verifier) werd nergens bewaard, dus
+   stuurde het tweede Flow-object 'm als None mee -> Google weigerde met
+   "invalid_grant: Missing code verifier". state en code_verifier worden nu
+   samen bewaard/uitgelezen (S.set_google_oauth_pending/pop_google_oauth_pending)
+   en beide teruggegeven aan het tweede Flow-object.
 
-Geen echte netwerkcall naar Google hier: Flow.fetch_token() zelf faalt al
-lokaal (dus zonder netwerk) op een foute state -- dat testen we met de
-ECHTE, ongemockte library. Voor het geslaagde pad wordt alleen de laatste
-netwerkstap (het token-endpoint) gemockt.
+Waarom de eerdere tests dit niet opvingen: de "succesvolle uitwisseling"-test
+verving Flow.fetch_token() volledig door een eigen fake, die nooit de echte
+code_verifier-doorgifte-logica uitvoerde. Hieronder mockt
+test_token_exchange_uses_saved_code_verifier() in plaats daarvan alleen de
+onderste HTTP-laag (requests.Session.send) -- Flow.fetch_token() en
+OAuth2Session.fetch_token() draaien dus ECHT, inclusief de code die de
+verifier in de POST-body zet. Dat is precies hoe deze bug empirisch
+bevestigd is (zie de commit-boodschap) en had 'm destijds gevonden.
 """
+import json
 import time
+
+import requests
 
 
 def _unlock(monkeypatch):
@@ -36,6 +45,42 @@ def _configure_google(monkeypatch):
     monkeypatch.setenv("GOOGLE_REDIRECT_URI", "http://127.0.0.1:8000/callback")
 
 
+def _mock_token_endpoint(monkeypatch):
+    """Mockt alleen de daadwerkelijke HTTP-transportlaag (requests.Session.send)
+    -- alles daarboven (Flow.fetch_token, OAuth2Session.fetch_token, oauthlib's
+    eigen state-check en request-bodyopbouw) draait ECHT. `captured['body']`
+    bevat na afloop de werkelijke, verzonden application/x-www-form-urlencoded
+    POST-body naar Google's tokenendpoint."""
+    captured = {}
+
+    def fake_send(self, prepared_request, **kw):
+        captured["body"] = prepared_request.body
+        resp = requests.Response()
+        resp.status_code = 200
+        resp.headers["content-type"] = "application/json"
+        resp._content = json.dumps({
+            "access_token": "fake-access-token",
+            "refresh_token": "fake-refresh-token",
+            "expires_in": 3600,
+            "scope": "https://www.googleapis.com/auth/calendar.readonly",
+            "token_type": "Bearer",
+        }).encode()
+        resp.request = prepared_request
+        return resp
+
+    monkeypatch.setattr(requests.Session, "send", fake_send)
+    return captured
+
+
+def _callback_url(state: str, code: str = "4/0AVeryLongRealisticAuthorizationCode-example") -> str:
+    return (
+        f"http://127.0.0.1:8000/callback?state={state}"
+        "&iss=https%3A%2F%2Faccounts.google.com"
+        f"&code={code}"
+        "&scope=https%3A%2F%2Fwww.googleapis.com%2Fauth%2Fcalendar.readonly"
+    )
+
+
 def test_loopback_redirect_is_detected():
     from Dashboard.backend.services import _is_loopback_redirect
 
@@ -45,116 +90,181 @@ def test_loopback_redirect_is_detected():
     assert _is_loopback_redirect("http://192.168.2.30:5000/callback") is False
 
 
-def test_auth_url_stores_state_for_later_verification(client, monkeypatch):
+# --------------------------------------------------------------------------- #
+# 1. Auth-URL genereren met PKCE
+# --------------------------------------------------------------------------- #
+def test_auth_url_includes_pkce_code_challenge(client, monkeypatch):
     _configure_google(monkeypatch)
     headers = _unlock(monkeypatch)
 
     r = client.get("/api/google_calendar/auth-url", headers=headers).get_json()
     assert r["ok"] is True
     assert "accounts.google.com" in r["url"]
+    assert "code_challenge=" in r["url"]
+    assert "code_challenge_method=S256" in r["url"]
+
+
+# --------------------------------------------------------------------------- #
+# 2. state én code_verifier worden opgeslagen
+# --------------------------------------------------------------------------- #
+def test_auth_url_stores_state_and_code_verifier(client, monkeypatch):
+    _configure_google(monkeypatch)
+    headers = _unlock(monkeypatch)
+
+    r = client.get("/api/google_calendar/auth-url", headers=headers).get_json()
+    assert r["ok"] is True
 
     from Dashboard.backend import services as S
-    assert S._google_oauth_state["value"]   # bewaard voor de token-stap
+    assert S._google_oauth_pending["state"]
+    assert S._google_oauth_pending["code_verifier"]
+    assert len(S._google_oauth_pending["code_verifier"]) >= 43   # PKCE-minimum (RFC 7636)
 
 
-def test_full_callback_url_with_correct_state_extracts_code(client, monkeypatch):
-    """De regressietest die expliciet gevraagd is: een volledige callback-URL
-    met state, iss, code EN scope -- en de authorization code moet correct
-    bij fetch_token() terechtkomen."""
+# --------------------------------------------------------------------------- #
+# 3 + 6. De token-request gebruikt dezelfde code_verifier + volledige
+# callback-URL (state/iss/code/scope) -- met de ECHTE Flow-methode, alleen
+# de HTTP-transportlaag gemockt (zie _mock_token_endpoint hierboven).
+# --------------------------------------------------------------------------- #
+def test_token_exchange_uses_saved_code_verifier(client, monkeypatch):
     _configure_google(monkeypatch)
     headers = _unlock(monkeypatch)
 
     r = client.get("/api/google_calendar/auth-url", headers=headers).get_json()
     assert r["ok"] is True
     from Dashboard.backend import services as S
-    real_state = S._google_oauth_state["value"]
+    real_state = S._google_oauth_pending["state"]
+    real_verifier = S._google_oauth_pending["code_verifier"]
 
-    seen = {}
+    captured = _mock_token_endpoint(monkeypatch)
 
-    def fake_fetch_token(self, authorization_response=None, **kw):
-        from urllib.parse import parse_qs, urlparse
-        qs = parse_qs(urlparse(authorization_response).query)
-        seen["code"] = qs.get("code", [None])[0]
-        seen["state"] = qs.get("state", [None])[0]
-        seen["iss"] = qs.get("iss", [None])[0]
-        seen["scope"] = qs.get("scope", [None])[0]
-        # Flow.credentials is een read-only property die dit leest van de
-        # onderliggende sessie -- realistisch genoeg vullen zodat
-        # flow.credentials.to_json() in de echte route-code werkt.
-        self.oauth2session.token = {
-            "access_token": "fake-access-token",
-            "refresh_token": "fake-refresh-token",
-            "scope": ["https://www.googleapis.com/auth/calendar.readonly"],
-            "token_type": "Bearer",
-            "expires_at": time.time() + 3600,
-        }
-
-    from google_auth_oauthlib.flow import Flow
-    monkeypatch.setattr(Flow, "fetch_token", fake_fetch_token)
-
-    callback_url = (
-        f"http://127.0.0.1:8000/callback?state={real_state}"
-        "&iss=https%3A%2F%2Faccounts.google.com"
-        "&code=4%2F0AVeryLongRealisticAuthorizationCode-example_1234567890"
-        "&scope=https%3A%2F%2Fwww.googleapis.com%2Fauth%2Fcalendar.readonly"
-    )
     resp = client.post("/api/google_calendar/token", headers=headers,
-                        json={"redirect_url": callback_url})
+                        json={"redirect_url": _callback_url(real_state)})
     body = resp.get_json()
     assert body["ok"] is True, body
 
-    # de code (en de andere queryparams) zijn correct en ongeschonden aangekomen
-    assert seen["code"] == "4/0AVeryLongRealisticAuthorizationCode-example_1234567890"
-    assert seen["state"] == real_state
-    assert seen["iss"] == "https://accounts.google.com"
-    assert seen["scope"] == "https://www.googleapis.com/auth/calendar.readonly"
+    # de échte POST-body naar Google bevat de EXACTE, bij de auth-url
+    # gegenereerde code_verifier -- dit is precies waar "invalid_grant:
+    # Missing code verifier" vandaan kwam toen dit ontbrak.
+    assert f"code_verifier={real_verifier}" in captured["body"]
+    assert "grant_type=authorization_code" in captured["body"]
+    assert "code=4%2F0AVeryLongRealisticAuthorizationCode-example" in captured["body"]
 
 
-def test_mismatching_state_is_rejected(client, monkeypatch):
-    """Echte, ongemockte CSRF-statecheck: een andere state dan die bij de
-    auth-url hoorde moet geweigerd worden -- geen netwerkcall nodig, want
-    oauthlib faalt hier al lokaal."""
-    _configure_google(monkeypatch)
-    headers = _unlock(monkeypatch)
-
-    r = client.get("/api/google_calendar/auth-url", headers=headers).get_json()
-    assert r["ok"] is True
-
-    tampered_url = (
-        "http://127.0.0.1:8000/callback?state=EEN_ANDERE_STATE_DAN_VERWACHT"
-        "&iss=https%3A%2F%2Faccounts.google.com"
-        "&code=zomaar-een-code"
-        "&scope=https%3A%2F%2Fwww.googleapis.com%2Fauth%2Fcalendar.readonly"
-    )
-    resp = client.post("/api/google_calendar/token", headers=headers,
-                        json={"redirect_url": tampered_url})
-    body = resp.get_json()
-    assert body["ok"] is False
-    assert "state" in body["error"].lower() or "csrf" in body["error"].lower()
-
-
+# --------------------------------------------------------------------------- #
+# 4. Een ontbrekende verifier geeft een duidelijke fout
+# --------------------------------------------------------------------------- #
 def test_token_without_prior_auth_url_is_rejected(client, monkeypatch):
     """Direct /token aanroepen zonder eerst /auth-url (dus geen bewaarde
-    state) moet netjes falen, niet stilzwijgend de check overslaan."""
+    state/verifier) moet netjes falen, niet stilzwijgend de check overslaan."""
     _configure_google(monkeypatch)
     headers = _unlock(monkeypatch)
 
     resp = client.post("/api/google_calendar/token", headers=headers,
-                        json={"redirect_url": "http://127.0.0.1:8000/callback?state=x&code=y"})
+                        json={"redirect_url": _callback_url("x")})
     body = resp.get_json()
     assert body["ok"] is False
     assert "geen lopende" in body["error"].lower()
 
 
+def test_token_with_state_but_no_verifier_is_rejected(client, monkeypatch):
+    """Los van hoe het zou kunnen ontstaan (bv. toekomstige codewijziging die
+    de state wel maar de verifier niet bewaart): als er wél een state maar
+    GEEN verifier klaarstaat, moet dat ook een duidelijke fout geven i.p.v.
+    een fetch_token()-poging met code_verifier=None."""
+    _configure_google(monkeypatch)
+    headers = _unlock(monkeypatch)
+
+    from Dashboard.backend import services as S
+    S.set_google_oauth_pending("een-state-zonder-verifier", "")   # verifier ontbreekt
+
+    resp = client.post("/api/google_calendar/token", headers=headers,
+                        json={"redirect_url": _callback_url("een-state-zonder-verifier")})
+    body = resp.get_json()
+    assert body["ok"] is False
+    assert "geen lopende" in body["error"].lower()
+
+
+# --------------------------------------------------------------------------- #
+# 5. Een oude/verkeerde verifier wordt niet geaccepteerd (single-use)
+# --------------------------------------------------------------------------- #
+def test_pending_pair_is_single_use(client, monkeypatch):
+    """state+code_verifier worden nooit los van elkaar en nooit twee keer
+    gebruikt: na één /token-poging (geslaagd of niet) is er niets meer over
+    om een tweede, latere poging mee te laten slagen met verouderde data."""
+    _configure_google(monkeypatch)
+    headers = _unlock(monkeypatch)
+
+    r = client.get("/api/google_calendar/auth-url", headers=headers).get_json()
+    assert r["ok"] is True
+    from Dashboard.backend import services as S
+    real_state = S._google_oauth_pending["state"]
+
+    _mock_token_endpoint(monkeypatch)
+    first = client.post("/api/google_calendar/token", headers=headers,
+                         json={"redirect_url": _callback_url(real_state)}).get_json()
+    assert first["ok"] is True
+
+    # tweede poging (zelfde of een andere URL) vindt niks meer klaarstaan
+    second = client.post("/api/google_calendar/token", headers=headers,
+                          json={"redirect_url": _callback_url(real_state)}).get_json()
+    assert second["ok"] is False
+    assert "geen lopende" in second["error"].lower()
+
+
+# --------------------------------------------------------------------------- #
+# 7. Bestaande CSRF-state-validatie blijft werken
+# --------------------------------------------------------------------------- #
+def test_mismatching_state_is_rejected(client, monkeypatch):
+    """Echte, ongemockte CSRF-statecheck: een andere state dan die bij de
+    auth-url hoorde moet geweigerd worden -- geen netwerkcall nodig, want
+    oauthlib faalt hier al lokaal (vóór de code_verifier ooit relevant wordt)."""
+    _configure_google(monkeypatch)
+    headers = _unlock(monkeypatch)
+
+    r = client.get("/api/google_calendar/auth-url", headers=headers).get_json()
+    assert r["ok"] is True
+
+    resp = client.post("/api/google_calendar/token", headers=headers,
+                        json={"redirect_url": _callback_url("EEN_ANDERE_STATE_DAN_VERWACHT")})
+    body = resp.get_json()
+    assert body["ok"] is False
+    assert "state" in body["error"].lower() or "csrf" in body["error"].lower()
+
+
+# --------------------------------------------------------------------------- #
+# 8. Geen secrets/verifiers/codes worden gelogd
+# --------------------------------------------------------------------------- #
 def test_oauth_secrets_never_leak_into_error_response(client, monkeypatch):
     _configure_google(monkeypatch)
     headers = _unlock(monkeypatch)
 
     r = client.get("/api/google_calendar/auth-url", headers=headers).get_json()
     assert r["ok"] is True
+    from Dashboard.backend import services as S
+    real_verifier = S._google_oauth_pending["code_verifier"]
 
-    tampered_url = "http://127.0.0.1:8000/callback?state=nope&code=abc"
     resp = client.post("/api/google_calendar/token", headers=headers,
-                        json={"redirect_url": tampered_url})
+                        json={"redirect_url": _callback_url("EEN_VERKEERDE_STATE")})
     body_text = str(resp.get_json())
     assert "test-client-secret-super-geheim" not in body_text
+    assert real_verifier not in body_text
+
+
+def test_code_verifier_and_secrets_never_printed(client, monkeypatch, capsys):
+    _configure_google(monkeypatch)
+    headers = _unlock(monkeypatch)
+
+    r = client.get("/api/google_calendar/auth-url", headers=headers).get_json()
+    assert r["ok"] is True
+    from Dashboard.backend import services as S
+    real_state = S._google_oauth_pending["state"]
+    real_verifier = S._google_oauth_pending["code_verifier"]
+
+    _mock_token_endpoint(monkeypatch)
+    client.post("/api/google_calendar/token", headers=headers,
+                json={"redirect_url": _callback_url(real_state)})
+
+    out = capsys.readouterr()
+    assert real_verifier not in out.out and real_verifier not in out.err
+    assert "test-client-secret-super-geheim" not in out.out
+    assert "test-client-secret-super-geheim" not in out.err
