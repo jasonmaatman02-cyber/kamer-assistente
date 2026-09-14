@@ -27,6 +27,50 @@ def test_unknown_page_404(client):
     assert client.get("/zomaarwat").status_code == 404
 
 
+# --- "Security System" (camera-pagina) is uitsluitend UI --------------------
+# De sidebar noemt de camera-pagina "Security system", maar er bestaat geen
+# aparte backend-worker daarvoor: het is dezelfde presence-worker die al
+# onafhankelijk vanaf het opstarten van de service draait (zie rundashboard.py
+# en presence.py). Deze tests bewaken dat het openen van die pagina zelf geen
+# enkele achtergrondfunctionaliteit start.
+def test_camera_page_does_not_start_presence_or_camera(client, monkeypatch):
+    import Dashboard.backend.presence as presence_mod
+    import Dashboard.backend.camera_api as camera_mod
+
+    def must_not_start():
+        raise AssertionError("de Security System-pagina mag de presence-worker niet starten")
+
+    def must_not_ensure_running():
+        raise AssertionError("de Security System-pagina mag de camera-capture niet starten")
+
+    monkeypatch.setattr(presence_mod.worker, "start", must_not_start)
+    monkeypatch.setattr(camera_mod.camera, "_ensure_running", must_not_ensure_running)
+
+    resp = client.get("/camera")
+    assert resp.status_code == 200
+
+
+def test_rundashboard_starts_presence_worker_unconditionally(monkeypatch):
+    """De achtergrondfunctionaliteit (people detection + automatische lamp)
+    hoort te starten zodra de service zelf opstart -- niet pas als iemand de
+    Security System-pagina bezoekt. Roept rundashboard.main() echt aan (met
+    de webserver zelf gemockt) en controleert dat de presence-worker gestart
+    wordt zonder dat er ooit een Flask-request aan te pas komt."""
+    import rundashboard
+    import Dashboard.backend.presence as presence_mod
+
+    calls = []
+    monkeypatch.setattr(presence_mod.worker, "start", lambda: calls.append("start"))
+
+    served = []
+    monkeypatch.setattr("waitress.serve", lambda app, **kw: served.append(True))
+
+    rundashboard.main()
+
+    assert calls == ["start"]     # onvoorwaardelijk, geen dashboard-request nodig
+    assert served == [True]
+
+
 def test_health_shape(client):
     h = client.get("/api/health").get_json()
     assert h["ok"] is True

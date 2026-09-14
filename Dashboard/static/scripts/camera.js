@@ -2,7 +2,11 @@
 // Browser-side person detection (TensorFlow.js + coco-ssd) is OFF by default and
 // only runs when Settings -> Camera -> "Personendetectie in browser" aan staat.
 // De detectie draait in de browser die deze pagina bekijkt (jouw laptop/telefoon),
-// niet op de Pi.
+// niet op de Pi -- puur een visuele preview (bounding boxes). De automatische
+// lampbesturing gebeurt uitsluitend server-side (Dashboard/backend/presence.py,
+// draait al onafhankelijk vanaf het opstarten van de service); deze pagina stuurt
+// zelf GEEN lampcommando's, want dat zou automatische lampbesturing afhankelijk
+// maken van een openstaand browsertabblad.
 
 const img = document.querySelector(".camera-feed");
 const canvas = document.getElementById("canvas");
@@ -26,28 +30,6 @@ function loadScript(src) {
     s.onerror = fail;
     document.head.appendChild(s);
   });
-}
-
-// ---- lamp aansturen, met een kleine cooldown zodat we 'm niet spammen ----
-let lampBusy = false;
-function callAPI(url) {
-  if (lampBusy) return;
-  lampBusy = true;
-  fetch(url, { method: "PUT" }).catch(e => console.error("lamp API:", e));
-  setTimeout(() => (lampBusy = false), 3000);
-}
-
-const toMin = s => {
-  const m = /^(\d{1,2}):(\d{2})$/.exec(String(s || "").trim());
-  return m ? (+m[1] % 24) * 60 + (+m[2] % 60) : null;
-};
-let QUIET = { from: 21 * 60 + 40, to: 7 * 60 };   // stil-venster (lamp niet automatisch aan)
-function timeAllowsLamp() {
-  if (QUIET.from == null || QUIET.to == null || QUIET.from === QUIET.to) return true;
-  const m = new Date().getHours() * 60 + new Date().getMinutes();
-  return QUIET.from < QUIET.to
-    ? !(m >= QUIET.from && m < QUIET.to)
-    : !(m >= QUIET.from || m < QUIET.to);
 }
 
 // --------------------------------------------------------------------------- //
@@ -78,7 +60,7 @@ function startDetection(threshold) {
   if (detector) return;
   let stopped = false, paused = false;
   const octx = canvas.getContext("2d");
-  let model = null, lampOn = false, lastPerson = Date.now(), missing = 0;
+  let model = null, missing = 0;
 
   // op de achtergrond niet scannen (batterij/CPU); meteen weer bij terugkomst
   const onVis = () => {
@@ -152,15 +134,9 @@ function startDetection(threshold) {
       });
 
       const ms = Math.round(performance.now() - t0);
-      const now = Date.now();
       if (persons.length) {
-        lastPerson = now;
-        const blocked = !timeAllowsLamp();
-        if (!lampOn && !blocked) { lampOn = true; callAPI("/api/lamp/on"); }
-        setStatus(`<span class="green">${persons.length} persoon${persons.length > 1 ? "en" : ""}</span> · ${ms} ms`
-          + (blocked ? " · lamp in stil-venster" : ""));
+        setStatus(`<span class="green">${persons.length} persoon${persons.length > 1 ? "en" : ""}</span> · ${ms} ms`);
       } else {
-        if (lampOn && now - lastPerson > 10000) { lampOn = false; callAPI("/api/lamp/off"); }
         setStatus(`<span class="muted">geen persoon · ${ms} ms</span>`);
       }
       schedule(Math.min(3000, Math.max(500, ms * 1.5)));   // trager apparaat -> rustiger aan
@@ -183,8 +159,6 @@ async function syncWithConfig() {
   const c = cfg.camera || {};
   if (c.browser_detection && !detector && Date.now() - _modelFailAt > 60000) {
     const t = Number(c.detect_threshold);
-    const qf = toMin(c.lamp_quiet_from), qt = toMin(c.lamp_quiet_to);
-    if (qf != null && qt != null) QUIET = { from: qf, to: qt };
     startDetection(Number.isFinite(t) && t > 0 && t < 1 ? t : 0.5);
   } else if (!c.browser_detection && detector) {
     detector.stop();
