@@ -25,9 +25,13 @@ class AppleCalendarMultiAccount:
             try:
                 client = DAVClient(ICLOUD_URL, username=acc["id"], password=acc["password"], timeout=15)
                 cals.extend(client.principal().calendars() or [])
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:  # noqa: BLE001 - de foutmelding zelf (caldav's
+                # AuthorizationError) bevat nooit het wachtwoord, alleen url+reason
                 errors.append(f"{acc['id']}: {exc}")
-        if errors and not cals:
+        # Ook zichtbaar maken als één account faalt terwijl een ander wel lukt --
+        # anders verdwijnt een verlopen/ingetrokken app-specifiek wachtwoord
+        # geruisloos zodra er nog een werkend account is (agenda leek dan "ok").
+        if errors:
             self.error = "; ".join(errors)
         return cals
 
