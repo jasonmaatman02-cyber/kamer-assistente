@@ -15,10 +15,11 @@ _PAGES = {
     "chat": "chat.html",
     "notifications": "notifications.html",
     "camera": "camera.html",
+    "calendar": "calendar.html",
     "settings": "settings.html",
 }
 # pages achter het dashboard-wachtwoord (indien gezet)
-_PROTECTED = {"camera", "chat", "routines", "settings"}
+_PROTECTED = {"camera", "chat", "routines", "settings", "calendar"}
 
 
 @pages_bp.route("/favicon.ico")

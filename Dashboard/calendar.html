@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Smart Home - Calendar</title>
+  <link rel="stylesheet" href="/static/styles/main.css">
+  <link rel="stylesheet" href="/static/styles/calendar.css">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
+</head>
+<body>
+  {% include '_sidebar.html' %}
+  <div class="main">
+    <div class="topbar">
+      <h3><i class="fa fa-calendar-days"></i> Calendar</h3>
+      <div class="cal-toolbar">
+        <div class="cal-view-switch" id="cal-view-switch">
+          <button class="btn small" data-view="month">Maand</button>
+          <button class="btn small" data-view="week">Week</button>
+          <button class="btn small" data-view="day">Dag</button>
+        </div>
+        <button class="btn small" id="cal-today">Vandaag</button>
+        <button class="btn small" id="cal-prev" aria-label="Vorige"><i class="fa fa-chevron-left"></i></button>
+        <span class="cal-range-label" id="cal-range-label"></span>
+        <button class="btn small" id="cal-next" aria-label="Volgende"><i class="fa fa-chevron-right"></i></button>
+      </div>
+    </div>
+
+    <p class="muted" id="cal-error" hidden></p>
+
+    <div class="card cal-card">
+      <div id="cal-body">
+        <p class="muted"><i class="fa fa-spinner fa-pulse"></i> laden…</p>
+      </div>
+    </div>
+  </div>
+
+  <div class="cal-overlay" id="cal-modal" hidden>
+    <div class="cal-modal-content">
+      <button class="cal-modal-close" id="cal-modal-close" aria-label="Sluiten"><i class="fa fa-xmark"></i></button>
+      <h3 id="cal-modal-title"></h3>
+      <div class="cal-modal-row"><i class="fa fa-calendar-day"></i> <span id="cal-modal-date"></span></div>
+      <div class="cal-modal-row"><i class="fa fa-clock"></i> <span id="cal-modal-time"></span></div>
+      <div class="cal-modal-row"><i class="fa fa-calendar"></i> <span id="cal-modal-calendar"></span></div>
+      <div class="cal-modal-row" id="cal-modal-location-row"><i class="fa fa-location-dot"></i> <span id="cal-modal-location"></span></div>
+      <div class="cal-modal-desc" id="cal-modal-description"></div>
+    </div>
+  </div>
+
+  <div class="toast" id="toast"></div>
+  <script src="/static/scripts/util.js"></script>
+  <script src="/static/scripts/calendar.js"></script>
+</body>
+</html>

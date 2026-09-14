@@ -56,30 +56,87 @@ class _SimpleEvent:
         self.data = data
 
 
-def _ics_vevent(summary: str, dtstart_line: str) -> str:
-    return (
-        "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//kamerproject//NL\r\n"
-        "BEGIN:VEVENT\r\n"
-        f"SUMMARY:{summary}\r\n"
-        f"{dtstart_line}\r\n"
-        "END:VEVENT\r\nEND:VCALENDAR\r\n"
-    )
+def _ics_escape(text: str) -> str:
+    return text.replace("\\", "\\\\").replace(";", "\\;").replace(",", "\\,").replace("\n", "\\n")
+
+
+def _ics_datetime_line(prop: str, value: dict) -> str | None:
+    """Bouwt een DTSTART/DTEND-regel uit een Google-achtige {"dateTime": ...}
+    of {"date": ...} dict."""
+    if "dateTime" in value:
+        dt = parse(value["dateTime"])
+        return f"{prop}:{dt.strftime('%Y%m%dT%H%M%S')}"
+    if "date" in value:
+        return f"{prop};VALUE=DATE:{value['date'].replace('-', '')}"
+    return None
 
 
 def _google_event_to_simple(item: dict) -> _SimpleEvent:
     summary = item.get("summary") or "Geen titel"
-    start = item.get("start", {})
-    if "dateTime" in start:
-        dt = parse(start["dateTime"])
-        dtstart_line = f"DTSTART:{dt.strftime('%Y%m%dT%H%M%S')}"
-    else:
-        day = (start.get("date") or "").replace("-", "")
-        dtstart_line = f"DTSTART;VALUE=DATE:{day}"
-    return _SimpleEvent(_ics_vevent(summary, dtstart_line))
+    lines = [_ics_datetime_line("DTSTART", item.get("start", {}))]
+    end_line = _ics_datetime_line("DTEND", item.get("end", {}))
+    if end_line:
+        lines.append(end_line)
+    if item.get("location"):
+        lines.append(f"LOCATION:{_ics_escape(item['location'])}")
+    if item.get("description"):
+        lines.append(f"DESCRIPTION:{_ics_escape(item['description'])}")
+    if item.get("id"):
+        lines.append(f"UID:{item['id']}")
+    return _SimpleEvent(
+        "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//kamerproject//NL\r\n"
+        "BEGIN:VEVENT\r\n"
+        f"SUMMARY:{summary}\r\n" + "\r\n".join(l for l in lines if l) + "\r\n"
+        "END:VEVENT\r\nEND:VCALENDAR\r\n"
+    )
 
 
 def _rfc3339_day_start(d) -> str:
     return datetime(d.year, d.month, d.day, tzinfo=timezone.utc).isoformat()
+
+
+def _ics_unescape(text: str) -> str:
+    return text.replace("\\n", "\n").replace("\\,", ",").replace("\\;", ";").replace("\\\\", "\\")
+
+
+def _ics_value_to_iso(value: str | None) -> str | None:
+    if not value:
+        return None
+    try:
+        return parse(value).isoformat()
+    except (ValueError, OverflowError):
+        return None
+
+
+# Voor de Kalender-tab (/api/calendar/events): een plat, provider-onafhankelijk
+# event-dict. Werkt identiek voor iCloud en Google omdat beide providers hun
+# events als dezelfde ruwe iCalendar VEVENT-tekst aanleveren (event.data) --
+# geen provider-specifieke parsing nodig, één simpele regel-voor-regel lezer
+# (bewust geen aparte ICS-library, past bij de rest van dit bestand).
+def _normalize_event(event, calendar_name: str, provider: str) -> dict:
+    fields = {"SUMMARY": None, "DTSTART": None, "DTEND": None,
+              "LOCATION": None, "DESCRIPTION": None, "UID": None}
+    for line in event.data.splitlines():
+        for key in fields:
+            if line.startswith(key) and ":" in line:
+                fields[key] = line.split(":", 1)[1].strip()
+                break
+    start_raw = fields["DTSTART"]
+    start_iso = _ics_value_to_iso(start_raw)
+    end_iso = _ics_value_to_iso(fields["DTEND"]) or start_iso
+    all_day = bool(start_raw) and "T" not in start_raw
+    title = fields["SUMMARY"] or "Geen titel"
+    return {
+        "id": fields["UID"] or f"{provider}:{calendar_name}:{start_raw}:{title}",
+        "title": title,
+        "start": start_iso,
+        "end": end_iso,
+        "all_day": all_day,
+        "calendar": calendar_name,
+        "provider": provider,
+        "location": _ics_unescape(fields["LOCATION"]) if fields["LOCATION"] else "",
+        "description": _ics_unescape(fields["DESCRIPTION"]) if fields["DESCRIPTION"] else "",
+    }
 
 
 # --------------------------------------------------------------------------- #
@@ -215,7 +272,13 @@ class MultiProviderCalendar:
         errors = []
         for acc in self._accounts:
             try:
-                cals.extend(acc.calendars())
+                acc_cals = acc.calendars()
+                for cal in acc_cals:
+                    # Voor get_normalized_events() (Kalender-tab): welke
+                    # provider dit is, blijft anders verloren zodra alles in
+                    # één platte self.calendars-lijst samenkomt.
+                    cal.provider = acc.provider
+                cals.extend(acc_cals)
             except Exception as exc:  # noqa: BLE001 - de foutmelding zelf bevat
                 # nooit het wachtwoord/token (caldav's AuthorizationError geeft
                 # alleen url+reason; onze eigen RuntimeErrors bevatten geen
@@ -227,6 +290,22 @@ class MultiProviderCalendar:
         if errors:
             self.error = "; ".join(errors)
         return cals
+
+    # ------------------------------------------------------------------ #
+    def get_normalized_events(self, start_date, end_date) -> list[dict]:
+        """Voor de Kalender-tab: platte, provider-onafhankelijke event-dicts
+        (zie _normalize_event). Eén kapotte agenda breekt de rest niet af --
+        zelfde per-agenda try/except-patroon als get_all_events()."""
+        out = []
+        for cal in self.calendars:
+            name = getattr(cal, "name", "Agenda") or "Agenda"
+            provider = getattr(cal, "provider", "?")
+            try:
+                for ev in cal.date_search(start_date, end_date):
+                    out.append(_normalize_event(ev, calendar_name=name, provider=provider))
+            except Exception as exc:  # noqa: BLE001
+                print(f"[agenda] fout bij '{name}': {exc}")
+        return out
 
     # ------------------------------------------------------------------ #
     def get_all_events(self, start_date, end_date):
