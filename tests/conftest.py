@@ -21,6 +21,7 @@ def _offline(monkeypatch, tmp_path):
     monkeypatch.setattr("config.settings.ENV_FILE", tmp_path / ".env")
     monkeypatch.setattr("logic.notes.NOTES_FILE", tmp_path / "notes.json")
     monkeypatch.setattr("logic.logger.BASE_LOG_DIR", tmp_path / "logs")  # niet in de echte data/logs schrijven
+    monkeypatch.setattr("scheduler.agenda.GOOGLE_TOKEN_FILE", tmp_path / "google_calendar_token.json")
     for key in config.SECRET_KEYS:
         monkeypatch.delenv(key, raising=False)
     config.reload()

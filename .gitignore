@@ -1,6 +1,7 @@
 # --- Secrets & local machine config (NEVER commit) ---
 .env
 .cache
+google_calendar_token.json
 settings.json
 
 # --- Python ---

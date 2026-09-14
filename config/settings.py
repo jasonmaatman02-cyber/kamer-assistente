@@ -92,6 +92,13 @@ DEFAULTS: dict = {
         "poll_system_ms": 10000,
     },
     "alarm": {"time": "", "routine": "morning"},   # handmatige dashboard-wekker
+    "agenda": {
+        # Account 1 is altijd iCloud/CalDAV (APPLE_ID_1/APPLE_PASSWORD_1).
+        # Account 2 kan een andere provider zijn dan iCloud -- expliciet
+        # instelbaar i.p.v. automatisch aannemen dat elk tweede e-mailadres
+        # een Apple ID is. "google" | "icloud" | "" (account 2 uit).
+        "account2_provider": "google",
+    },
     "presence": {
         # server-side (Pi-native) mensen-tellen via de bestaande camera, drijft
         # de automatische lamp aan. Los van 'camera.browser_detection' (dat is
@@ -270,13 +277,15 @@ SECRET_KEYS = [
     "TAPO_USER", "TAPO_PASSWORD",
     "EMAIL_ADDRESS", "EMAIL_PASSWORD", "SMTP_SERVER", "SMTP_PORT", "RECEIVER",
     "APPLE_ID_1", "APPLE_PASSWORD_1", "APPLE_ID_2", "APPLE_PASSWORD_2",
+    "GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET", "GOOGLE_REDIRECT_URI",
     "SPOTIFY_CLIENT_ID", "SPOTIFY_CLIENT_SECRET", "SPOTIFY_REDIRECT_URI",
     "OPENWEATHER_KEY", "WEATHERAPI_KEY", "SERPER_API_KEY",
     "PICOVOICE_ACCESS_KEY",
 ]
 _PUBLIC_SECRETS = {
     "TAPO_USER", "EMAIL_ADDRESS", "SMTP_SERVER", "SMTP_PORT", "RECEIVER",
-    "APPLE_ID_1", "APPLE_ID_2", "SPOTIFY_CLIENT_ID", "SPOTIFY_REDIRECT_URI",
+    "APPLE_ID_1", "APPLE_ID_2", "GOOGLE_CLIENT_ID", "GOOGLE_REDIRECT_URI",
+    "SPOTIFY_CLIENT_ID", "SPOTIFY_REDIRECT_URI",
 }
 
 

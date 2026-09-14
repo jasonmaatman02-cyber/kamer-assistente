@@ -55,6 +55,13 @@ const SCHEMA = [
     ],
   },
   {
+    key: "agenda", title: "Agenda", icon: "fa-calendar-days",
+    fields: [
+      { path: "account2_provider", label: "Provider account 2", type: "select", options: ["google", "icloud"],
+        hint: "Account 1 (APPLE_ID_1) is altijd iCloud. Voor account 2 (APPLE_ID_2) kies je hier de echte provider — icloud gebruikt APPLE_PASSWORD_2, google gebruikt de OAuth-koppeling hieronder bij Inloggegevens." },
+    ],
+  },
+  {
     key: "camera", title: "Camera", icon: "fa-video",
     fields: [
       { path: "enabled", label: "Camera aan", type: "bool" },
@@ -283,9 +290,15 @@ const SECRET_GROUPS = [
       ["EMAIL_ADDRESS", "Afzender-adres", "text"], ["EMAIL_PASSWORD", "App-wachtwoord", "password"],
       ["SMTP_SERVER", "SMTP-server", "text"], ["SMTP_PORT", "Poort", "text"],
       ["RECEIVER", "Ontvanger (jij)", "text"]] },
-  { title: "Apple agenda (CalDAV)", icon: "fa-calendar", keys: [
-      ["APPLE_ID_1", "Apple ID", "text"], ["APPLE_PASSWORD_1", "App-wachtwoord", "password"],
-      ["APPLE_ID_2", "Apple ID 2 (optioneel)", "text"], ["APPLE_PASSWORD_2", "App-wachtwoord 2", "password"]] },
+  { title: "Apple agenda (CalDAV) — account 1", icon: "fa-calendar", keys: [
+      ["APPLE_ID_1", "Apple ID", "text"], ["APPLE_PASSWORD_1", "App-wachtwoord", "password"]] },
+  { title: "Agenda account 2 (e-mailadres)", icon: "fa-calendar", keys: [
+      ["APPLE_ID_2", "E-mailadres account 2 (optioneel)", "text"]] },
+  { title: "Apple agenda — account 2 (alleen bij provider=icloud)", icon: "fa-calendar",
+      keys: [["APPLE_PASSWORD_2", "App-wachtwoord 2", "password"]] },
+  { title: "Google Agenda — account 2 (alleen bij provider=google)", icon: "fa-calendar-days", keys: [
+      ["GOOGLE_CLIENT_ID", "OAuth Client ID", "text"], ["GOOGLE_CLIENT_SECRET", "OAuth Client Secret", "password"],
+      ["GOOGLE_REDIRECT_URI", "Redirect URI", "text"]], google: true },
   { title: "Spotify", icon: "fa-music", keys: [
       ["SPOTIFY_CLIENT_ID", "Client ID", "text"], ["SPOTIFY_CLIENT_SECRET", "Client Secret", "password"],
       ["SPOTIFY_REDIRECT_URI", "Redirect URI", "text"]], spotify: true },
@@ -346,6 +359,13 @@ function unlockedCards(d) {
         <p class="muted">Open de link, log in bij Spotify, en plak hieronder de URL waar je op uitkwam.</p>
         <div class="field"><input type="text" id="sp-redirect" placeholder="http://127.0.0.1:8000/callback?code=..."></div>
         <button class="btn small primary" id="sp-finish">Koppelen afronden</button>
+      </div>` : ""}
+      ${g.google ? `
+      <button class="btn small" id="gc-connect" style="margin-top:6px"><i class="fa fa-link"></i> Verbind met Google</button>
+      <div id="gc-row" hidden style="margin-top:10px">
+        <p class="muted">Open de link, log in met het Google-account dat als "account 2" hierboven staat, en plak hieronder de URL waar je op uitkwam.</p>
+        <div class="field"><input type="text" id="gc-redirect" placeholder="http://127.0.0.1:8000/callback?code=..."></div>
+        <button class="btn small primary" id="gc-finish">Koppelen afronden</button>
       </div>` : ""}
     </div>`).join("");
   return `
@@ -446,6 +466,26 @@ function wireUnlocked() {
     }).then(r => r.json());
     toast(r.ok ? "Spotify gekoppeld ✓" : (r.error || "Koppelen mislukt"), !r.ok);
     if (r.ok) document.getElementById("sp-row").hidden = true;
+  });
+
+  const gcc = document.getElementById("gc-connect");
+  if (gcc) gcc.addEventListener("click", async () => {
+    const r = await fetch("/api/google_calendar/auth-url", { headers: { "X-Unlock-Token": UNLOCK_TOKEN } }).then(r => r.json());
+    if (!r.ok) { toast(r.error || "Vul eerst client-id/secret in en sla op", true); return; }
+    window.open(r.url, "_blank", "noopener");
+    document.getElementById("gc-row").hidden = false;
+  });
+  const gcf = document.getElementById("gc-finish");
+  if (gcf) gcf.addEventListener("click", async () => {
+    const redirect_url = document.getElementById("gc-redirect").value.trim();
+    if (!redirect_url) return;
+    const r = await fetch("/api/google_calendar/token", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-Unlock-Token": UNLOCK_TOKEN },
+      body: JSON.stringify({ redirect_url }),
+    }).then(r => r.json());
+    toast(r.ok ? "Google Agenda gekoppeld ✓" : (r.error || "Koppelen mislukt"), !r.ok);
+    if (r.ok) document.getElementById("gc-row").hidden = true;
   });
 }
 

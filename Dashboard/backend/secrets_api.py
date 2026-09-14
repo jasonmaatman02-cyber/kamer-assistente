@@ -84,3 +84,35 @@ def spotify_token():
         return jsonify({"ok": False, "error": str(exc)}), 400
     S.reset_services()
     return jsonify({"ok": True})
+
+
+@secrets_bp.route("/api/google_calendar/auth-url")
+def google_calendar_auth_url():
+    if not unlocked():
+        return jsonify({"ok": False, "error": "Niet ontgrendeld"}), 403
+    flow = S.google_calendar_oauth()
+    if not flow:
+        return jsonify({"ok": False, "error": "Vul eerst GOOGLE_CLIENT_ID en GOOGLE_CLIENT_SECRET in"}), 400
+    url, _state = flow.authorization_url(access_type="offline", prompt="consent")
+    return jsonify({"ok": True, "url": url})
+
+
+@secrets_bp.route("/api/google_calendar/token", methods=["POST"])
+def google_calendar_token():
+    if not unlocked():
+        return jsonify({"ok": False, "error": "Niet ontgrendeld"}), 403
+    flow = S.google_calendar_oauth()
+    if not flow:
+        return jsonify({"ok": False, "error": "Vul eerst GOOGLE_CLIENT_ID en GOOGLE_CLIENT_SECRET in"}), 400
+    redirect_url = (request.get_json(silent=True) or {}).get("redirect_url", "").strip()
+    if not redirect_url:
+        return jsonify({"ok": False, "error": "Plak de volledige URL waar je op uitkwam"}), 400
+    try:
+        flow.fetch_token(authorization_response=redirect_url)
+    except Exception as exc:  # noqa: BLE001 - foutmelding van de library, bevat geen tokens
+        return jsonify({"ok": False, "error": str(exc)}), 400
+    from scheduler.agenda import GOOGLE_TOKEN_FILE
+
+    GOOGLE_TOKEN_FILE.write_text(flow.credentials.to_json(), encoding="utf-8")
+    S.reset_services()
+    return jsonify({"ok": True})

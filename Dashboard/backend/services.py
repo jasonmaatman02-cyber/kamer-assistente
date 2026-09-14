@@ -197,6 +197,37 @@ def spotify_oauth():
     )
 
 
+# --------------------------------------------------------------------------- #
+# Google Agenda (OAuth) -- zelfde patroon als spotify_oauth() hierboven: de
+# gebruiker opent de auth-url zelf (Pi is headless, kan geen browser openen),
+# plakt de volledige redirect-URL terug, en het resulterende token wordt
+# persistent opgeslagen (scheduler.agenda.GOOGLE_TOKEN_FILE) zodat een
+# herstart niet opnieuw hoeft in te loggen.
+# --------------------------------------------------------------------------- #
+def google_calendar_oauth():
+    from google_auth_oauthlib.flow import Flow
+
+    from scheduler.agenda import GOOGLE_SCOPES
+
+    cid = config.secret("GOOGLE_CLIENT_ID")
+    csecret = config.secret("GOOGLE_CLIENT_SECRET")
+    if not (cid and csecret):
+        return None
+    redirect_uri = config.secret("GOOGLE_REDIRECT_URI", "http://127.0.0.1:8000/callback")
+    client_config = {
+        "web": {
+            "client_id": cid,
+            "client_secret": csecret,
+            "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+            "token_uri": "https://oauth2.googleapis.com/token",
+            "redirect_uris": [redirect_uri],
+        }
+    }
+    return Flow.from_client_config(
+        client_config, scopes=GOOGLE_SCOPES, redirect_uri=redirect_uri
+    )
+
+
 def active_device_id(sp):
     """Actief apparaat, anders het eerste beschikbare, anders None."""
     try:
