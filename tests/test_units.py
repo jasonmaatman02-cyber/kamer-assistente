@@ -1156,6 +1156,181 @@ def test_presence_get_frame_handles_camera_full(monkeypatch):
     assert w._get_frame() is None     # blijft netjes None bij herhaling
 
 
+# --- presence: AUTO/MANUAL, ONBEKEND-staat bij sensorverlies, rijkere status - #
+def test_presence_no_detection_no_action(monkeypatch):
+    """1. Geen aanwezigheid -> geen actie (geen lampcommando's, blijft EMPTY)."""
+    import config
+    from Dashboard.backend.presence import PresenceWorker
+    import Dashboard.backend.presence as presence_mod
+
+    config.set("presence.auto_light_enabled", True)
+    w = PresenceWorker()
+    monkeypatch.setattr(w, "_get_frame", lambda: object())
+    monkeypatch.setattr("logic.people_detect.count_people", lambda frame: 0)
+
+    def must_not_be_called(ip):
+        raise AssertionError("zonder aanwezigheid mag er geen lampcommando gestuurd worden")
+    monkeypatch.setattr(presence_mod.S, "lamp_ip", lambda x: "192.168.1.50")
+    monkeypatch.setattr(presence_mod.S, "lamp", must_not_be_called)
+
+    w._tick()
+    w._tick()
+    assert w.room_state == "EMPTY"
+    assert w.status()["state"] == "absent"
+
+
+def test_presence_restart_does_not_toggle_lamp_immediately(monkeypatch):
+    """9. Een 'herstart' (= een verse PresenceWorker, precies wat er na een
+    service-restart gebeurt) mag de lamp niet direct aanraken -- pas na
+    consecutive_required echte, opeenvolgende detecties."""
+    import config
+    from Dashboard.backend.presence import PresenceWorker
+    import Dashboard.backend.presence as presence_mod
+
+    config.set("presence.consecutive_required", 2)
+    config.set("presence.auto_light_enabled", True)
+    w = PresenceWorker()   # simuleert de staat direct na een herstart
+    monkeypatch.setattr(w, "_get_frame", lambda: object())
+    monkeypatch.setattr("logic.people_detect.count_people", lambda frame: 1)
+
+    calls = []
+
+    def must_not_be_called(ip):
+        calls.append(ip)
+        raise AssertionError("bij het opstarten zelf mag er geen lamppoging zijn")
+
+    monkeypatch.setattr(presence_mod.S, "lamp_ip", lambda x: "192.168.1.50")
+    monkeypatch.setattr(presence_mod.S, "lamp", must_not_be_called)
+
+    w._tick()   # 1e detectie, nog niet genoeg
+    assert w.room_state == "EMPTY"
+    assert calls == []   # geen enkele lamppoging bij het opstarten zelf
+
+
+def test_presence_sensor_offline_holds_unknown_state(monkeypatch):
+    """7. Sensor offline -> veilige ONBEKEND-toestand, geen valse EMPTY."""
+    import config
+    from Dashboard.backend.presence import PresenceWorker
+    import Dashboard.backend.presence as presence_mod
+
+    config.set("presence.consecutive_required", 2)
+    config.set("presence.empty_grace_s", 5.0)
+    config.set("presence.auto_light_enabled", True)
+
+    w = PresenceWorker()
+    monkeypatch.setattr("logic.people_detect.count_people", lambda frame: 1)
+    monkeypatch.setattr(presence_mod.S, "lamp_ip", lambda x: "192.168.1.50")
+
+    def must_not_be_called(ip):
+        raise AssertionError("een sensorstoring mag geen lampcommando triggeren")
+    monkeypatch.setattr(presence_mod.S, "lamp", must_not_be_called)
+
+    clock = {"t": 1_000_000.0}
+    monkeypatch.setattr("time.time", lambda: clock["t"])
+
+    monkeypatch.setattr(w, "_get_frame", lambda: object())
+    w._tick(); clock["t"] += 3; w._tick()
+    assert w.room_state == "OCCUPIED"
+    assert w.status()["state"] == "present"
+
+    # camera valt weg -- geen bevestigde meting, geen valse aftelling naar EMPTY
+    monkeypatch.setattr(w, "_get_frame", lambda: None)
+    for _ in range(10):
+        clock["t"] += 3
+        w._tick()
+    assert w.status()["state"] == "unknown"
+    assert w.room_state == "OCCUPIED"          # niet stiekem naar EMPTY gegaan
+    assert w._positive_streak == 2             # niet gereset door de storing
+
+    # sensor komt terug -- gewoon weer normaal, geen valse blijvende ONBEKEND
+    monkeypatch.setattr(w, "_get_frame", lambda: object())
+    clock["t"] += 3
+    w._tick()
+    assert w.status()["state"] == "present"
+
+
+def test_presence_manual_action_visible_and_reset_on_next_transition(monkeypatch):
+    """6. Manual mode is zichtbaar en blokkeert de bestaande edge-triggered
+    actuatie niet extra (die vocht toch al nooit terug); een nieuwe
+    aanwezigheids-overgang geeft de automatisering weer AUTO-controle."""
+    import config
+    from Dashboard.backend.presence import PresenceWorker
+    import Dashboard.backend.presence as presence_mod
+
+    config.set("presence.consecutive_required", 1)
+    config.set("presence.auto_light_enabled", True)
+    config.set("presence.auto_light_block_after", "")
+
+    w = PresenceWorker()
+    assert w.status()["mode"] == "AUTO"
+
+    w.note_manual_action()
+    assert w.status()["mode"] == "MANUAL"
+    w.note_manual_action()   # nogmaals -- blijft gewoon MANUAL, geen bijwerking
+
+    class WorkingLamp:
+        async def aan(self):
+            return None
+
+    monkeypatch.setattr(w, "_get_frame", lambda: object())
+    monkeypatch.setattr("logic.people_detect.count_people", lambda frame: 1)
+    monkeypatch.setattr(presence_mod.S, "lamp_ip", lambda x: "192.168.1.50")
+    monkeypatch.setattr(presence_mod.S, "lamp", lambda ip: WorkingLamp())
+
+    w._tick()   # een echte overgang -> mode weer AUTO
+    assert w.status()["mode"] == "AUTO"
+
+
+def test_devices_api_manual_action_notifies_presence(monkeypatch, client):
+    """Handmatige bediening via de bestaande dashboard-route zet de door
+    presence bediende lamp op MANUAL; een andere lamp laat presence met rust."""
+    import config
+    from Dashboard.backend import services as S
+    from Dashboard.backend.presence import worker
+
+    config.set("presence.lamp", 0)
+    config.set("devices.lamps", [{"name": "Kamerlamp", "ip": "192.168.1.50"},
+                                  {"name": "Andere lamp", "ip": "192.168.1.60"}])
+    worker._mode = "AUTO"
+
+    class FakeLamp:
+        async def aan(self):
+            return "ok"
+
+    monkeypatch.setattr(S, "lamp", lambda ip: FakeLamp())
+
+    r = client.put("/api/lamp/on", json={"lamp": 1})   # "Andere lamp" -- niet de presence-lamp
+    assert r.get_json()["status"] == "ok"
+    assert worker._mode == "AUTO"
+
+    r = client.put("/api/lamp/on", json={"lamp": 0})   # de presence-lamp zelf
+    assert r.get_json()["status"] == "ok"
+    assert worker._mode == "MANUAL"
+
+
+def test_presence_status_shape_matches_requested_api(monkeypatch):
+    """/api/presence-vorm: state/automation_enabled/last_change naast de
+    bestaande velden (room_state/last_count blijven bestaan, niets breekt)."""
+    import config
+    from Dashboard.backend.presence import PresenceWorker
+
+    config.set("presence.enabled", True)
+    config.set("presence.auto_light_enabled", True)
+    w = PresenceWorker()
+
+    s = w.status()
+    assert s["state"] == "absent"
+    assert s["automation_enabled"] is True
+    assert s["mode"] == "AUTO"
+    assert s["last_change"] is None   # nog nooit een overgang gehad
+
+    w.room_state = "OCCUPIED"
+    w.last_change = 1_700_000_000.0
+    s = w.status()
+    assert s["state"] == "present"
+    assert s["last_change"]   # ISO-tekst, geen None meer
+
+
 # --- audio: mic die 16kHz niet ondersteunt (USB-webcam-quirk, echt gezien --
 # --- op de Pi: "CC HD webcam" mist 16/22.05kHz, heeft wel 44.1kHz) ------- #
 def test_record_falls_back_to_device_rate_and_resamples(monkeypatch):

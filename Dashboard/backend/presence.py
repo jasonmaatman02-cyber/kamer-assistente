@@ -88,10 +88,28 @@ class PresenceWorker:
 
         self.room_state = "EMPTY"
         self.last_count = 0
+        self.last_change: float | None = None   # time.time() van de laatste EMPTY<->OCCUPIED-overgang
         self._positive_streak = 0
         self._last_positive_at: float | None = None
         self._camera_hold = None   # release-functie van camera.acquire(), of None
         self._camera_full_warned = False
+
+        # Sensor (camera) tijdelijk niet beschikbaar -> "ONBEKEND", niet stiekem
+        # "geen mensen". Zie _tick(): telt niet mee voor de EMPTY-kant van de
+        # hysteresis (een camerahapering mag nooit lijken op "persoon weg").
+        self._sensor_unknown = False
+        self._sensor_unknown_warned = False
+
+        # AUTO/MANUAL, puur voor zichtbaarheid (/api/presence): de bestaande
+        # edge-triggered actuatie (lamp alleen aanraken OP een overgang, zie
+        # _transition) zorgde al dat een handmatige actie nooit meteen
+        # overschreven wordt -- deze vlag maakt dat gedrag expliciet i.p.v.
+        # impliciet. Terug naar AUTO gebeurt vanzelf bij de eerstvolgende
+        # echte aanwezigheids-overgang (geen arbitraire timeout nodig: de
+        # volgende keer dat de kamer leeg/bezet raakt is het natuurlijke,
+        # hardware-gegronde moment waarop automatisering weer vers mag
+        # beslissen).
+        self._mode = "AUTO"
 
         # Retry-status voor een mislukte automatische lampactie (zie _retry_light).
         # None = geen mislukte poging openstaand -> retry-tick doet dan niets.
@@ -122,6 +140,8 @@ class PresenceWorker:
                     self._positive_streak = 0
                     self._pending_light = None
                     self._light_retries = 0
+                    self._sensor_unknown = False
+                    self._mode = "AUTO"
             except Exception as exc:  # noqa: BLE001 - deze thread mag nooit doodgaan
                 log("PEOPLE", f"Onverwachte fout in aanwezigheids-worker: {exc}")
             self._stop.wait(interval)
@@ -179,7 +199,24 @@ class PresenceWorker:
         from logic.people_detect import count_people
 
         frame = self._get_frame()
-        count = count_people(frame) if frame is not None else 0
+        if frame is None:
+            # Sensor/camera even niet beschikbaar (bv. USB-hikje) -- dit is
+            # GEEN bevestigde "0 personen"-meting. Niet laten meetellen voor
+            # de EMPTY-kant van de hysteresis (zou een camerahapering laten
+            # lijken op "persoon weg") en de opgebouwde OCCUPIED-streak ook
+            # niet resetten -- gewoon wachten tot er weer echt beeld is.
+            self._sensor_unknown = True
+            if not self._sensor_unknown_warned:
+                log("PEOPLE", "Sensor unavailable -- presence state held (unknown)")
+                self._sensor_unknown_warned = True
+            self._retry_light()   # los van detectie, mag gewoon doorgaan
+            return
+        if self._sensor_unknown:
+            log("PEOPLE", "Sensor available again")
+        self._sensor_unknown = False
+        self._sensor_unknown_warned = False
+
+        count = count_people(frame)
         self.last_count = count
         now = time.time()
 
@@ -208,15 +245,30 @@ class PresenceWorker:
 
     def _transition(self, new_state: str, count: int):
         self.room_state = new_state
+        self.last_change = time.time()
         label = "person" if count == 1 else "people"
         log("PEOPLE", f"Detected: {count} {label}")
         log("PEOPLE", f"Room state: {new_state}")
-        # Een nieuwe overgang start altijd met een schone retry-lei.
+        # Een nieuwe overgang start altijd met een schone retry-lei, en geeft
+        # de automatisering weer AUTO-controle (zie de uitleg bij self._mode
+        # in __init__): een eventuele handmatige override tijdens de vorige
+        # bezette/lege periode is hiermee voorbij.
         self._pending_light = None
         self._light_retries = 0
+        self._mode = "AUTO"
         want_on = new_state == "OCCUPIED"
         if not self._auto_light(want_on):
             self._pending_light = want_on
+
+    def note_manual_action(self) -> None:
+        """Aangeroepen vanuit devices_api.py wanneer de door presence bediende
+        lamp handmatig (via het dashboard/de API) is aangestuurd. Verandert
+        niets aan de bestaande actuatie (die vecht toch al nooit meteen terug,
+        zie _transition) -- maakt alleen expliciet zichtbaar in /api/presence
+        dat dit een bewuste, handmatige actie was."""
+        if self._mode != "MANUAL":
+            log("PEOPLE", "Manual lamp action detected -- automation paused until next presence change")
+        self._mode = "MANUAL"
 
     # ------------------------------------------------------------------ #
     # Lamp-automatisering
@@ -273,12 +325,28 @@ class PresenceWorker:
     # Status (voor het dashboard)
     # ------------------------------------------------------------------ #
     def status(self) -> dict:
+        presence_enabled = bool(config.get("presence.enabled", False))
+        auto_light_enabled = bool(config.get("presence.auto_light_enabled", False))
+        if self._sensor_unknown:
+            state = "unknown"
+        elif self.room_state == "OCCUPIED":
+            state = "present"
+        else:
+            state = "absent"
         return {
-            "enabled": bool(config.get("presence.enabled", False)),
+            "enabled": presence_enabled,
             "room_state": self.room_state,
             "last_count": self.last_count,
-            "auto_light_enabled": bool(config.get("presence.auto_light_enabled", False)),
+            "auto_light_enabled": auto_light_enabled,
             "auto_light_blocked": is_auto_light_blocked(),
+            # Rijkere, provider-onafhankelijke vorm voor de Kalender/Settings-UI:
+            "state": state,
+            "automation_enabled": presence_enabled and auto_light_enabled,
+            "mode": self._mode,
+            "last_change": (
+                datetime.datetime.fromtimestamp(self.last_change).isoformat()
+                if self.last_change else None
+            ),
         }
 
 

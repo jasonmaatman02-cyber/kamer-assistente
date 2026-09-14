@@ -9,6 +9,21 @@ from Dashboard.backend import services as S
 devices_bp = Blueprint("devices", __name__)
 
 
+def _note_manual_lamp_action(ip: str) -> None:
+    """Laat de aanwezigheidsautomatisering (presence.py) weten dat de lamp
+    die 'ie zelf bedient net handmatig is aangestuurd -- puur voor
+    zichtbaarheid (mode: MANUAL in /api/presence). De bestaande edge-
+    triggered actuatie daar vecht toch al nooit meteen terug tegen een
+    handmatige actie; dit maakt dat alleen expliciet zichtbaar."""
+    try:
+        if ip == S.lamp_ip(config.get("presence.lamp", 0)):
+            from Dashboard.backend.presence import worker
+
+            worker.note_manual_action()
+    except Exception:  # noqa: BLE001 - mag een geslaagde handmatige actie nooit alsnog laten falen
+        pass
+
+
 def _lamp_action(coro_factory, lamp_ref=None):
     if lamp_ref is None:
         lamp_ref = (request.get_json(silent=True) or {}).get("lamp", 0)
@@ -16,10 +31,12 @@ def _lamp_action(coro_factory, lamp_ref=None):
     if not ip:
         return jsonify({"status": "error", "message": "geen lamp geconfigureerd"}), 400
     try:
-        return jsonify({"status": "ok", "message": asyncio.run(coro_factory(S.lamp(ip)))})
+        message = asyncio.run(coro_factory(S.lamp(ip)))
     except Exception as exc:  # noqa: BLE001
         S.drop_lamp(ip)
         return jsonify({"status": "error", "message": str(exc)}), 500
+    _note_manual_lamp_action(ip)
+    return jsonify({"status": "ok", "message": message})
 
 
 @devices_bp.route("/api/lamp/on", methods=["PUT"])
