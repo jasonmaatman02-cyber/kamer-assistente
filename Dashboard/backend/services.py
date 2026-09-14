@@ -203,8 +203,40 @@ def spotify_oauth():
 # plakt de volledige redirect-URL terug, en het resulterende token wordt
 # persistent opgeslagen (scheduler.agenda.GOOGLE_TOKEN_FILE) zodat een
 # herstart niet opnieuw hoeft in te loggen.
+#
+# De auth-url-aanvraag en de token-uitwisseling zijn twee losse HTTP-
+# requests (en dus twee losse Flow-objecten) -- de CSRF-state die Google
+# genereert moet daarom expliciet tussen die twee bewaard en meegegeven
+# worden, anders wordt 'ie stilzwijgend niet gevalideerd. _google_oauth_state
+# is bewust een simpele, met een lock beschermde losse waarde (net als
+# _lamp_conns hierboven) -- dit dashboard heeft maar één operator tegelijk.
 # --------------------------------------------------------------------------- #
-def google_calendar_oauth():
+_google_oauth_state: dict = {"value": None}
+_google_oauth_lock = threading.Lock()
+
+
+def set_google_oauth_state(state: str) -> None:
+    with _google_oauth_lock:
+        _google_oauth_state["value"] = state
+
+
+def pop_google_oauth_state() -> str | None:
+    """Eenmalig uitleesbaar (CSRF-nonce, geen replay) -- leest en wist in één keer."""
+    with _google_oauth_lock:
+        state = _google_oauth_state["value"]
+        _google_oauth_state["value"] = None
+        return state
+
+
+def _is_loopback_redirect(uri: str) -> bool:
+    from urllib.parse import urlparse
+
+    return (urlparse(uri).hostname or "").lower() in ("127.0.0.1", "localhost", "::1")
+
+
+def google_calendar_oauth(state: str | None = None):
+    import os
+
     from google_auth_oauthlib.flow import Flow
 
     from scheduler.agenda import GOOGLE_SCOPES
@@ -214,6 +246,13 @@ def google_calendar_oauth():
     if not (cid and csecret):
         return None
     redirect_uri = config.secret("GOOGLE_REDIRECT_URI", "http://127.0.0.1:8000/callback")
+    if redirect_uri.startswith("http://") and _is_loopback_redirect(redirect_uri):
+        # RFC 8252: een loopback-redirect-URI (127.0.0.1/localhost) mag plain
+        # http zijn -- die verlaat het apparaat nooit. oauthlib weigert elke
+        # http-redirect standaard; dit staat 'm alleen voor dit specifieke,
+        # onschadelijke geval expliciet toe (geen algehele verzwakking: een
+        # niet-loopback http-redirect blijft gewoon geweigerd).
+        os.environ.setdefault("OAUTHLIB_INSECURE_TRANSPORT", "1")
     client_config = {
         "web": {
             "client_id": cid,
@@ -224,7 +263,7 @@ def google_calendar_oauth():
         }
     }
     return Flow.from_client_config(
-        client_config, scopes=GOOGLE_SCOPES, redirect_uri=redirect_uri
+        client_config, scopes=GOOGLE_SCOPES, redirect_uri=redirect_uri, state=state
     )
 
 

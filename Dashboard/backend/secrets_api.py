@@ -93,7 +93,11 @@ def google_calendar_auth_url():
     flow = S.google_calendar_oauth()
     if not flow:
         return jsonify({"ok": False, "error": "Vul eerst GOOGLE_CLIENT_ID en GOOGLE_CLIENT_SECRET in"}), 400
-    url, _state = flow.authorization_url(access_type="offline", prompt="consent")
+    url, state = flow.authorization_url(access_type="offline", prompt="consent")
+    # Auth-url en token-uitwisseling zijn twee losse requests (dus twee losse
+    # Flow-objecten) -- de CSRF-state moet expliciet bewaard worden, anders
+    # wordt 'ie bij het inwisselen stilzwijgend niet gevalideerd.
+    S.set_google_oauth_state(state)
     return jsonify({"ok": True, "url": url})
 
 
@@ -101,15 +105,25 @@ def google_calendar_auth_url():
 def google_calendar_token():
     if not unlocked():
         return jsonify({"ok": False, "error": "Niet ontgrendeld"}), 403
-    flow = S.google_calendar_oauth()
+    expected_state = S.pop_google_oauth_state()
+    if not expected_state:
+        return jsonify({
+            "ok": False,
+            "error": "Geen lopende Google-koppeling gevonden -- klik eerst opnieuw op 'Verbind met Google'",
+        }), 400
+    flow = S.google_calendar_oauth(state=expected_state)
     if not flow:
         return jsonify({"ok": False, "error": "Vul eerst GOOGLE_CLIENT_ID en GOOGLE_CLIENT_SECRET in"}), 400
+    # Alleen de rand van de geplakte tekst trimmen; querystring-parameters
+    # (state/iss/code/scope) blijven onaangeroerd -- de library parset en
+    # url-decodeert de hele authorization_response zelf (urllib.parse),
+    # dus geen eigen, foutgevoelige query-parsing hier.
     redirect_url = (request.get_json(silent=True) or {}).get("redirect_url", "").strip()
     if not redirect_url:
         return jsonify({"ok": False, "error": "Plak de volledige URL waar je op uitkwam"}), 400
     try:
         flow.fetch_token(authorization_response=redirect_url)
-    except Exception as exc:  # noqa: BLE001 - foutmelding van de library, bevat geen tokens
+    except Exception as exc:  # noqa: BLE001 - foutmelding van de library, bevat geen code/state/tokens
         return jsonify({"ok": False, "error": str(exc)}), 400
     from scheduler.agenda import GOOGLE_TOKEN_FILE
 

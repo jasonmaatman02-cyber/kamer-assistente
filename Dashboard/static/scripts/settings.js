@@ -365,8 +365,9 @@ function unlockedCards(d) {
       ${g.google ? `
       <button class="btn small" id="gc-connect" style="margin-top:6px"><i class="fa fa-link"></i> Verbind met Google</button>
       <div id="gc-row" hidden style="margin-top:10px">
-        <p class="muted">Open de link, log in met het Google-account dat als "account 2" hierboven staat, en plak hieronder de URL waar je op uitkwam.</p>
-        <div class="field"><input type="text" id="gc-redirect" placeholder="http://127.0.0.1:8000/callback?code=..."></div>
+        <p class="muted">Open de link, log in met het Google-account dat als "account 2" hierboven staat, en plak hieronder de VOLLEDIGE URL waar je op uitkwam (inclusief alles na de ?).</p>
+        <div class="field"><textarea id="gc-redirect" rows="3" style="width:100%;font-family:monospace;font-size:12px"
+          placeholder="http://127.0.0.1:8000/callback?state=...&amp;code=...&amp;scope=..."></textarea></div>
         <button class="btn small primary" id="gc-finish">Koppelen afronden</button>
       </div>` : ""}
     </div>`).join("");
