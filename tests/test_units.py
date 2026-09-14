@@ -921,6 +921,192 @@ def test_presence_retry_never_touches_manual_control(monkeypatch):
     w._tick()
 
 
+# --- presence: Tapo session-timeout -> herauthenticeren + éénmalig retryen - #
+def test_presence_auto_light_normal_action_still_works(monkeypatch):
+    """Basisgedrag ongewijzigd: een gewone, geslaagde actie triggert geen
+    re-auth."""
+    import config
+    from Dashboard.backend.presence import PresenceWorker
+    import Dashboard.backend.presence as presence_mod
+
+    config.set("presence.auto_light_enabled", True)
+    config.set("presence.auto_light_block_after", "")
+
+    w = PresenceWorker()
+    monkeypatch.setattr(presence_mod.S, "lamp_ip", lambda x: "192.168.1.50")
+
+    class WorkingLamp:
+        async def aan(self):
+            return None
+
+    monkeypatch.setattr(presence_mod.S, "lamp", lambda ip: WorkingLamp())
+
+    def must_not_reconnect(ip):
+        raise AssertionError("een normale, geslaagde actie mag geen re-auth triggeren")
+
+    monkeypatch.setattr(presence_mod.S, "reconnect_lamp", must_not_reconnect)
+
+    assert w._auto_light(True) is True
+
+
+def test_presence_session_timeout_triggers_reauth_and_retry(monkeypatch):
+    """SESSION_TIMEOUT -> bestaande verbinding weg, opnieuw inloggen met de
+    bestaande credentials, en de actie éénmalig opnieuw proberen."""
+    import config
+    from Dashboard.backend.presence import PresenceWorker
+    import Dashboard.backend.presence as presence_mod
+
+    config.set("presence.auto_light_enabled", True)
+    config.set("presence.auto_light_block_after", "")
+
+    w = PresenceWorker()
+    monkeypatch.setattr(presence_mod.S, "lamp_ip", lambda x: "192.168.1.50")
+
+    class StaleLamp:
+        async def aan(self):
+            raise RuntimeError(
+                'Tapo(Unauthorized { kind: "SESSION_TIMEOUT", '
+                'description: "Session has expired. Re-authentication is required." })'
+            )
+
+    class FreshLamp:
+        def __init__(self):
+            self.calls = 0
+
+        async def aan(self):
+            self.calls += 1
+
+    fresh = FreshLamp()
+    reconnect_calls = []
+
+    monkeypatch.setattr(presence_mod.S, "lamp", lambda ip: StaleLamp())
+
+    def do_reconnect(ip):
+        reconnect_calls.append(ip)
+        return fresh
+
+    monkeypatch.setattr(presence_mod.S, "reconnect_lamp", do_reconnect)
+
+    assert w._auto_light(True) is True
+    assert reconnect_calls == ["192.168.1.50"]   # precies 1x herauthenticeren
+    assert fresh.calls == 1                      # en de actie is daarna herhaald
+
+
+def test_presence_session_timeout_reauth_failure_is_handled_gracefully(monkeypatch):
+    """Mislukt de re-authenticatie zelf ook (bv. lamp echt offline), dan mag
+    de worker niet crashen -- gewoon als mislukte poging afhandelen."""
+    import config
+    from Dashboard.backend.presence import PresenceWorker
+    import Dashboard.backend.presence as presence_mod
+
+    config.set("presence.auto_light_enabled", True)
+    config.set("presence.auto_light_block_after", "")
+
+    w = PresenceWorker()
+    monkeypatch.setattr(presence_mod.S, "lamp_ip", lambda x: "192.168.1.50")
+
+    class StaleLamp:
+        async def uit(self):
+            raise RuntimeError('Unauthorized { kind: "SESSION_TIMEOUT" }')
+
+    monkeypatch.setattr(presence_mod.S, "lamp", lambda ip: StaleLamp())
+
+    def reconnect_boom(ip):
+        raise RuntimeError("kan niet opnieuw verbinden (lamp onbereikbaar)")
+
+    monkeypatch.setattr(presence_mod.S, "reconnect_lamp", reconnect_boom)
+
+    assert w._auto_light(False) is False   # nette mislukking, geen crash
+
+
+def test_presence_plain_network_error_skips_reauth(monkeypatch):
+    """Een gewone netwerkfout (geen SESSION_TIMEOUT/Unauthorized) mag geen
+    re-auth triggeren -- die blijft gewoon via de bestaande retry lopen."""
+    import config
+    from Dashboard.backend.presence import PresenceWorker
+    import Dashboard.backend.presence as presence_mod
+
+    config.set("presence.auto_light_enabled", True)
+    config.set("presence.auto_light_block_after", "")
+
+    w = PresenceWorker()
+    monkeypatch.setattr(presence_mod.S, "lamp_ip", lambda x: "192.168.1.50")
+
+    class OfflineLamp:
+        async def aan(self):
+            raise OSError("No route to host")
+
+    monkeypatch.setattr(presence_mod.S, "lamp", lambda ip: OfflineLamp())
+
+    def must_not_reconnect(ip):
+        raise AssertionError("een gewone netwerkfout mag geen re-auth triggeren")
+
+    monkeypatch.setattr(presence_mod.S, "reconnect_lamp", must_not_reconnect)
+
+    assert w._auto_light(True) is False   # valt terug op de bestaande tick-retry
+
+
+def test_presence_session_timeout_reauth_bounded_no_endless_loop(monkeypatch):
+    """Blijft de sessie ook na reconnect steeds verlopen, dan blijft het
+    aantal re-auth-pogingen begrensd door de bestaande max-3-retries -- geen
+    eindeloze authenticatie-loop."""
+    import config
+    from Dashboard.backend.presence import PresenceWorker, _MAX_LIGHT_RETRIES
+    import Dashboard.backend.presence as presence_mod
+
+    config.set("presence.consecutive_required", 1)
+    config.set("presence.auto_light_enabled", True)
+    config.set("presence.auto_light_block_after", "")
+
+    w = PresenceWorker()
+    monkeypatch.setattr(w, "_get_frame", lambda: object())
+    monkeypatch.setattr("logic.people_detect.count_people", lambda frame: 1)
+    monkeypatch.setattr(presence_mod.S, "lamp_ip", lambda x: "192.168.1.50")
+
+    class AlwaysStale:
+        async def aan(self):
+            raise RuntimeError('Unauthorized { kind: "SESSION_TIMEOUT" }')
+
+    reconnect_calls = []
+
+    def do_reconnect(ip):
+        reconnect_calls.append(ip)
+        return AlwaysStale()   # blijft ook na reconnect mislukken
+
+    monkeypatch.setattr(presence_mod.S, "lamp", lambda ip: AlwaysStale())
+    monkeypatch.setattr(presence_mod.S, "reconnect_lamp", do_reconnect)
+
+    w._tick()   # overgang: 1e poging + 1 reconnect-poging, allebei mislukt
+    for _ in range(_MAX_LIGHT_RETRIES + 3):   # ruim voorbij het retry-budget
+        w._tick()
+
+    # 1 overgang + max _MAX_LIGHT_RETRIES retries = zoveel _auto_light-aanroepen,
+    # dus precies zoveel (niet meer) reconnect-pogingen -- begrensd, geen loop
+    assert len(reconnect_calls) == 1 + _MAX_LIGHT_RETRIES
+
+
+def test_presence_2130_block_skips_reauth_too(monkeypatch):
+    """De harde 21:30-regel gaat vóór alles -- ook vóór een eventuele
+    re-auth-poging: geblokkeerd betekent geen enkele lamp/reconnect-aanroep."""
+    import config
+    from Dashboard.backend.presence import PresenceWorker
+    import Dashboard.backend.presence as presence_mod
+
+    config.set("presence.auto_light_enabled", True)
+
+    w = PresenceWorker()
+    monkeypatch.setattr(presence_mod, "is_auto_light_blocked", lambda: True)
+
+    def must_not_be_called(*a, **kw):
+        raise AssertionError("na 21:30 mag er geen lamp/reconnect-aanroep gebeuren")
+
+    monkeypatch.setattr(presence_mod.S, "lamp_ip", lambda x: "192.168.1.50")
+    monkeypatch.setattr(presence_mod.S, "lamp", must_not_be_called)
+    monkeypatch.setattr(presence_mod.S, "reconnect_lamp", must_not_be_called)
+
+    assert w._auto_light(True) is True   # geblokkeerd = bewust niets doen, geen fout
+
+
 # --- presence: camera-herstel na reset_services() (settings-save) -------- #
 def test_presence_get_frame_calls_keep_alive_every_tick(monkeypatch):
     """reset_services() (draait bij elke instellingen-opslag) stopt de

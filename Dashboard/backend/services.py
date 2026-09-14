@@ -137,6 +137,22 @@ def drop_lamp(ip: str):
     _lamp_conns.pop(ip, None)
 
 
+def reconnect_lamp(ip: str):
+    """Gooi een (bv. sessie-verlopen) verbinding weg en bouw 'm opnieuw op met
+    dezelfde opgeslagen credentials (geen nieuwe gegevens nodig). Gebruikt
+    dezelfde per-IP lock als :func:`lamp`, zodat twee threads die tegelijk
+    een sessie-timeout tegenkomen niet allebei gelijktijdig gaan
+    herauthenticeren."""
+    from devices.Lights import SlimmeLamp
+
+    with _named_lock(_lamp_locks, ip):
+        _lamp_conns.pop(ip, None)
+        obj = SlimmeLamp(config.secret("TAPO_USER"), config.secret("TAPO_PASSWORD"), ip)
+        asyncio.run(obj.connect())
+        _lamp_conns[ip] = obj
+        return obj
+
+
 def lamp_ip(name_or_index):
     lamps = config.get("devices.lamps", [])
     if isinstance(name_or_index, int) or (isinstance(name_or_index, str) and name_or_index.isdigit()):

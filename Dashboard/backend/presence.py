@@ -44,6 +44,15 @@ _DEFAULT_BLOCK_AFTER = "21:30"
 _MAX_LIGHT_RETRIES = 3
 
 
+def _is_session_timeout(exc: BaseException) -> bool:
+    """De tapo-library (Rust/PyO3, geen eigen Python-exceptieklasse) geeft
+    zo'n fout als tekst terug, bv.:
+    Tapo(Unauthorized { kind: "SESSION_TIMEOUT", description: "..." })
+    Vandaar een tekst-check i.p.v. een except-type."""
+    msg = str(exc)
+    return "SESSION_TIMEOUT" in msg or "Unauthorized" in msg
+
+
 def _parse_hhmm(s: str, default: str = _DEFAULT_BLOCK_AFTER) -> datetime.time | None:
     """'21:30' -> time(21, 30). Lege string/onleesbare waarde -> None (geen blokkade)."""
     s = (s or "").strip()
@@ -228,8 +237,19 @@ class PresenceWorker:
             if not ip:
                 log("LIGHT", "Geen lamp geconfigureerd voor aanwezigheidsautomatisering")
                 return True
-            lamp = S.lamp(ip)
-            asyncio.run(lamp.aan() if on else lamp.uit())
+            try:
+                lamp = S.lamp(ip)
+                asyncio.run(lamp.aan() if on else lamp.uit())
+            except Exception as exc:  # noqa: BLE001
+                if not _is_session_timeout(exc):
+                    raise
+                # Sessie verlopen (niet hetzelfde als de lamp offline/onbereikbaar):
+                # bestaande verbinding weggooien, opnieuw inloggen met de bestaande
+                # config/credentials, en de actie éénmalig opnieuw proberen. Lukt
+                # dat ook niet, dan neemt de gewone retrylogica het hierna over.
+                log("LIGHT", f"Tapo session timeout gedetecteerd ({exc}) — opnieuw authenticeren")
+                lamp = S.reconnect_lamp(ip)
+                asyncio.run(lamp.aan() if on else lamp.uit())
             log("LIGHT", "Automatic light ON" if on else "Automatic light OFF")
             return True
         except Exception as exc:  # noqa: BLE001 - Tapo offline mag de worker niet slopen
