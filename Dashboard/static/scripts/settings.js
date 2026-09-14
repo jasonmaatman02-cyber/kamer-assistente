@@ -57,8 +57,10 @@ const SCHEMA = [
   {
     key: "agenda", title: "Agenda", icon: "fa-calendar-days",
     fields: [
+      { path: "account1_provider", label: "Provider account 1", type: "select", options: ["icloud", "google"],
+        hint: "Welke provider hoort bij het e-mailadres in APPLE_ID_1 (bij Inloggegevens) — icloud gebruikt APPLE_PASSWORD_1, google gebruikt de OAuth-koppeling." },
       { path: "account2_provider", label: "Provider account 2", type: "select", options: ["google", "icloud"],
-        hint: "Account 1 (APPLE_ID_1) is altijd iCloud. Voor account 2 (APPLE_ID_2) kies je hier de echte provider — icloud gebruikt APPLE_PASSWORD_2, google gebruikt de OAuth-koppeling hieronder bij Inloggegevens." },
+        hint: "Welke provider hoort bij het e-mailadres in APPLE_ID_2 — icloud gebruikt APPLE_PASSWORD_2, google gebruikt de OAuth-koppeling." },
     ],
   },
   {

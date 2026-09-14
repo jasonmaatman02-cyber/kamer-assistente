@@ -93,10 +93,11 @@ DEFAULTS: dict = {
     },
     "alarm": {"time": "", "routine": "morning"},   # handmatige dashboard-wekker
     "agenda": {
-        # Account 1 is altijd iCloud/CalDAV (APPLE_ID_1/APPLE_PASSWORD_1).
-        # Account 2 kan een andere provider zijn dan iCloud -- expliciet
-        # instelbaar i.p.v. automatisch aannemen dat elk tweede e-mailadres
-        # een Apple ID is. "google" | "icloud" | "" (account 2 uit).
+        # Beide account-slots hebben een expliciet instelbare provider --
+        # niet aangenomen dat slot 1 per definitie iCloud is, want welk
+        # e-mailadres in welk veld staat is een Settings-detail, geen
+        # architectuurregel. "icloud" | "google" | "" (dat account uit).
+        "account1_provider": "icloud",
         "account2_provider": "google",
     },
     "presence": {

@@ -171,26 +171,32 @@ class GoogleCalendarAccount:
         return [_GoogleCalendarView(service, c["id"], c.get("summary") or self.email) for c in items]
 
 
+def _build_account(id_key: str, password_key: str, provider_config_key: str, default_provider: str):
+    """Bouwt het account voor één slot (1 of 2), met een expliciet instelbare
+    provider per slot -- niet langer aangenomen dat slot 1 per definitie
+    iCloud is. Zo maakt het niet uit welk e-mailadres er in welk
+    APPLE_ID_N-veld staat; de provider bepaalt het gedrag, niet de positie."""
+    provider = (config.get(provider_config_key, default_provider) or "").strip().lower()
+    email = config.secret(id_key)
+    if provider == "icloud":
+        password = config.secret(password_key)
+        if email and password:
+            return ICloudCalDAVAccount(email, password)
+    elif provider == "google":
+        cid, csecret = config.secret("GOOGLE_CLIENT_ID"), config.secret("GOOGLE_CLIENT_SECRET")
+        if email and cid and csecret:
+            return GoogleCalendarAccount(email, cid, csecret)
+    return None
+
+
 def _configured_accounts() -> list:
     accounts = []
-
-    id1, pw1 = config.secret("APPLE_ID_1"), config.secret("APPLE_PASSWORD_1")
-    if id1 and pw1:
-        accounts.append(ICloudCalDAVAccount(id1, pw1))
-
-    provider2 = (config.get("agenda.account2_provider", "google") or "").strip().lower()
-    if provider2 == "icloud":
-        id2, pw2 = config.secret("APPLE_ID_2"), config.secret("APPLE_PASSWORD_2")
-        if id2 and pw2:
-            accounts.append(ICloudCalDAVAccount(id2, pw2))
-    elif provider2 == "google":
-        # APPLE_ID_2 blijft simpelweg "het e-mailadres van account-slot 2" --
-        # ongeacht de provider (voorkomt een destructieve secret-hernoeming).
-        email2 = config.secret("APPLE_ID_2")
-        cid, csecret = config.secret("GOOGLE_CLIENT_ID"), config.secret("GOOGLE_CLIENT_SECRET")
-        if email2 and cid and csecret:
-            accounts.append(GoogleCalendarAccount(email2, cid, csecret))
-
+    for acc in (
+        _build_account("APPLE_ID_1", "APPLE_PASSWORD_1", "agenda.account1_provider", "icloud"),
+        _build_account("APPLE_ID_2", "APPLE_PASSWORD_2", "agenda.account2_provider", "google"),
+    ):
+        if acc is not None:
+            accounts.append(acc)
     return accounts
 
 

@@ -297,6 +297,37 @@ def test_partial_failure_surfaces_via_service_status(monkeypatch):
     assert "familiemaatman17@gmail.com" in err
 
 
+def test_provider_follows_config_not_slot_position(monkeypatch):
+    """Regressie: echt live gebeurd -- de accounts stonden per ongeluk
+    omgewisseld in Settings (slot 1 had het Google-adres, slot 2 het
+    iCloud-adres). De provider hoort te volgen uit agenda.account1_provider/
+    account2_provider, niet uit de aanname 'slot 1 = altijd iCloud'."""
+    import config
+    import scheduler.agenda as agenda_mod
+
+    # slot 1 = Google (dus GEEN CalDAV-poging naar caldav.icloud.com voor
+    # dit adres); slot 2 = iCloud, moet gewoon via CalDAV blijven werken.
+    monkeypatch.setenv("APPLE_ID_1", "familiemaatman17@gmail.com")
+    config.set("agenda.account1_provider", "google")
+    monkeypatch.setenv("GOOGLE_CLIENT_ID", "gcid-123")
+    monkeypatch.setenv("GOOGLE_CLIENT_SECRET", "gcsecret")
+    monkeypatch.setattr(agenda_mod.GoogleCalendarAccount, "calendars",
+                         lambda self: [_FakeCal("Google (slot 1)", [])])
+
+    monkeypatch.setenv("APPLE_ID_2", "jason.maatman@gmail.com")
+    monkeypatch.setenv("APPLE_PASSWORD_2", "aaaa-bbbb-cccc-dddd")
+    config.set("agenda.account2_provider", "icloud")
+    monkeypatch.setattr(agenda_mod, "DAVClient",
+                         _icloud_factory({"jason.maatman@gmail.com": "ok",
+                                           "familiemaatman17@gmail.com": "should_never_be_asked"}))
+
+    cal = agenda_mod.MultiProviderCalendar()
+    assert cal.error is None
+    names = {c.name for c in cal.calendars}
+    assert "Google (slot 1)" in names
+    assert "Agenda van jason.maatman@gmail.com" in names
+
+
 def test_backward_compat_alias_still_importable():
     from scheduler.agenda import AppleCalendarMultiAccount, MultiProviderCalendar
     assert AppleCalendarMultiAccount is MultiProviderCalendar
