@@ -117,6 +117,22 @@ def test_playlist_item_new_vs_old_format():
     assert t.get("type") == "episode"  # wordt overgeslagen
 
 
+def test_spotify_oauth_has_a_timeout(monkeypatch):
+    """SpotifyOAuth's EIGEN requests_timeout (los van sp's requests_timeout)
+    stond niet ingesteld, default None = geen timeout op de token-refresh-
+    call zelf. Zonder deze zou een hangende Spotify-authserver een
+    waitress-workerthread voor altijd kunnen bezet houden. Bouwt geen
+    netwerkverbinding -- SpotifyOAuth() doet pas iets over het netwerk
+    zodra er echt een token opgehaald/ververst wordt; client_id/secret
+    moeten alleen niet-leeg zijn om de constructor te laten slagen."""
+    import config
+    from sound_system.muziek import SpotifyDJ
+
+    monkeypatch.setattr(config, "secret", lambda name, default="": "dummy")
+    dj = SpotifyDJ()
+    assert dj.sp.auth_manager.requests_timeout == 10
+
+
 # --- chat streaming --------------------------------------------------- #
 def test_verwerk_input_stream_plain(monkeypatch):
     import ai.llm as llm

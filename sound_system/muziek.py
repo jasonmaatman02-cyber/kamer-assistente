@@ -27,6 +27,13 @@ class SpotifyDJ:
         # requests_timeout blokkeert een eindeloze hang; retries op de default (3)
         # laten -> een Sonos/SYMFONISK die Spotify traag opsomt (kort 503) valt
         # anders uit sp.devices()
+        #
+        # SpotifyOAuth heeft z'n EIGEN requests_timeout (default None = geen
+        # timeout) voor de losse token-refresh-call -- die loopt niet via
+        # sp's requests_timeout hierboven. Zonder deze expliciet te zetten kan
+        # een hangende Spotify-auth-server een waitress-workerthread voor
+        # altijd bezet houden (elke route die Spotify aanroept ververst het
+        # token via dit pad zodra het verlopen is).
         self.sp = spotipy.Spotify(
             requests_timeout=10,
             auth_manager=SpotifyOAuth(
@@ -36,6 +43,7 @@ class SpotifyDJ:
                 scope=self.scope,
                 open_browser=False,
                 cache_path=_CACHE_PATH,
+                requests_timeout=10,
             ),
         )
 
