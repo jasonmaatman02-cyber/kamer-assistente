@@ -220,10 +220,19 @@ class GoogleCalendarAccount:
         return creds
 
     def calendars(self):
+        import httplib2
+        from google_auth_httplib2 import AuthorizedHttp
         from googleapiclient.discovery import build
 
         creds = self._credentials()
-        service = build("calendar", "v3", credentials=creds, cache_discovery=False)
+        # build(credentials=...) bouwt zelf een httplib2.Http() zonder timeout
+        # (Python-sockets blokkeren dan standaard voor altijd) -- zelfde risico
+        # als de eerder gevonden ontbrekende SpotifyOAuth-timeout. http= en
+        # credentials= mogen niet allebei aan build() -- daarom hier zelf een
+        # AuthorizedHttp met een timeout-bound httplib2.Http opbouwen (zelfde
+        # 15s als ICloudCalDAVAccount hierboven gebruikt).
+        http = AuthorizedHttp(creds, http=httplib2.Http(timeout=15))
+        service = build("calendar", "v3", http=http, cache_discovery=False)
         items = service.calendarList().list().execute().get("items", [])
         return [_GoogleCalendarView(service, c["id"], c.get("summary") or self.email) for c in items]
 

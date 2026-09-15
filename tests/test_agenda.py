@@ -331,3 +331,48 @@ def test_provider_follows_config_not_slot_position(monkeypatch):
 def test_backward_compat_alias_still_importable():
     from scheduler.agenda import AppleCalendarMultiAccount, MultiProviderCalendar
     assert AppleCalendarMultiAccount is MultiProviderCalendar
+
+
+# --------------------------------------------------------------------------- #
+# 9. Google Calendar HTTP-timeout (ontbrak eerder, zelfde risico als de
+#    eerder gevonden ontbrekende SpotifyOAuth-timeout)
+# --------------------------------------------------------------------------- #
+def test_google_calendar_http_transport_has_a_timeout(monkeypatch):
+    """build(credentials=...) bouwt zelf een httplib2.Http() ZONDER timeout --
+    een onbereikbare/trage Google-API zou dan een waitress-workerthread voor
+    altijd kunnen bezet houden (elke agenda-aanroep gaat hierlangs). Controleert
+    dat calendars() nu zelf een timeout-bound AuthorizedHttp opbouwt en die aan
+    build() doorgeeft i.p.v. credentials= rechtstreeks."""
+    import scheduler.agenda as agenda_mod
+
+    account = agenda_mod.GoogleCalendarAccount("test@example.com", "cid", "csecret")
+    monkeypatch.setattr(account, "_credentials", lambda: object())
+
+    captured = {}
+
+    class FakeService:
+        def calendarList(self):
+            class _L:
+                def list(self_inner):
+                    class _E:
+                        def execute(self_inner2):
+                            return {"items": []}
+                    return _E()
+            return _L()
+
+    def fake_build(serviceName, version, http=None, credentials=None, cache_discovery=True):
+        assert credentials is None, "http= en credentials= mogen niet allebei aan build()"
+        captured["http"] = http
+        return FakeService()
+
+    # calendars() doet 'from googleapiclient.discovery import build' LOKAAL
+    # (bewust, zie de docstring van GoogleCalendarAccount) -- monkeypatchen
+    # moet dus op de module zelf, niet op scheduler.agenda.
+    import googleapiclient.discovery
+    monkeypatch.setattr(googleapiclient.discovery, "build", fake_build)
+
+    account.calendars()
+
+    http = captured.get("http")
+    assert http is not None, "build() had een http= transport moeten krijgen"
+    assert http.http.timeout == 15
