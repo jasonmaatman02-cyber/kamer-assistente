@@ -236,6 +236,14 @@ def chat_stream(messages, tools=None):
         else:
             yield {"type": "done", "content": content}
     except Exception as exc:  # noqa: BLE001
+        if content:
+            # Er is al een deel van het antwoord gestreamd (de gebruiker ziet
+            # dat al staan) -- een volledige niet-streamende fallback-aanroep
+            # zou daar een TWEEDE, losstaand antwoord achteraan plakken
+            # (verwarrende/dubbele tekst). Rond netjes af met wat er al is.
+            print(f"[llm] stream afgebroken na gedeeltelijk antwoord: {exc}")
+            yield {"type": "done", "content": content}
+            return
         res = chat(messages, tools)  # niet-streamende fallback (met OpenAI-fallback erin)
         if res.get("tool_calls"):
             yield {"type": "tool_calls", "calls": res["tool_calls"]}
