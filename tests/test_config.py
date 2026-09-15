@@ -28,6 +28,40 @@ def test_get_returns_a_copy_not_the_cache():
     assert fresh[0]["ip"] != "9.9.9.9"
 
 
+def test_persist_is_atomic_original_file_survives_a_failed_write(tmp_path, monkeypatch):
+    """_persist() moet schrijven via een tmp-bestand + os.replace(), niet
+    direct naar settings.json -- anders kan een onderbreking halverwege
+    (stroomuitval, kill -9) een leeg/kapot settings.json achterlaten en
+    valt de HELE configuratie stil terug op DEFAULTS. Simuleert een crash
+    tijdens het schrijven van het tmp-bestand en controleert dat het
+    bestaande settings.json dan volledig intact blijft."""
+    import config.settings as settings_mod
+
+    settings_file = tmp_path / "s.json"
+    monkeypatch.setattr(settings_mod, "SETTINGS_FILE", settings_file)
+    config.reload()
+    config.set("camera.fps", 12)
+    original = settings_file.read_text()
+    assert '"fps": 12' in original
+
+    from pathlib import Path
+
+    real_write_text = Path.write_text
+
+    def boom_write_text(self, *a, **kw):
+        if self == settings_file.with_suffix(".json.tmp"):
+            raise OSError("gesimuleerde crash tijdens schrijven")
+        return real_write_text(self, *a, **kw)
+
+    monkeypatch.setattr(Path, "write_text", boom_write_text)
+    config.set("camera.fps", 99)  # _persist() mag hier intern falen, niet crashen
+
+    assert settings_file.read_text() == original, \
+        "een mislukte write mag het bestaande settings.json niet aanraken"
+    assert not settings_file.with_suffix(".json.tmp").exists(), \
+        "geen half geschreven tmp-bestand mag blijven liggen"
+
+
 def test_secret_status_masks(monkeypatch):
     monkeypatch.setenv("OPENAI_API_KEY", "sk-verysecretvalue123")
     monkeypatch.setenv("EMAIL_ADDRESS", "me@example.com")

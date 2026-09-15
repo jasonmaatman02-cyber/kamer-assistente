@@ -248,9 +248,17 @@ def _persist(tree: dict) -> None:
     # Only write the diff against DEFAULTS so settings.json stays readable.
     diff = _diff(DEFAULTS, tree)
     try:
-        SETTINGS_FILE.write_text(
-            json.dumps(diff, indent=2, ensure_ascii=False), encoding="utf-8"
-        )
+        # Atomisch schrijven (tmp-bestand + os.replace) i.p.v. direct naar
+        # settings.json -- write_text() opent met truncate-then-write, dus
+        # een onderbreking halverwege (stroomuitval, kill -9, volle schijf)
+        # kan een leeg/kapot settings.json achterlaten. Alle instellingen
+        # (camera-drempel, 21:30-regel, wake-woorden, AI-model, ...) vallen
+        # dan bij de volgende load() stil terug op DEFAULTS. os.replace() is
+        # op zowel Linux als Windows een atomaire rename, geen tussenstaat
+        # mogelijk. Zelfde patroon als logic/notes.py::save_notes().
+        tmp = SETTINGS_FILE.with_suffix(".json.tmp")
+        tmp.write_text(json.dumps(diff, indent=2, ensure_ascii=False), encoding="utf-8")
+        os.replace(tmp, SETTINGS_FILE)
     except OSError as exc:
         print(f"[config] kon settings.json niet schrijven: {exc}")
 
