@@ -11,6 +11,12 @@ class AlarmScheduler:
         self.callback = callback
         self.alarm_thread = None
         self._stop_event = threading.Event()
+        # Beschermt de check-then-act op alarm_thread/alarm_time hieronder --
+        # zonder lock konden twee (bijna-)gelijktijdige set_alarm()-aanroepen
+        # (bv. een dubbele form-submit) allebei de oude thread als "niet meer
+        # levend genoeg om te stoppen" zien en zo allebei een eigen wekker-
+        # thread starten. Zelfde patroon als PresenceWorker.start() elders.
+        self._lock = threading.Lock()
 
     def set_alarm(self, time_str=None, when: datetime.datetime | None = None):
         """Zet een wekker. Geef 'HH:MM' (ook '7 uur 30' / '7.30' werkt) via
@@ -32,18 +38,19 @@ class AlarmScheduler:
             alarm_dt = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
             if alarm_dt <= now:
                 alarm_dt += datetime.timedelta(days=1)
-        self.alarm_time = alarm_dt
 
         log("Alarm", f"Wekker ingesteld op {alarm_dt.strftime('%Y-%m-%d %H:%M')}")
         print(f"Wekker ingesteld op {alarm_dt.strftime('%H:%M')}")
 
-        if self.alarm_thread and self.alarm_thread.is_alive():
-            self._stop_event.set()
-            self.alarm_thread.join()
+        with self._lock:
+            self.alarm_time = alarm_dt
+            if self.alarm_thread and self.alarm_thread.is_alive():
+                self._stop_event.set()
+                self.alarm_thread.join()
 
-        self._stop_event.clear()
-        self.alarm_thread = threading.Thread(target=self._wait_for_alarm, daemon=True)
-        self.alarm_thread.start()
+            self._stop_event.clear()
+            self.alarm_thread = threading.Thread(target=self._wait_for_alarm, daemon=True)
+            self.alarm_thread.start()
         return alarm_dt
 
     def _wait_for_alarm(self):
@@ -69,10 +76,11 @@ class AlarmScheduler:
                 log("Alarm", f"Fout in wekker-callback: {exc}")
 
     def cancel_alarm(self):
-        self._stop_event.set()
-        if self.alarm_thread and self.alarm_thread.is_alive():
-            self.alarm_thread.join(timeout=2)
-        self.alarm_time = None
+        with self._lock:
+            self._stop_event.set()
+            if self.alarm_thread and self.alarm_thread.is_alive():
+                self.alarm_thread.join(timeout=2)
+            self.alarm_time = None
         log("Alarm", "Wekker geannuleerd")
         print("Wekker geannuleerd.")
 

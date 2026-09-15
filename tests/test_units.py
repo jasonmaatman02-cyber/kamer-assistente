@@ -33,6 +33,35 @@ def test_alarm_fires_once_then_resets():
     assert a.check_alarm() is False
 
 
+def test_set_alarm_concurrent_calls_leave_one_consistent_thread():
+    """Regressie: zonder lock konden twee (bijna-)gelijktijdige set_alarm()-
+    aanroepen (bv. een dubbele form-submit) allebei de oude thread nog
+    'levend genoeg' zien en zo allebei een eigen wekker-thread starten. Met
+    de lock is de eindtoestand altijd consistent: precies één levende
+    thread, en die hoort bij de laatst gewonnen aanroep."""
+    from scheduler.alarm import AlarmScheduler
+    import threading
+
+    a = AlarmScheduler(lambda: None)
+    barrier = threading.Barrier(2)
+
+    def setter(minutes):
+        barrier.wait(timeout=2)
+        a.set_alarm(when=datetime.datetime.now() + datetime.timedelta(minutes=minutes))
+
+    t1 = threading.Thread(target=setter, args=(10,))
+    t2 = threading.Thread(target=setter, args=(20,))
+    t1.start()
+    t2.start()
+    t1.join(timeout=5)
+    t2.join(timeout=5)
+
+    assert a.alarm_thread is not None
+    assert a.alarm_thread.is_alive()
+    a.cancel_alarm()
+    assert not a.alarm_thread.is_alive()
+
+
 # --- weather transform -------------------------------------------------- #
 def test_owm_transform_shape():
     from weer.weer import WeerAPI  # noqa: F401
