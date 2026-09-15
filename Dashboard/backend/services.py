@@ -25,6 +25,7 @@ _data_cache: dict = {}            # key -> (value, expires_at) — weer/agenda v
 _HEALTH_TTL = 60
 _locks_lock = threading.Lock()    # beschermt _build_locks / _lamp_locks zelf
 _build_locks: dict = {}           # name -> Lock (per service, zodat er 4 tegelijk kunnen bouwen)
+_data_cache_locks: dict = {}      # key -> Lock (voorkomt cache-stampede in _cached())
 
 
 def _named_lock(store: dict, key: str) -> threading.Lock:
@@ -88,6 +89,7 @@ def reset_services():
         _lamp_conns.clear()
         _lamp_locks.clear()
         _build_locks.clear()
+        _data_cache_locks.clear()
     try:
         from Dashboard.backend.camera_api import camera
 
@@ -424,10 +426,24 @@ def _cached(key: str, ttl: float, produce):
     hit = _data_cache.get(key)
     if hit and hit[1] >= now:
         return hit[0]
-    val = produce()
-    # een foutresultaat kort cachen zodat we niet elke 10s opnieuw hameren
-    _data_cache[key] = (val, now + (20 if isinstance(val, dict) and val.get("error") else ttl))
-    return val
+    # Cache-stampede: zonder lock zouden meerdere gelijktijdige /api/overview-
+    # aanvragen (meerdere tabbladen, of gewoon de ~10s-poll die net samenvalt
+    # met een verlopen cache) allemaal tegelijk produce() aanroepen -- elk
+    # zijn EIGEN, volledig aparte live aanroep naar Google/iCloud/weer doen
+    # i.p.v. dat er maar één de cache vult en de rest meelift. Live gezien:
+    # 12 gelijktijdige /api/overview-aanvragen op de Pi triggerden 6+
+    # aparte, gelijktijdige Google Calendar-verbindingen, met SSL-fouten en
+    # timeouts tot gevolg. Zelfde dubbel-gecontroleerde locking als svc()
+    # hierboven al gebruikt voor het bouwen van een service.
+    with _named_lock(_data_cache_locks, key):
+        now = time.time()
+        hit = _data_cache.get(key)
+        if hit and hit[1] >= now:
+            return hit[0]
+        val = produce()
+        # een foutresultaat kort cachen zodat we niet elke 10s opnieuw hameren
+        _data_cache[key] = (val, now + (20 if isinstance(val, dict) and val.get("error") else ttl))
+        return val
 
 
 def weather_data(city=None, fresh: bool = False) -> dict:

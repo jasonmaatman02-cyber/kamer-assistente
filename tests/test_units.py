@@ -486,6 +486,53 @@ def test_weather_data_is_cached(monkeypatch):
     assert calls["n"] == 2
 
 
+def test_cached_does_not_stampede_on_concurrent_miss():
+    """Live op de Pi gezien: 12 gelijktijdige /api/overview-aanvragen tijdens
+    een verlopen cache triggerden 6+ aparte, gelijktijdige live Google
+    Calendar-verbindingen (i.p.v. dat er één de cache vult en de rest
+    meelift) -- met SSL-fouten en timeouts tot gevolg.
+
+    De start_barrier ligt VOOR _cached() (dwingt alle N threads zo gelijk
+    mogelijk te starten); de korte sleep in produce() houdt de lock lang
+    genoeg vast dat de andere N-1 threads 'm ook echt tegenkomen. Een
+    barrier BINNEN produce() zou hier fout zijn: met de fix draait
+    produce() geserialiseerd (nooit gelijktijdig), dus zou zo'n barrier
+    nooit door genoeg threads gehaald worden."""
+    import threading
+    import time as _time
+
+    from Dashboard.backend import services
+
+    services._data_cache.clear()
+    if hasattr(services, "_data_cache_locks"):
+        services._data_cache_locks.clear()
+    N = 10
+    start_barrier = threading.Barrier(N)
+    calls = {"n": 0}
+    calls_lock = threading.Lock()
+
+    def slow_produce():
+        with calls_lock:
+            calls["n"] += 1
+        _time.sleep(0.2)
+        return {"ok": True}
+
+    results = [None] * N
+
+    def worker(i):
+        start_barrier.wait(timeout=5)
+        results[i] = services._cached("stampede-test", 300, slow_produce)
+
+    threads = [threading.Thread(target=worker, args=(i,)) for i in range(N)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(timeout=5)
+
+    assert calls["n"] == 1, f"produce() had maar 1x mogen draaien, draaide {calls['n']}x"
+    assert all(r == {"ok": True} for r in results)
+
+
 def test_service_status_probes_run_parallel(monkeypatch):
     import time as _t
 
