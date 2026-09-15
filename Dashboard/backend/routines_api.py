@@ -8,7 +8,7 @@ import config
 from Dashboard.backend import services as S
 from Dashboard.backend.auth import require_password
 from logic.logger import log
-from scheduler.alarm import AlarmScheduler
+from scheduler.alarm_manager import alarm as _alarm
 
 routines_bp = Blueprint("routines", __name__)
 
@@ -152,7 +152,13 @@ def _alarm_fire():
         log("Alarm", f"Wekker-routine mislukte: {exc}")
 
 
-_alarm = AlarmScheduler(callback=_alarm_fire)
+# Gedeeld AlarmScheduler-object (scheduler/alarm_manager.py) -- zo ziet en
+# kan het dashboard ook een wekker annuleren/overschrijven die via de
+# spraakflow (scheduler/routines.py::bedtime_routine) is gezet, en
+# andersom. Voorheen had elk zijn eigen AlarmScheduler-instantie, waardoor
+# een spraak-wekker onzichtbaar en niet te annuleren was vanaf het
+# dashboard, en een dashboard-wekker een spraak-wekker niet verving.
+_alarm.callback = _alarm_fire
 
 # Her-arm een bewaarde wekker na een herstart van de service.
 _saved = config.get("alarm.time")

@@ -344,3 +344,26 @@ def test_alarm_set_and_clear(client):
     assert client.delete("/api/alarm").get_json()["success"] is True
     assert client.get("/api/alarm").get_json()["set"] is False
     routines_api._alarm.cancel_alarm()
+
+
+def test_voice_set_alarm_is_visible_and_cancelable_from_dashboard(client):
+    """scheduler/routines.py::bedtime_routine() zet een wekker via
+    scheduler.alarm_manager.set_alarm() (de spraak-Q&A-flow, geen dashboard-
+    request). Die moet op hetzelfde gedeelde AlarmScheduler-object landen als
+    het dashboard gebruikt -- anders is een spraak-wekker onzichtbaar en niet
+    te annuleren vanaf het dashboard (en andersom kan een dashboard-wekker
+    'm niet vervangen bij het zetten van een nieuwe)."""
+    from scheduler.alarm_manager import set_alarm as voice_set_alarm
+
+    try:
+        scheduled = voice_set_alarm("08:15", lambda: None)
+        assert scheduled is not None
+
+        got = client.get("/api/alarm").get_json()
+        assert got["set"] is True and got["time"] == "08:15"
+
+        assert client.delete("/api/alarm").get_json()["success"] is True
+        assert client.get("/api/alarm").get_json()["set"] is False
+    finally:
+        from scheduler.alarm_manager import alarm as shared_alarm
+        shared_alarm.cancel_alarm()
