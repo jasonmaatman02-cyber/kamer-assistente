@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import functools
 import secrets as _secrets
+import threading
 import time
 
 from flask import Blueprint, jsonify, render_template, request
@@ -18,6 +19,14 @@ from flask import Blueprint, jsonify, render_template, request
 import config
 
 auth_bp = Blueprint("auth", __name__)
+
+# Beschermt de check-then-increment op _otp['fails']/_pw_fails/_code_rl
+# hieronder -- zonder lock konden een paar (bijna-)gelijktijdige aanvragen
+# (bv. een gescript brute-force-poging, of gewoon een paar tabbladen) allemaal
+# de oude, nog-niet-verhoogde teller zien en zo de lockout na
+# _PW_MAX_FAILS/_OTP_MAX_FAILS-pogingen omzeilen, en request_code()'s
+# cooldown/dagelijkse limiet (die een ECHTE mail verstuurt) net zo goed.
+_auth_lock = threading.Lock()
 
 # --------------------------------------------------------------------------- #
 # OTP unlock (secrets editor)
@@ -79,10 +88,11 @@ def request_code():
                      "RECEIVER eenmalig in via het .env-bestand op de Pi.",
         }), 400
 
-    blocked = _code_rate_limited()
-    if blocked:
-        return jsonify({"ok": False, "error": blocked}), 429
-    _code_rl.update(last=time.time(), count=_code_rl["count"] + 1)
+    with _auth_lock:
+        blocked = _code_rate_limited()
+        if blocked:
+            return jsonify({"ok": False, "error": blocked}), 429
+        _code_rl.update(last=time.time(), count=_code_rl["count"] + 1)
 
     from logic.mail_sender import send_email_message
 
@@ -100,16 +110,17 @@ def request_code():
 
 @auth_bp.route("/api/auth/verify", methods=["POST"])
 def verify():
-    if _otp["fails"] >= _OTP_MAX_FAILS:
-        _otp.update(code=None, expires=0.0)
-        return jsonify({"ok": False, "error": "Te veel pogingen. Vraag een nieuwe code aan."}), 429
     code = (request.get_json(silent=True) or {}).get("code", "").strip()
-    if not _otp["code"] or time.time() > _otp["expires"] or code != _otp["code"]:
-        _otp["fails"] += 1
-        return jsonify({"ok": False, "error": "Code ongeldig of verlopen"}), 401
-    _otp.update(code=None, expires=0.0, fails=0)
-    token = _secrets.token_urlsafe(24)
-    _unlock_sessions[token] = time.time() + _UNLOCK_TTL
+    with _auth_lock:
+        if _otp["fails"] >= _OTP_MAX_FAILS:
+            _otp.update(code=None, expires=0.0)
+            return jsonify({"ok": False, "error": "Te veel pogingen. Vraag een nieuwe code aan."}), 429
+        if not _otp["code"] or time.time() > _otp["expires"] or code != _otp["code"]:
+            _otp["fails"] += 1
+            return jsonify({"ok": False, "error": "Code ongeldig of verlopen"}), 401
+        _otp.update(code=None, expires=0.0, fails=0)
+        token = _secrets.token_urlsafe(24)
+        _unlock_sessions[token] = time.time() + _UNLOCK_TTL
     return jsonify({"ok": True, "token": token, "ttl": _UNLOCK_TTL})
 
 
@@ -167,20 +178,21 @@ def require_password(fn):
 @auth_bp.route("/api/login", methods=["POST"])
 def login():
     now = time.time()
-    if _pw_fails["n"] >= _PW_MAX_FAILS and now < _pw_fails["until"]:
-        return jsonify({"ok": False, "error": "Te veel pogingen, wacht even."}), 429
     given = (request.get_json(silent=True) or {}).get("password", "")
     want = config.secret("DASHBOARD_PASSWORD")
-    if not want:
-        return jsonify({"ok": True, "note": "geen wachtwoord ingesteld"})
-    if not _secrets.compare_digest(str(given), str(want)):
-        _pw_fails["n"] += 1
-        _pw_fails["until"] = now + _PW_LOCK
-        return jsonify({"ok": False, "error": "Onjuist wachtwoord"}), 401
-    _pw_fails.update(n=0, until=0.0)
-    days = _session_days()
-    tok = _secrets.token_urlsafe(32)
-    _pw_sessions[tok] = now + (days * 86400 if days else _PW_SESSION_CAP)
+    with _auth_lock:
+        if _pw_fails["n"] >= _PW_MAX_FAILS and now < _pw_fails["until"]:
+            return jsonify({"ok": False, "error": "Te veel pogingen, wacht even."}), 429
+        if not want:
+            return jsonify({"ok": True, "note": "geen wachtwoord ingesteld"})
+        if not _secrets.compare_digest(str(given), str(want)):
+            _pw_fails["n"] += 1
+            _pw_fails["until"] = now + _PW_LOCK
+            return jsonify({"ok": False, "error": "Onjuist wachtwoord"}), 401
+        _pw_fails.update(n=0, until=0.0)
+        days = _session_days()
+        tok = _secrets.token_urlsafe(32)
+        _pw_sessions[tok] = now + (days * 86400 if days else _PW_SESSION_CAP)
     resp = jsonify({"ok": True, "persistent": bool(days)})
     kw = {"httponly": True, "samesite": "Lax"}
     if days:                       # anders: sessiecookie -> weg bij browser sluiten

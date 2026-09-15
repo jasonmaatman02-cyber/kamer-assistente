@@ -306,6 +306,64 @@ def test_stale_login_and_unlock_tokens_get_swept(client, monkeypatch):
     assert auth._unlock_sessions == {}
 
 
+def test_login_lockout_is_race_safe_under_concurrent_attempts(monkeypatch):
+    """Regressie: login() deed check-then-increment op _pw_fails zonder
+    lock -- een paar (bijna-)gelijktijdige foute pogingen (bv. een simpel
+    gescripte brute-force-poging; waitress draait 16 workerthreads) konden
+    allemaal de NOG-NIET-verhoogde teller zien en zo de lockout na
+    _PW_MAX_FAILS pogingen omzeilen. Elke thread krijgt een eigen
+    test_client (Flask's testclient is niet thread-safe om één instantie
+    gelijktijdig te gebruiken), net als de bestaande routines-concurrency-
+    test hierboven.
+
+    De check-then-increment zelf is te snel (een paar dict-operaties) om
+    het venster betrouwbaar met alleen een Barrier te raken -- een korte
+    sleep in compare_digest (net als de eerder gevonden cache-stampede-test
+    een sleep in produce() gebruikte) houdt alle threads lang genoeg ná de
+    lockout-check en vóór de increment om de race deterministisch te maken."""
+    import threading
+    import time as _time
+
+    from Dashboard.backend import auth
+    from Dashboard.backend.main import app
+
+    monkeypatch.setenv("DASHBOARD_PASSWORD", "geheim123")
+    auth._pw_fails.update(n=0, until=0.0)
+    monkeypatch.setattr(auth._secrets, "compare_digest",
+                         lambda a, b: (_time.sleep(0.1), False)[1])
+
+    N = 20
+    barrier = threading.Barrier(N)
+    results = [None] * N
+
+    def worker(i):
+        barrier.wait(timeout=5)
+        with app.test_client() as c:
+            r = c.post("/api/login", json={"password": "fout-wachtwoord"})
+            results[i] = r.status_code
+
+    threads = [threading.Thread(target=worker, args=(i,)) for i in range(N)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(timeout=5)
+
+    try:
+        unauthorized = results.count(401)
+        locked_out = results.count(429)
+        assert unauthorized + locked_out == N, f"onverwachte statuscodes: {results}"
+        assert unauthorized == auth._PW_MAX_FAILS, (
+            f"precies {auth._PW_MAX_FAILS} pogingen hadden een 401 (foute wachtwoord) "
+            f"moeten krijgen en de rest 429 (locked out), kreeg {unauthorized}x 401"
+        )
+        assert auth._pw_fails["n"] == auth._PW_MAX_FAILS
+    finally:
+        # deze test zet expres een lockout -- mag niet blijven hangen voor
+        # een latere test die ook inlogt (_pw_fails wordt niet door de
+        # autouse-fixture gereset, zelfde reden als _pw_sessions hierboven)
+        auth._pw_fails.update(n=0, until=0.0)
+
+
 def test_settings_post_needs_password(client, monkeypatch):
     monkeypatch.setenv("DASHBOARD_PASSWORD", "geheim")
     assert client.post("/api/settings", json={"camera": {"fps": 9}}).status_code == 401
