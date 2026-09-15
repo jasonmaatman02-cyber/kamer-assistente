@@ -340,6 +340,22 @@ def wake_device(sp, device_id):
         _degrade("wake_device", exc)
 
 
+def start_playback(sp, **kwargs):
+    """Speel af op het beste apparaat: het actieve, anders de Pi als bewuste
+    standaard (active_device_id()), nooit een willekeurig ander apparaat.
+    Gedeeld door Dashboard/backend/media_api.py (dashboard-knoppen) EN
+    sound_system/muziek.py::speel_muziek() (spraak/AI-commando's als "speel
+    muziek af") zodat playback zonder expliciet gekozen apparaat overal
+    consistent naar de Pi valt, i.p.v. aan Spotify's eigen ondoorzichtige
+    standaardkeuze over te laten (dat kon voorheen de telefoon/laptop van
+    de gebruiker zijn i.p.v. de Pi, afhankelijk van wat Spotify zelf koos)."""
+    dev = active_device_id(sp)
+    if dev:
+        wake_device(sp, dev)
+        kwargs["device_id"] = dev
+    sp.start_playback(**kwargs)
+
+
 # --------------------------------------------------------------------------- #
 # Data helpers (used by the individual routes and by /api/overview)
 # --------------------------------------------------------------------------- #

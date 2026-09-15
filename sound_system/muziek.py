@@ -74,7 +74,14 @@ class SpotifyDJ:
         if not items:
             return False
         track = items[0]
-        ok = self._call("afspelen", self.sp.start_playback, uris=[track["uri"]])
+        # Zelfde apparaat-standaardgedrag als de dashboard-knoppen (zie
+        # Dashboard.backend.services.start_playback): actief apparaat, anders
+        # bewust de Pi, nooit een willekeurig ander apparaat. Lokale import --
+        # sound_system/muziek.py wordt ook zonder de dashboard-laag gebruikt
+        # (bv. de losse spraakassistent-modus).
+        from Dashboard.backend import services as S
+
+        ok = self._call("afspelen", S.start_playback, self.sp, uris=[track["uri"]])
         if ok:
             print(f"Afspelen gestart: {track['name']} van {track['artists'][0]['name']}")
         return ok

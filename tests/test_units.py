@@ -103,6 +103,46 @@ def test_playlists_info_survives_malformed_items():
     assert out[1]["tracks_count"] == 0
 
 
+def test_speel_muziek_defaults_to_pi_like_the_dashboard_does(monkeypatch):
+    """speel_muziek() (het spraak/AI-commando 'speel X af') riep voorheen
+    self.sp.start_playback() rechtstreeks aan, zonder device_id -- dat liet
+    Spotify's eigen, ondoorzichtige standaardkeuze bepalen waar het naartoe
+    ging, in plaats van hetzelfde 'actief, anders bewust de Pi'-gedrag als
+    de dashboard-knoppen (media_api.py::_start_playback). Nu gebruiken
+    beide dezelfde services.start_playback()."""
+    import config
+    from Dashboard.backend import services
+    from sound_system.muziek import SpotifyDJ
+
+    config.set("spotify.pi_device_name", "Kamer-AI")
+    started = {}
+    woken = {}
+    monkeypatch.setattr(services, "wake_device", lambda sp, d: woken.setdefault("id", d))
+
+    class FakeSp:
+        def search(self, q, type, limit):
+            return {"tracks": {"items": [
+                {"uri": "spotify:track:1", "name": "Nummer", "artists": [{"name": "Artiest"}]},
+            ]}}
+        def current_playback(self):
+            return None   # niks actief
+        def devices(self):
+            return {"devices": [
+                {"id": "laptop-1", "name": "JASON_LAPTOP4", "type": "Computer"},
+                {"id": "pi-1", "name": "Kamer-AI", "type": "Speaker"},
+            ]}
+        def start_playback(self, **kw):
+            started.update(kw)
+
+    dj = SpotifyDJ.__new__(SpotifyDJ)
+    dj.sp = FakeSp()
+    ok = dj.speel_muziek("een liedje")
+
+    assert ok is True
+    assert started["device_id"] == "pi-1"
+    assert woken["id"] == "pi-1"
+
+
 def test_playlist_item_new_vs_old_format():
     """Spotify zet de track soms onder 'item', soms onder 'track'."""
     new = {"item": {"type": "track", "uri": "spotify:track:1", "name": "A",

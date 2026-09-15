@@ -17,19 +17,11 @@ def _no_device_response():
 
 
 def _start_playback(sp, **kwargs):
-    """Speel af op het beste apparaat.
-
-    - Is er een apparaat mét id -> dat expliciet wekken en gebruiken.
-    - Geen id (bv. een Sonos die via z'n eigen Spotify speelt) -> zónder
-      device_id afspelen; Spotify stuurt het dan naar het actieve apparaat
-      (dat kan die Sonos zijn). Zoals de oude versie het deed.
-    - Vindt Spotify écht niks -> NO_ACTIVE_DEVICE, afgevangen door _play_error.
-    """
-    dev = S.active_device_id(sp)
-    if dev:
-        S.wake_device(sp, dev)
-        kwargs["device_id"] = dev
-    sp.start_playback(**kwargs)
+    """Dunne wrapper -- zie services.start_playback() voor de logica
+    (gedeeld met sound_system/muziek.py::speel_muziek(), zodat dashboard-
+    knoppen en spraak/AI-commando's hetzelfde apparaat-standaardgedrag
+    hebben)."""
+    S.start_playback(sp, **kwargs)
 
 
 def _play_error(exc):
