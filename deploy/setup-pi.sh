@@ -41,11 +41,12 @@ else
   echo "==> raspotify al geinstalleerd"
 fi
 
-if [ -f /etc/raspotify/conf ]; then
+if sudo test -f /etc/raspotify/conf; then
   echo "==> raspotify configureren (/etc/raspotify/conf)"
   # Naam waaronder de Pi in de Spotify-app verschijnt. Wil je een andere naam,
   # pas 'm gewoon aan in /etc/raspotify/conf en herstart: sudo systemctl restart raspotify
-  if grep -q '^#\?LIBRESPOT_NAME=' /etc/raspotify/conf; then
+  # (bestand is niet wereld-leesbaar -- vandaar overal sudo, ook voor de check hierboven)
+  if sudo grep -q '^#\?LIBRESPOT_NAME=' /etc/raspotify/conf; then
     sudo sed -i 's/^#\?LIBRESPOT_NAME=.*/LIBRESPOT_NAME="Kamer-AI"/' /etc/raspotify/conf
   else
     echo 'LIBRESPOT_NAME="Kamer-AI"' | sudo tee -a /etc/raspotify/conf >/dev/null
