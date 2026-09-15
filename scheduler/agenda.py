@@ -30,6 +30,7 @@ werkt ongewijzigd voor beide providers.
 """
 from __future__ import annotations
 
+import os
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -216,7 +217,15 @@ class GoogleCalendarAccount:
         creds = Credentials.from_authorized_user_file(str(token_path), GOOGLE_SCOPES)
         if creds.expired and creds.refresh_token:
             creds.refresh(Request())
-            token_path.write_text(creds.to_json(), encoding="utf-8")
+            # Atomisch (tmp + os.replace) i.p.v. direct write_text -- dit
+            # gebeurt bij ELKE tokenverversing (niet alleen bij de eenmalige
+            # koppeling), dus een onderbreking halverwege zou het token-
+            # bestand kunnen corrumperen en de Google-agenda permanent
+            # breken tot een handmatige herkoppeling. Zelfde patroon als
+            # config/settings.py::_persist().
+            tmp = token_path.with_suffix(".json.tmp")
+            tmp.write_text(creds.to_json(), encoding="utf-8")
+            os.replace(tmp, token_path)
         return creds
 
     def calendars(self):

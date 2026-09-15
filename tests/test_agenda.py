@@ -376,3 +376,50 @@ def test_google_calendar_http_transport_has_a_timeout(monkeypatch):
     http = captured.get("http")
     assert http is not None, "build() had een http= transport moeten krijgen"
     assert http.http.timeout == 15
+
+
+# --------------------------------------------------------------------------- #
+# 10. google_calendar_token.json wordt atomisch weggeschreven bij elke
+#     tokenverversing (niet alleen bij de eenmalige koppeling) -- zelfde
+#     risico als de eerder gevonden niet-atomische settings.json-write.
+# --------------------------------------------------------------------------- #
+def test_google_token_refresh_writes_atomically(monkeypatch, tmp_path):
+    import scheduler.agenda as agenda_mod
+
+    token_path = tmp_path / "google_calendar_token.json"
+    original = '{"token": "old-token", "refresh_token": "rt"}'
+    token_path.write_text(original, encoding="utf-8")
+    monkeypatch.setattr(agenda_mod, "GOOGLE_TOKEN_FILE", token_path)
+
+    account = agenda_mod.GoogleCalendarAccount("test@example.com", "cid", "csecret")
+
+    class FakeCreds:
+        expired = True
+        refresh_token = "rt"
+
+        def refresh(self, request):
+            pass
+
+        def to_json(self):
+            return '{"token": "new-token", "refresh_token": "rt"}'
+
+    import google.oauth2.credentials as gcred
+    monkeypatch.setattr(gcred.Credentials, "from_authorized_user_file", lambda *a, **kw: FakeCreds())
+
+    from pathlib import Path
+    real_write_text = Path.write_text
+
+    def boom_write_text(self, *a, **kw):
+        if self == token_path.with_suffix(".json.tmp"):
+            raise OSError("gesimuleerde crash tijdens schrijven")
+        return real_write_text(self, *a, **kw)
+
+    monkeypatch.setattr(Path, "write_text", boom_write_text)
+
+    import pytest
+    with pytest.raises(OSError):
+        account._credentials()
+
+    assert token_path.read_text(encoding="utf-8") == original, \
+        "een mislukte tokenverversing mag het bestaande token-bestand niet aanraken"
+    assert not token_path.with_suffix(".json.tmp").exists()

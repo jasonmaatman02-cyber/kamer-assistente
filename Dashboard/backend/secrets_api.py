@@ -1,4 +1,5 @@
 """Secrets editor + Spotify OAuth helper. Gated by the OTP unlock."""
+import os
 import re
 
 from flask import Blueprint, jsonify, request
@@ -130,6 +131,9 @@ def google_calendar_token():
         return jsonify({"ok": False, "error": str(exc)}), 400
     from scheduler.agenda import GOOGLE_TOKEN_FILE
 
-    GOOGLE_TOKEN_FILE.write_text(flow.credentials.to_json(), encoding="utf-8")
+    # Atomisch schrijven -- zelfde reden als scheduler/agenda.py::_credentials()
+    tmp = GOOGLE_TOKEN_FILE.with_suffix(".json.tmp")
+    tmp.write_text(flow.credentials.to_json(), encoding="utf-8")
+    os.replace(tmp, GOOGLE_TOKEN_FILE)
     S.reset_services()
     return jsonify({"ok": True})
