@@ -1,9 +1,16 @@
 import json
 import os
+import threading
 from datetime import datetime
 from pathlib import Path
 
 NOTES_FILE = Path(__file__).resolve().parent.parent / "data" / "notes.json"
+# Beschermt de load-wijzig-save-volgorde in add_note()/delete_note(): zonder
+# lock kan bij (bijna-)gelijktijdige aanroepen (twee tabbladen, of dashboard +
+# spraakassistent tegelijk) de ene wijziging de andere stilzwijgend
+# overschrijven (allebei lezen dezelfde oude staat, wie het laatst schrijft
+# wint -- de ander is spoorloos weg).
+_notes_lock = threading.Lock()
 
 
 def load_notes() -> dict:
@@ -23,11 +30,12 @@ def save_notes(notes: dict) -> None:
 
 
 def add_note(note: str, category: str = "default") -> None:
-    notes = load_notes()
-    notes.setdefault(category, []).append(
-        {"note": note, "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
-    )
-    save_notes(notes)
+    with _notes_lock:
+        notes = load_notes()
+        notes.setdefault(category, []).append(
+            {"note": note, "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
+        )
+        save_notes(notes)
 
 
 def get_notes(category: str | None = None):
@@ -47,10 +55,11 @@ def list_all_notes() -> list[str]:
 
 
 def delete_note(index: int, category: str = "default") -> bool:
-    notes = load_notes()
-    entries = notes.get(category, [])
-    if 0 <= index < len(entries):
-        entries.pop(index)
-        save_notes(notes)
-        return True
-    return False
+    with _notes_lock:
+        notes = load_notes()
+        entries = notes.get(category, [])
+        if 0 <= index < len(entries):
+            entries.pop(index)
+            save_notes(notes)
+            return True
+        return False
