@@ -94,13 +94,14 @@ def _synth_espeak(text: str, out_path: str) -> str:
         ["espeak-ng", "-v", lang, "-w", out_path, text],
         check=True,
         capture_output=True,
+        timeout=15,
     )
     return out_path
 
 
 def _speak_espeak(text: str) -> None:
     lang = config.get("tts.language", "nl")
-    subprocess.run(["espeak-ng", "-v", lang, text], check=True, capture_output=True)
+    subprocess.run(["espeak-ng", "-v", lang, text], check=True, capture_output=True, timeout=15)
 
 
 # --------------------------------------------------------------------------- #
@@ -151,7 +152,10 @@ def _play(path: str) -> None:
 def _play_system(path: str) -> None:
     for player in (["aplay", path], ["ffplay", "-nodisp", "-autoexit", path], ["afplay", path]):
         try:
-            subprocess.run(player, check=True, capture_output=True)
+            # timeout: een audio-device dat bezet is (bv. raspotify dat tegelijk
+            # ALSA gebruikt) mag deze speler nooit voorgoed laten hangen -- dan
+            # gewoon door naar de volgende speler in de lijst.
+            subprocess.run(player, check=True, capture_output=True, timeout=20)
             return
         except Exception:  # noqa: BLE001
             continue
