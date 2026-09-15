@@ -241,6 +241,36 @@ def test_event_without_location_or_description_has_empty_strings():
     assert ev["description"] == ""
 
 
+def test_events_route_is_cached_per_range(client, monkeypatch):
+    """Zonder caching deed elke navigatie-klik in calendar.js (geen eigen
+    debounce/inflight-guard) een verse, live aanroep naar Google/iCloud --
+    kon bij snel doorbladeren veel onnodige aanroepen achter elkaar
+    triggeren. Binnen hetzelfde bereik moet get_normalized_events() maar
+    één keer draaien; een ANDER bereik moet wel een eigen, verse aanroep
+    krijgen."""
+    calls = {"n": 0}
+
+    class FakeCal:
+        error = None
+        calendars = [object()]
+
+        def get_normalized_events(self, start, end):
+            calls["n"] += 1
+            return [{"id": f"call-{calls['n']}"}]
+
+    from Dashboard.backend import services as S
+    fake = FakeCal()
+    monkeypatch.setattr(S, "svc", lambda name: fake if name == "agenda" else None)
+
+    r1 = client.get("/api/calendar/events?start=2026-09-01&end=2026-09-30").get_json()
+    r2 = client.get("/api/calendar/events?start=2026-09-01&end=2026-09-30").get_json()
+    assert r1 == r2 and calls["n"] == 1          # zelfde bereik -> uit cache
+
+    r3 = client.get("/api/calendar/events?start=2026-10-01&end=2026-10-31").get_json()
+    assert calls["n"] == 2                        # ander bereik -> verse aanroep
+    assert r3["events"][0]["id"] == "call-2"
+
+
 def test_route_end_to_end_returns_normalized_events(client, monkeypatch):
     import scheduler.agenda as agenda_mod
     from Dashboard.backend import services as S

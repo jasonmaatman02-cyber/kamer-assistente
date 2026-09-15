@@ -32,6 +32,8 @@ def _offline(monkeypatch, tmp_path):
     services._services.clear()
     services._errors.clear()
     services._health_cache.clear()
+    services._data_cache.clear()
+    services._data_cache_locks.clear()
 
     # verse chat-sessies per test
     from logic import gpt_handler

@@ -28,12 +28,4 @@ def calendar_events():
     today = datetime.now().date()
     start = _parse_date(request.args.get("start"), today)
     end = _parse_date(request.args.get("end"), start + timedelta(days=1))
-
-    cal = S.svc("agenda")
-    if not cal:
-        return jsonify({"events": [], "error": S.errors().get("agenda", "agenda niet beschikbaar")})
-    try:
-        events = cal.get_normalized_events(start, end)
-    except Exception as exc:  # noqa: BLE001 - een onverwachte fout mag de tab niet slopen
-        return jsonify({"events": [], "error": str(exc)})
-    return jsonify({"events": events, "error": cal.error})
+    return jsonify(S.calendar_events(start, end))

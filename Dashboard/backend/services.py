@@ -498,6 +498,31 @@ def calendar_today(fresh: bool = False) -> dict:
     return _cached("calendar:today", 300, fetch)           # 5 min
 
 
+def calendar_events(start, end) -> dict:
+    """Voor de Kalender-tab (/api/calendar/events): platte,
+    provider-onafhankelijke events voor een willekeurig datumbereik. Zonder
+    caching deed elke navigatie-klik in calendar.js (vorige/volgende/
+    vandaag/weergave wisselen) een verse, live aanroep naar Google/iCloud --
+    calendar.js heeft geen eigen debounce/inflight-guard, dus snel
+    doorbladeren kon veel onnodige aanroepen achter elkaar triggeren tegen
+    een afhankelijkheid die al eerder deze sessie echte SSL-/timeoutfouten
+    gaf. Zelfde caching als calendar_today(), met het bereik in de
+    cache-key zodat elk bereik zijn eigen cache heeft."""
+    key = f"calendar:events:{start}:{end}"
+
+    def fetch():
+        cal = svc("agenda")
+        if not cal:
+            return {"events": [], "error": _errors.get("agenda", "agenda niet beschikbaar")}
+        try:
+            events = cal.get_normalized_events(start, end)
+        except Exception as exc:  # noqa: BLE001 - een onverwachte fout mag de tab niet slopen
+            return {"events": [], "error": str(exc)}
+        return {"events": events, "error": cal.error}
+
+    return _cached(key, 300, fetch)   # 5 min
+
+
 def current_playing() -> dict:
     sp = svc("spotify")
     if sp:
