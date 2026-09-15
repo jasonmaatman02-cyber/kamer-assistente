@@ -294,7 +294,20 @@ def google_calendar_oauth(state: str | None = None, code_verifier: str | None = 
 
 
 def active_device_id(sp):
-    """Actief apparaat, anders het eerste beschikbare, anders None."""
+    """ID van het apparaat om playback naar te sturen.
+
+    1. Het apparaat waar NU al actief op gespeeld wordt -- nooit een lopende
+       sessie op je telefoon/laptop/Sonos ongevraagd overnemen.
+    2. Anders (niks actief) de Pi's eigen Spotify Connect-apparaat
+       (spotify.pi_device_name), als DIE beschikbaar is -- Kamer-AI is een
+       kamerassistent met een eigen luidspreker, dus start je iets vanuit
+       het dashboard/de assistent zonder zelf een apparaat te kiezen, dan
+       is de eigen Pi-speaker de logische standaard.
+    3. Anders None -- GEEN ander willekeurig apparaat raden (was voorheen
+       "het eerste apparaat in de lijst", een volgorde die Spotify niet
+       garandeert en net zo goed je telefoon of laptop kon zijn). Spotify
+       geeft dan zelf een nette NO_ACTIVE_DEVICE-fout (afgevangen door
+       media_api.py::_play_error), i.p.v. dat hier geraden wordt."""
     try:
         pb = sp.current_playback()
         if pb and pb.get("device", {}).get("id"):
@@ -302,8 +315,9 @@ def active_device_id(sp):
     except Exception as exc:  # noqa: BLE001
         _degrade("active_device_id/current_playback", exc)
     try:
+        pi_name = config.get("spotify.pi_device_name", "Kamer-AI")
         for d in sp.devices().get("devices", []):
-            if d.get("id"):
+            if d.get("id") and d.get("name") == pi_name:
                 return d["id"]
     except Exception as exc:  # noqa: BLE001
         _degrade("active_device_id/devices", exc)
@@ -379,14 +393,19 @@ def _probe(name: str):
 
 
 def _spotify_has_device() -> bool:
-    """Gecached (TTL): is er een Spotify-apparaat om op af te spelen?"""
+    """Gecached (TTL): heeft de gebruiker OVERHAUPT een Spotify-apparaat
+    geregistreerd (voor de 'geen apparaat'-waarschuwing op het dashboard) --
+    los van of er nu iets actief speelt en los van of het specifiek de Pi
+    is. active_device_id() is hier bewust NIET voor bedoeld sinds die
+    alleen nog het actieve apparaat of de Pi teruggeeft (zie aldaar); deze
+    check kijkt naar de volledige apparatenlijst."""
     now = time.time()
     cached = _health_cache.get("spotify_device")
     if cached and cached[1] >= now:
         return cached[0]
     s = _services.get("spotify")
     try:
-        has = bool(s and active_device_id(s.sp))
+        has = bool(s and s.sp.devices().get("devices"))
     except Exception:  # noqa: BLE001 - check zelf mag niet zeuren
         has = True
     _health_cache["spotify_device"] = (has, now + _HEALTH_TTL)

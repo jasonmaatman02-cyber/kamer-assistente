@@ -64,6 +64,12 @@ DEFAULTS: dict = {
     },
     "spotify": {
         "market": "NL",                 # land voor beschikbaarheid van nummers
+        # Naam waarmee de Pi's eigen Spotify Connect-apparaat (raspotify/
+        # librespot) adverteert -- zie Dashboard/backend/services.py::
+        # active_device_id(). Alleen gebruikt als FALLBACK wanneer er
+        # nergens al actief gespeeld wordt (nooit om een lopende sessie
+        # elders over te nemen).
+        "pi_device_name": "Kamer-AI",
     },
     "camera": {
         "enabled": True,

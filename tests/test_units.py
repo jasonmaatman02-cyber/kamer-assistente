@@ -398,6 +398,83 @@ def test_start_playback_without_device_id_when_no_id(monkeypatch):
     assert calls == [{"uris": ["spotify:track:1"], "device_id": "dev9"}]
 
 
+# --- active_device_id(): nooit willekeurig een ANDER apparaat kapen ----- #
+# Achtergrond: gaf voorheen "het eerste apparaat in de lijst" terug zodra
+# niks actief was -- die volgorde garandeert Spotify niet, dus dat kon
+# net zo goed de telefoon/laptop van de gebruiker zijn i.p.v. de Pi. De
+# gebruiker: "Spotify wordt alleen naar de Pi gestuurd wanneer daar
+# expliciet om gevraagd wordt" + "gebruik de Pi standaard wanneer ik
+# Spotify vanuit Kamer-AI start, kies niet willekeurig mijn laptop of
+# telefoon."
+def test_active_device_id_prefers_genuinely_active_device(monkeypatch):
+    import config
+    from Dashboard.backend import services
+
+    config.set("spotify.pi_device_name", "Kamer-AI")
+
+    class FakeSp:
+        def current_playback(self):
+            return {"device": {"id": "phone-1", "name": "iPhone van Jason"}}
+        def devices(self):
+            raise AssertionError("devices() had niet aangeroepen mogen worden -- er is al iets actief")
+
+    assert services.active_device_id(FakeSp()) == "phone-1"
+
+
+def test_active_device_id_falls_back_to_pi_when_nothing_active(monkeypatch):
+    import config
+    from Dashboard.backend import services
+
+    config.set("spotify.pi_device_name", "Kamer-AI")
+
+    class FakeSp:
+        def current_playback(self):
+            return None
+        def devices(self):
+            return {"devices": [
+                {"id": "laptop-1", "name": "JASON_LAPTOP4"},
+                {"id": "pi-1", "name": "Kamer-AI"},
+            ]}
+
+    assert services.active_device_id(FakeSp()) == "pi-1"
+
+
+def test_active_device_id_never_grabs_an_arbitrary_other_device(monkeypatch):
+    """De kern van de fix: is de Pi niet beschikbaar (nog niet gekoppeld,
+    offline), dan NOOIT alsnog de laptop/telefoon pakken -- liever None
+    (Spotify geeft dan zelf een nette NO_ACTIVE_DEVICE-fout)."""
+    import config
+    from Dashboard.backend import services
+
+    config.set("spotify.pi_device_name", "Kamer-AI")
+
+    class FakeSp:
+        def current_playback(self):
+            return None
+        def devices(self):
+            return {"devices": [
+                {"id": "laptop-1", "name": "JASON_LAPTOP4"},
+                {"id": "phone-1", "name": "iPhone van Jason"},
+            ]}
+
+    assert services.active_device_id(FakeSp()) is None
+
+
+def test_active_device_id_none_when_nothing_at_all(monkeypatch):
+    import config
+    from Dashboard.backend import services
+
+    config.set("spotify.pi_device_name", "Kamer-AI")
+
+    class FakeSp:
+        def current_playback(self):
+            return None
+        def devices(self):
+            return {"devices": []}
+
+    assert services.active_device_id(FakeSp()) is None
+
+
 def test_devices_shows_idless_sonos_as_playing(client, monkeypatch):
     from Dashboard.backend import services
 
@@ -441,17 +518,43 @@ def test_camera_viewer_cap():
 def test_service_status_flags_no_device(monkeypatch):
     from Dashboard.backend import services
 
+    class FakeSp:
+        def devices(self):
+            return {"devices": []}
+
     class FakeDJ:
-        sp = object()
+        sp = FakeSp()
 
     monkeypatch.setitem(services._services, "spotify", FakeDJ())
     monkeypatch.setattr(services, "_probe", lambda n: (True, None))
-    monkeypatch.setattr(services, "active_device_id", lambda sp: None)
     services._health_cache.clear()
 
     st = services.service_status()["spotify"]
     assert st["ok"] is True and st["no_device"] is True
     assert st["error"] == "geen apparaat actief"
+
+
+def test_service_status_no_device_ignores_which_device_would_be_targeted(monkeypatch):
+    """_spotify_has_device() ('is er OVERHAUPT een apparaat') moet niet meer
+    via active_device_id() lopen (die geeft sinds de fix alleen nog het
+    actieve OF de Pi terug, nooit 'een willekeurig ander apparaat') --
+    een laptop/telefoon die geregistreerd staat maar niet actief speelt en
+    niet de Pi is, telt nog steeds als 'er is een apparaat'."""
+    from Dashboard.backend import services
+
+    class FakeSp:
+        def devices(self):
+            return {"devices": [{"id": "laptop-1", "name": "JASON_LAPTOP4"}]}
+
+    class FakeDJ:
+        sp = FakeSp()
+
+    monkeypatch.setitem(services._services, "spotify", FakeDJ())
+    monkeypatch.setattr(services, "_probe", lambda n: (True, None))
+    services._health_cache.clear()
+
+    st = services.service_status()["spotify"]
+    assert "no_device" not in st
 
 
 def test_degrade_only_flags_unexpected(capsys):
