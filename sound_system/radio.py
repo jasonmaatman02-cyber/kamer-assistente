@@ -47,9 +47,14 @@ class RadioPlayer:
         self.player.play()
         log("Radio", f"Speelt nu: {station_name}")
 
-        time.sleep(2)
-        self.player.play()
-        time.sleep(2)
+        # Wacht tot de stream écht speelt i.p.v. altijd blind 2s te slapen --
+        # de meeste streams starten ruim binnen 2s, waardoor dit request
+        # voorheen onnodig lang bleef hangen (waitress-workerthread bezet).
+        # Zelfde max. wachttijd (2x2s) en dezelfde herstart-poging als voorheen,
+        # nu alleen adaptief i.p.v. altijd de volle tijd te wachten.
+        if not self._wait_playing(2.0):
+            self.player.play()
+            self._wait_playing(2.0)
 
         state = self.player.get_state()
         if state != vlc.State.Playing:
@@ -57,6 +62,15 @@ class RadioPlayer:
         self.start_time = time.time()
         self.current_station_name = station_name
         return f"Speelt nu: {station_name}"
+
+    def _wait_playing(self, timeout: float, interval: float = 0.1) -> bool:
+        """Poll tot de player Playing meldt, of tot timeout. Return of het lukte."""
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            if self.player.get_state() == vlc.State.Playing:
+                return True
+            time.sleep(interval)
+        return self.player.get_state() == vlc.State.Playing
 
     def stop(self):
         if self.player.is_playing():
