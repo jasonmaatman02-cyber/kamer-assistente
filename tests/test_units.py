@@ -432,11 +432,32 @@ def test_active_device_id_falls_back_to_pi_when_nothing_active(monkeypatch):
             return None
         def devices(self):
             return {"devices": [
-                {"id": "laptop-1", "name": "JASON_LAPTOP4"},
-                {"id": "pi-1", "name": "Kamer-AI"},
+                {"id": "laptop-1", "name": "JASON_LAPTOP4", "type": "Computer"},
+                {"id": "pi-1", "name": "Kamer-AI", "type": "Speaker"},
             ]}
 
     assert services.active_device_id(FakeSp()) == "pi-1"
+
+
+def test_active_device_id_requires_matching_type_not_just_name(monkeypatch):
+    """Robuustheid tegen naamcollisies: een ANDER apparaat dat toevallig ook
+    'Kamer-AI' heet (bv. handmatig hernoemd door de gebruiker) maar niet van
+    het type 'Speaker' is (zoals de Pi's eigen librespot-apparaat zich bij
+    Spotify meldt), mag niet matchen."""
+    import config
+    from Dashboard.backend import services
+
+    config.set("spotify.pi_device_name", "Kamer-AI")
+
+    class FakeSp:
+        def current_playback(self):
+            return None
+        def devices(self):
+            return {"devices": [
+                {"id": "impostor-1", "name": "Kamer-AI", "type": "Computer"},
+            ]}
+
+    assert services.active_device_id(FakeSp()) is None
 
 
 def test_active_device_id_never_grabs_an_arbitrary_other_device(monkeypatch):

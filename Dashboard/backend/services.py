@@ -317,7 +317,10 @@ def active_device_id(sp):
     try:
         pi_name = config.get("spotify.pi_device_name", "Kamer-AI")
         for d in sp.devices().get("devices", []):
-            if d.get("id") and d.get("name") == pi_name:
+            # Op naam EN type (librespot/raspotify meldt zich bij Spotify als
+            # "Speaker") -- een ander apparaat dat toevallig dezelfde naam
+            # draagt (bv. hernoemd door de gebruiker) matcht dan niet alsnog.
+            if d.get("id") and d.get("name") == pi_name and d.get("type") == "Speaker":
                 return d["id"]
     except Exception as exc:  # noqa: BLE001
         _degrade("active_device_id/devices", exc)
