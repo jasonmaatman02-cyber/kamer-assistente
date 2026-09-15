@@ -169,6 +169,40 @@ def test_routines_write_needs_password(client, monkeypatch):
     assert client.delete("/api/routines/a").status_code == 401
 
 
+def test_concurrent_routine_saves_do_not_lose_updates(client, monkeypatch):
+    """Regressie: zonder lock om de read-modify-write in routines_save()
+    konden gelijktijdige aanroepen (dubbelklik, twee tabbladen) elkaars
+    nieuwe routine stilzwijgend overschrijven -- zelfde patroon als de
+    eerder gevonden race in logic/notes.py. Elke thread krijgt een eigen
+    test_client (Flask's testclient/contextvars zijn niet thread-safe om
+    één instantie gelijktijdig vanuit meerdere threads te gebruiken); ze
+    delen wel dezelfde app en dus dezelfde config-state, waar het hier om gaat."""
+    import threading
+    from Dashboard.backend.main import app
+
+    monkeypatch.setenv("DASHBOARD_PASSWORD", "x")
+    client.post("/api/login", json={"password": "x"})
+
+    barrier = threading.Barrier(8)
+
+    def saver(i):
+        barrier.wait(timeout=2)
+        with app.test_client() as c:
+            c.post("/api/login", json={"password": "x"})
+            c.post("/api/routines", json={
+                "id": f"routine-{i}", "name": f"Routine {i}", "steps": [],
+            })
+
+    threads = [threading.Thread(target=saver, args=(i,)) for i in range(8)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(timeout=5)
+
+    ids = {r["id"] for r in client.get("/api/routines").get_json()["routines"]}
+    assert {f"routine-{i}" for i in range(8)} <= ids   # geen enkele verdwenen
+
+
 def test_request_code_rate_limited(client, monkeypatch):
     from Dashboard.backend import auth
 

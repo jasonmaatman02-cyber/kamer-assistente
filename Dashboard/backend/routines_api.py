@@ -1,5 +1,6 @@
 """Routines, notes and the manual dashboard alarm."""
 import asyncio
+import threading
 
 from flask import Blueprint, jsonify, request
 
@@ -10,6 +11,13 @@ from logic.logger import log
 from scheduler.alarm import AlarmScheduler
 
 routines_bp = Blueprint("routines", __name__)
+
+# Beschermt de read-modify-write op config.get("routines")/config.set(...) in
+# routines_save()/routines_delete() hieronder -- zonder lock kan bij
+# (bijna-)gelijktijdige aanroepen (dubbelklik, twee tabbladen) de ene
+# wijziging de andere stilzwijgend overschrijven (zelfde patroon als de
+# eerder gevonden race in logic/notes.py).
+_routines_lock = threading.Lock()
 
 _BUILTIN = [
     {"id": "morning", "name": "Ochtend-routine", "desc": "Lampen aan, radio, notities voorlezen", "builtin": True},
@@ -38,17 +46,19 @@ def routines_save():
     steps = data.get("steps") or []
     if not isinstance(steps, list):
         return jsonify({"success": False, "error": "steps moet een lijst zijn"}), 400
-    custom = [r for r in (config.get("routines", []) or []) if r.get("id") != rid]
-    custom.append({"id": rid, "name": name, "desc": data.get("desc", ""), "steps": steps})
-    config.set("routines", custom)
+    with _routines_lock:
+        custom = [r for r in (config.get("routines", []) or []) if r.get("id") != rid]
+        custom.append({"id": rid, "name": name, "desc": data.get("desc", ""), "steps": steps})
+        config.set("routines", custom)
     return jsonify({"success": True})
 
 
 @routines_bp.route("/api/routines/<rid>", methods=["DELETE"])
 @require_password
 def routines_delete(rid):
-    custom = [r for r in (config.get("routines", []) or []) if r.get("id") != rid]
-    config.set("routines", custom)
+    with _routines_lock:
+        custom = [r for r in (config.get("routines", []) or []) if r.get("id") != rid]
+        config.set("routines", custom)
     return jsonify({"success": True})
 
 
