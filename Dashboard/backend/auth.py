@@ -57,11 +57,17 @@ def mail_ready() -> bool:
 
 def unlocked() -> bool:
     token = request.headers.get("X-Unlock-Token", "")
+    now = time.time()
     exp = _unlock_sessions.get(token)
-    if exp and time.time() < exp:
-        return True
-    _unlock_sessions.pop(token, None)
-    return False
+    ok = bool(exp and now < exp)
+    if not ok:
+        _unlock_sessions.pop(token, None)
+    # Ook verlopen tokens van ANDERE sessies opruimen (niet alleen dit ene) --
+    # anders blijft elk verlopen token van een eerdere unlock-poging voor
+    # altijd in het geheugen staan (nooit meer opgevraagd = nooit opgeruimd).
+    for old in [k for k, v in _unlock_sessions.items() if now >= v]:
+        _unlock_sessions.pop(old, None)
+    return ok
 
 
 @auth_bp.route("/api/auth/request-code", methods=["POST"])
@@ -135,11 +141,16 @@ def logged_in() -> bool:
     if not password_set():
         return True
     tok = request.cookies.get(COOKIE, "")
+    now = time.time()
     exp = _pw_sessions.get(tok)
-    if exp and time.time() < exp:
-        return True
-    _pw_sessions.pop(tok, None)
-    return False
+    ok = bool(exp and now < exp)
+    if not ok:
+        _pw_sessions.pop(tok, None)
+    # Zelfde reden als unlocked() hierboven: ook verweesde tokens van andere
+    # apparaten/eerdere logins opruimen, niet alleen dit ene cookie-token.
+    for old in [k for k, v in _pw_sessions.items() if now >= v]:
+        _pw_sessions.pop(old, None)
+    return ok
 
 
 def require_password(fn):

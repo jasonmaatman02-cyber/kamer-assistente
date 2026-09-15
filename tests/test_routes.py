@@ -247,6 +247,31 @@ def test_login_is_session_only_by_default(client, monkeypatch):
     assert "Max-Age=604800" in r.headers.get("Set-Cookie", "")
 
 
+def test_stale_login_and_unlock_tokens_get_swept(client, monkeypatch):
+    """Regressie: verweesde tokens van andere apparaten/eerdere sessies
+    (nooit meer opgevraagd, dus nooit lazy opgeruimd via het eigen cookie/
+    header-pad) mogen niet voor altijd in het geheugen blijven staan."""
+    import time
+    from Dashboard.backend import auth
+
+    monkeypatch.setenv("DASHBOARD_PASSWORD", "geheim")   # anders is logged_in() een no-op (geen wachtwoord ingesteld)
+    auth._pw_sessions.clear()
+    auth._unlock_sessions.clear()
+    now = time.time()
+    # verweesde, allang verlopen tokens van "andere apparaten"
+    auth._pw_sessions.update({"oud-token-1": now - 100, "oud-token-2": now - 50})
+    auth._unlock_sessions.update({"oud-unlock-1": now - 100, "oud-unlock-2": now - 50})
+
+    # elke aanroep die logged_in()/unlocked() raakt, moet nu ook de andere
+    # verlopen tokens opruimen -- niet alleen het token uit dit ene request
+    # (/settings is een @require_password-pagina, dus roept logged_in() aan)
+    client.get("/settings")
+    assert auth._pw_sessions == {}
+
+    client.get("/api/secrets")
+    assert auth._unlock_sessions == {}
+
+
 def test_settings_post_needs_password(client, monkeypatch):
     monkeypatch.setenv("DASHBOARD_PASSWORD", "geheim")
     assert client.post("/api/settings", json={"camera": {"fps": 9}}).status_code == 401
