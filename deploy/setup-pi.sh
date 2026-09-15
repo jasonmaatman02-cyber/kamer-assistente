@@ -114,6 +114,24 @@ if command -v ollama >/dev/null 2>&1; then
   ollama pull "$PY_MODEL" || echo "!!  pull mislukt (geen net?) — later: ollama pull $PY_MODEL"
 fi
 
+# Ollama's eigen default (OLLAMA_KEEP_ALIVE=5m) ontlaadt het model uit het
+# geheugen na 5 minuten inactiviteit. Op een gedeelde server is dat prima,
+# maar deze Pi draait Ollama uitsluitend voor Kamer-AI zelf -- het geheugen
+# hoeft nergens anders voor vrijgemaakt te worden. Zonder deze override
+# betaalt bijna elk "eerste bericht na een tijdje" de volledige herlaad- +
+# ongecachte-prompt-kosten opnieuw (live gemeten: ~4 minuten op een Pi 4B
+# met qwen2.5:1.5b), wat in de praktijk precies de AI-timeouts veroorzaakte.
+if systemctl list-unit-files ollama.service >/dev/null 2>&1; then
+  echo "==> ollama: model warm houden (OLLAMA_KEEP_ALIVE=24h, i.p.v. de 5 min. default)"
+  sudo mkdir -p /etc/systemd/system/ollama.service.d
+  sudo tee /etc/systemd/system/ollama.service.d/override.conf >/dev/null <<'EOF'
+[Service]
+Environment="OLLAMA_KEEP_ALIVE=24h"
+EOF
+  sudo systemctl daemon-reload
+  sudo systemctl restart ollama
+fi
+
 # ---------------------------------------------------------------- logrotate
 echo "==> logrotate-regel voor data/logs"
 sudo tee /etc/logrotate.d/kamer-assistente >/dev/null <<EOF
