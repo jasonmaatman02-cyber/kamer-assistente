@@ -625,6 +625,32 @@ def test_auto_light_block_bad_value_falls_back(monkeypatch):
     config.set("presence.auto_light_block_after", "21:30")
 
 
+# --- presence: camera.detect_threshold moet echt bij de detector aankomen - #
+def test_presence_tick_passes_configured_detect_threshold(monkeypatch):
+    """Regressie: camera.detect_threshold (Settings: 'hoger = minder valse
+    alarmen') werd nooit doorgegeven aan count_people() -- de server-side
+    automatisering draaide altijd op de meest permissieve hitThreshold=0.0,
+    ongeacht wat er in Settings stond. Alleen de client-side browser-preview
+    (system_api.py::public_config()) gebruikte de instelling echt."""
+    import config
+    from Dashboard.backend.presence import PresenceWorker
+    import logic.people_detect as pd
+
+    config.set("camera.detect_threshold", 0.42)
+    w = PresenceWorker()
+    monkeypatch.setattr(w, "_get_frame", lambda: object())
+
+    seen = {}
+
+    def fake_count_people(frame, **kw):
+        seen.update(kw)
+        return 0
+
+    monkeypatch.setattr(pd, "count_people", fake_count_people)
+    w._tick()
+    assert seen.get("hit_threshold") == 0.42
+
+
 # --- presence: state machine (hysteresis, grace period, geen spam-lamp) -- #
 def test_presence_worker_hysteresis_and_grace(monkeypatch):
     import config
@@ -646,7 +672,7 @@ def test_presence_worker_hysteresis_and_grace(monkeypatch):
     monkeypatch.setattr("time.time", lambda: clock["t"])
 
     # 1e detectie: nog niet genoeg (consecutive_required=2) -> blijft EMPTY
-    monkeypatch.setattr(pd, "count_people", lambda frame: 1)
+    monkeypatch.setattr(pd, "count_people", lambda frame, **kw: 1)
     w._tick()
     assert w.room_state == "EMPTY" and lamp_calls == []
 
@@ -664,7 +690,7 @@ def test_presence_worker_hysteresis_and_grace(monkeypatch):
     assert lamp_calls == [True]
 
     # 1 gemist frame (count=0) -> mag niet meteen EMPTY worden (grace period)
-    monkeypatch.setattr(pd, "count_people", lambda frame: 0)
+    monkeypatch.setattr(pd, "count_people", lambda frame, **kw: 0)
     clock["t"] += 3
     w._tick()
     assert w.room_state == "OCCUPIED" and lamp_calls == [True]
@@ -685,7 +711,7 @@ def test_presence_worker_blocks_auto_on_after_2130(monkeypatch):
 
     w = PresenceWorker()
     monkeypatch.setattr(w, "_get_frame", lambda: object())
-    monkeypatch.setattr("logic.people_detect.count_people", lambda frame: 1)
+    monkeypatch.setattr("logic.people_detect.count_people", lambda frame, **kw: 1)
     monkeypatch.setattr(presence_mod, "is_auto_light_blocked", lambda: True)
 
     def must_not_be_called(ip):
@@ -710,7 +736,7 @@ def test_presence_worker_lamp_failure_does_not_raise(monkeypatch):
 
     w = PresenceWorker()
     monkeypatch.setattr(w, "_get_frame", lambda: object())
-    monkeypatch.setattr("logic.people_detect.count_people", lambda frame: 1)
+    monkeypatch.setattr("logic.people_detect.count_people", lambda frame, **kw: 1)
     monkeypatch.setattr(presence_mod.S, "lamp_ip", lambda x: "192.168.1.50")
 
     def boom(ip):
@@ -736,7 +762,7 @@ def test_presence_retry_after_failed_auto_on(monkeypatch):
 
     w = PresenceWorker()
     monkeypatch.setattr(w, "_get_frame", lambda: object())
-    monkeypatch.setattr("logic.people_detect.count_people", lambda frame: 1)
+    monkeypatch.setattr("logic.people_detect.count_people", lambda frame, **kw: 1)
     monkeypatch.setattr(presence_mod.S, "lamp_ip", lambda x: "192.168.1.50")
 
     calls = []
@@ -770,7 +796,7 @@ def test_presence_retry_success_clears_pending(monkeypatch):
 
     w = PresenceWorker()
     monkeypatch.setattr(w, "_get_frame", lambda: object())
-    monkeypatch.setattr("logic.people_detect.count_people", lambda frame: 1)
+    monkeypatch.setattr("logic.people_detect.count_people", lambda frame, **kw: 1)
     monkeypatch.setattr(presence_mod.S, "lamp_ip", lambda x: "192.168.1.50")
 
     class FakeLamp:
@@ -813,7 +839,7 @@ def test_presence_retry_gives_up_after_max_attempts(monkeypatch):
 
     w = PresenceWorker()
     monkeypatch.setattr(w, "_get_frame", lambda: object())
-    monkeypatch.setattr("logic.people_detect.count_people", lambda frame: 1)
+    monkeypatch.setattr("logic.people_detect.count_people", lambda frame, **kw: 1)
     monkeypatch.setattr(presence_mod.S, "lamp_ip", lambda x: "192.168.1.50")
 
     calls = []
@@ -864,7 +890,7 @@ def test_presence_new_transition_resets_retry_state(monkeypatch):
     clock = {"t": 1_000_000.0}
     monkeypatch.setattr("time.time", lambda: clock["t"])
 
-    monkeypatch.setattr("logic.people_detect.count_people", lambda frame: 1)
+    monkeypatch.setattr("logic.people_detect.count_people", lambda frame, **kw: 1)
     w._tick()   # overgang naar OCCUPIED, ON mislukt
     assert w.room_state == "OCCUPIED" and w._pending_light is True
 
@@ -873,7 +899,7 @@ def test_presence_new_transition_resets_retry_state(monkeypatch):
     assert w._light_retries == 1 and w._pending_light is True
 
     # nu weg -> na de grace period EMPTY, een verse overgang
-    monkeypatch.setattr("logic.people_detect.count_people", lambda frame: 0)
+    monkeypatch.setattr("logic.people_detect.count_people", lambda frame, **kw: 0)
     clock["t"] += 6   # > empty_grace_s
     w._tick()
     assert w.room_state == "EMPTY"
@@ -893,7 +919,7 @@ def test_presence_retry_respects_2130_rule(monkeypatch):
 
     w = PresenceWorker()
     monkeypatch.setattr(w, "_get_frame", lambda: object())
-    monkeypatch.setattr("logic.people_detect.count_people", lambda frame: 1)
+    monkeypatch.setattr("logic.people_detect.count_people", lambda frame, **kw: 1)
     monkeypatch.setattr(presence_mod.S, "lamp_ip", lambda x: "192.168.1.50")
 
     # 1e keer (overgang) nog niet geblokkeerd, maar de Tapo-call mislukt zelf
@@ -946,7 +972,7 @@ def test_presence_retry_never_touches_manual_control(monkeypatch):
 
     # ook via een "stabiele" tick (geen overgang, niks openstaand) blijft de lamp met rust
     monkeypatch.setattr(w, "_get_frame", lambda: object())
-    monkeypatch.setattr("logic.people_detect.count_people", lambda frame: 0)
+    monkeypatch.setattr("logic.people_detect.count_people", lambda frame, **kw: 0)
     w._tick()
 
 
@@ -1089,7 +1115,7 @@ def test_presence_session_timeout_reauth_bounded_no_endless_loop(monkeypatch):
 
     w = PresenceWorker()
     monkeypatch.setattr(w, "_get_frame", lambda: object())
-    monkeypatch.setattr("logic.people_detect.count_people", lambda frame: 1)
+    monkeypatch.setattr("logic.people_detect.count_people", lambda frame, **kw: 1)
     monkeypatch.setattr(presence_mod.S, "lamp_ip", lambda x: "192.168.1.50")
 
     class AlwaysStale:
@@ -1195,7 +1221,7 @@ def test_presence_no_detection_no_action(monkeypatch):
     config.set("presence.auto_light_enabled", True)
     w = PresenceWorker()
     monkeypatch.setattr(w, "_get_frame", lambda: object())
-    monkeypatch.setattr("logic.people_detect.count_people", lambda frame: 0)
+    monkeypatch.setattr("logic.people_detect.count_people", lambda frame, **kw: 0)
 
     def must_not_be_called(ip):
         raise AssertionError("zonder aanwezigheid mag er geen lampcommando gestuurd worden")
@@ -1220,7 +1246,7 @@ def test_presence_restart_does_not_toggle_lamp_immediately(monkeypatch):
     config.set("presence.auto_light_enabled", True)
     w = PresenceWorker()   # simuleert de staat direct na een herstart
     monkeypatch.setattr(w, "_get_frame", lambda: object())
-    monkeypatch.setattr("logic.people_detect.count_people", lambda frame: 1)
+    monkeypatch.setattr("logic.people_detect.count_people", lambda frame, **kw: 1)
 
     calls = []
 
@@ -1247,7 +1273,7 @@ def test_presence_sensor_offline_holds_unknown_state(monkeypatch):
     config.set("presence.auto_light_enabled", True)
 
     w = PresenceWorker()
-    monkeypatch.setattr("logic.people_detect.count_people", lambda frame: 1)
+    monkeypatch.setattr("logic.people_detect.count_people", lambda frame, **kw: 1)
     monkeypatch.setattr(presence_mod.S, "lamp_ip", lambda x: "192.168.1.50")
 
     def must_not_be_called(ip):
@@ -1302,7 +1328,7 @@ def test_presence_manual_action_visible_and_reset_on_next_transition(monkeypatch
             return None
 
     monkeypatch.setattr(w, "_get_frame", lambda: object())
-    monkeypatch.setattr("logic.people_detect.count_people", lambda frame: 1)
+    monkeypatch.setattr("logic.people_detect.count_people", lambda frame, **kw: 1)
     monkeypatch.setattr(presence_mod.S, "lamp_ip", lambda x: "192.168.1.50")
     monkeypatch.setattr(presence_mod.S, "lamp", lambda ip: WorkingLamp())
 

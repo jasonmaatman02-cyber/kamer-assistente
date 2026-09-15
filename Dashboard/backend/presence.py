@@ -216,7 +216,14 @@ class PresenceWorker:
         self._sensor_unknown = False
         self._sensor_unknown_warned = False
 
-        count = count_people(frame)
+        # camera.detect_threshold stond al in Settings ("hoger = minder valse
+        # alarmen"), maar werd nooit doorgegeven -- count_people() draaide
+        # hierdoor altijd op de meest permissieve hitThreshold (0.0), de
+        # instelling deed dus niks voor de automatisering die de lamp echt
+        # aanstuurt (alleen voor de client-side browser-preview, zie
+        # system_api.py::public_config()).
+        threshold = float(config.get("camera.detect_threshold", 0.5) or 0.0)
+        count = count_people(frame, hit_threshold=threshold)
         self.last_count = count
         now = time.time()
 
