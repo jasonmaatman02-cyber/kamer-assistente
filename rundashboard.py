@@ -26,7 +26,15 @@ def main():
         print(f" * Dashboard (waitress) op http://{HOST}:{PORT}")
         # ruim aantal threads: een /video_feed-kijker houdt er de hele tijd één
         # bezet (camera.max_viewers begrenst dat), de rest blijft vrij
-        serve(app, host=HOST, port=PORT, threads=16, ident="kamer-dashboard")
+        #
+        # channel_timeout: waitress' eigen default (120s) is te kort voor de
+        # AI-chatstream (/api/chat_stream) -- op een Pi 4B kan het eerste
+        # bericht van een gesprek (lang, ongecached prompt incl. alle tool-
+        # schema's) een paar minuten prompt processing kosten vóórdat het
+        # eerste token binnenkomt; in die stille periode stuurt de SSE-stream
+        # nog niks, en waitress kapt een kanaal zonder dataverkeer anders af
+        # (live gemeten op de Pi: één 1407-token bericht duurde 3m45s totaal).
+        serve(app, host=HOST, port=PORT, threads=16, channel_timeout=300, ident="kamer-dashboard")
     except ImportError:
         app.run(host=HOST, port=PORT, threaded=True, use_reloader=False)
 

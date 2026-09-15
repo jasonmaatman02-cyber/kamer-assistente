@@ -77,7 +77,13 @@ async function send() {
   const bubble = showThinking();
   let got = '';
   const es = new EventSource('/api/chat_stream?message=' + encodeURIComponent(text) + '&sid=' + encodeURIComponent(CHAT_SID));
-  const timer = setTimeout(() => { es.close(); finish('Time-out — probeer een kortere vraag of een kleiner model.'); }, 120000);
+  // 300s, niet 120s: op een Pi 4B kan het eerste bericht van een gesprek
+  // (lang, ongecached prompt incl. alle tool-schema's) een paar minuten
+  // prompt processing kosten vóór het eerste token binnenkomt -- live
+  // gemeten: 3m45s voor één zo'n bericht. Moet gelijk blijven aan
+  // rundashboard.py's waitress channel_timeout (ook 300s), anders knipt de
+  // server de stream af terwijl de browser nog netjes zou wachten.
+  const timer = setTimeout(() => { es.close(); finish('Time-out — probeer een kortere vraag of een kleiner model.'); }, 300000);
 
   function finish(errText) {
     clearTimeout(timer);
