@@ -150,8 +150,10 @@ deploy/          systemd-service + setup-pi.sh / update-pi.sh
 - Een lokale LLM op een Pi 4B is traag. Voor snelle spraakbediening kan een
   klein model (`qwen2.5:1.5b`) of OpenAI als backend beter zijn.
 - De `Devices`-pagina thermostaat is nog een demo (geen hardware-koppeling).
-- Spotify-afspeelbediening vereist een actief apparaat; installeer `raspotify`
-  om de Pi zelf een speler te maken.
+- Spotify-afspeelbediening vereist een actief apparaat. `deploy/setup-pi.sh`
+  installeert en configureert `raspotify` automatisch, zodat de Pi zelf als
+  "Kamer-AI" in de Spotify-app te kiezen is (Connect-icoon) — daarna
+  verschijnt 'ie vanzelf in het dashboard onder Media -> Apparaten.
 
 ## Tests
 

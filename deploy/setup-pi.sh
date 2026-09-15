@@ -27,6 +27,52 @@ sudo apt-get install -y --no-install-recommends \
   logrotate \
   avahi-daemon   # -> pi bereikbaar op <hostname>.local, geen vast IP nodig
 
+# ---------------------------------------------------------------- raspotify (Spotify Connect)
+# Maakt van de Pi zelf een gewoon Spotify Connect-apparaat (zoals een Chromecast/
+# Sonos) -- de standaardoplossing hiervoor op een Pi, geen eigen streaming-
+# implementatie nodig. Zodra je 'm één keer in de Spotify-app kiest (Connect-
+# icoon), verschijnt 'ie vanzelf in het bestaande apparaatlijstje van het
+# dashboard (/api/devices, Media-pagina) -- die bestuurt elk Spotify Connect-
+# apparaat al generiek, dus daar hoeft niets voor bij te veranderen.
+if ! command -v raspotify >/dev/null 2>&1 && ! systemctl list-unit-files raspotify.service >/dev/null 2>&1; then
+  echo "==> raspotify installeren (Spotify Connect voor de Pi zelf)"
+  curl -sL https://dtcooper.github.io/raspotify/install.sh | sh
+else
+  echo "==> raspotify al geinstalleerd"
+fi
+
+if [ -f /etc/raspotify/conf ]; then
+  echo "==> raspotify configureren (/etc/raspotify/conf)"
+  # Naam waaronder de Pi in de Spotify-app verschijnt. Wil je een andere naam,
+  # pas 'm gewoon aan in /etc/raspotify/conf en herstart: sudo systemctl restart raspotify
+  if grep -q '^#\?LIBRESPOT_NAME=' /etc/raspotify/conf; then
+    sudo sed -i 's/^#\?LIBRESPOT_NAME=.*/LIBRESPOT_NAME="Kamer-AI"/' /etc/raspotify/conf
+  else
+    echo 'LIBRESPOT_NAME="Kamer-AI"' | sudo tee -a /etc/raspotify/conf >/dev/null
+  fi
+  # Audio-uitvoer bewust NIET vastgepind op een specifieke ALSA-device (net als
+  # de rest van dit project -- TTS/radio gebruiken ook gewoon de systeem-default);
+  # werkt het geluid op deze Pi niet via de gewenste uitgang, stel LIBRESPOT_DEVICE
+  # in /etc/raspotify/conf in aan de hand van `aplay -l`.
+
+  # raspotify's eigen unit heeft automatisch herstarten bij een crash
+  # standaard UITgeschakeld (in commentaar in hun package). Expliciet aanzetten
+  # via een drop-in i.p.v. hun unit-bestand zelf aan te passen (overleeft een
+  # 'apt upgrade' van raspotify zelf, en blijft onafhankelijk van het dashboard).
+  sudo mkdir -p /etc/systemd/system/raspotify.service.d
+  sudo tee /etc/systemd/system/raspotify.service.d/override.conf >/dev/null <<'EOF'
+[Service]
+Restart=on-failure
+RestartSec=10
+EOF
+  sudo systemctl daemon-reload
+  sudo systemctl enable --now raspotify
+  echo "==> raspotify status:"
+  sudo systemctl --no-pager --lines=6 status raspotify || true
+else
+  echo "!!  /etc/raspotify/conf niet gevonden -- raspotify-installatie lijkt mislukt, sla configuratie over."
+fi
+
 # ---------------------------------------------------------------- python venv
 if [ ! -d .venv ]; then
   echo "==> venv aanmaken"
@@ -100,3 +146,8 @@ IP="$(hostname -I 2>/dev/null | awk '{print $1}')"
 echo "Dashboard:  http://${IP:-<pi-ip>}:5000   of   http://$(hostname).local:5000"
 echo "Logs:       journalctl -u kamer-dashboard -f"
 echo "Herstart:   sudo systemctl restart kamer-dashboard"
+echo
+echo "Spotify Connect (raspotify): kies 'Kamer-AI' in het Connect-icoon van de Spotify-app,"
+echo "               daarna verschijnt 'ie vanzelf in het dashboard onder Media -> Apparaten."
+echo "Logs:       journalctl -u raspotify -f"
+echo "Herstart:   sudo systemctl restart raspotify"
