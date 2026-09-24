@@ -169,3 +169,52 @@ def test_lamp_lookup_by_name_and_fallback(monkeypatch):
     gh._lamp("slaap")
     gh._lamp("woonkamer")           # onbekend: eerste lamp, zoals voorheen
     assert seen == ["192.0.2.2", "192.0.2.1"]
+
+
+# --------------------------------------------------------------------------- #
+# Argumenten van het model: verzonnen parameters, geen object, enorme uitkomst
+# --------------------------------------------------------------------------- #
+def test_hallucinated_tool_parameters_are_dropped_not_fatal(monkeypatch):
+    """Logboek 2026-09-14: 'verzend_logs_per_mail() got an unexpected keyword argument prompt'."""
+    seen = {}
+    monkeypatch.setitem(gh.functies_dispatcher, "verzend_logs_per_mail",
+                        lambda: seen.setdefault("called", True) and "Logs verzonden")
+    out = gh._dispatch({"name": "verzend_logs_per_mail", "arguments": {"prompt": "stuur ze maar"}})
+    assert out == "Logs verzonden" and seen == {"called": True}
+
+
+def test_known_parameters_still_pass_and_extra_ones_are_dropped(monkeypatch):
+    got = {}
+
+    def zet(kleur, helderheid=100):
+        got.update(kleur=kleur, helderheid=helderheid)
+        return "ok"
+
+    monkeypatch.setitem(gh.functies_dispatcher, "zet_x", zet)
+    assert gh._dispatch({"name": "zet_x", "arguments": {"kleur": "rood", "helderheid": 30, "snelheid": 9}}) == "ok"
+    assert got == {"kleur": "rood", "helderheid": 30}
+
+
+def test_a_missing_required_parameter_is_still_a_clear_error(monkeypatch):
+    monkeypatch.setitem(gh.functies_dispatcher, "zet_x", lambda kleur: "ok")
+    out = gh._dispatch({"name": "zet_x", "arguments": {"verzonnen": 1}})
+    assert out.startswith("(kon 'zet_x' niet uitvoeren") and "kleur" in out
+
+
+def test_var_keyword_tools_get_everything(monkeypatch):
+    monkeypatch.setitem(gh.functies_dispatcher, "flex", lambda **kw: ",".join(sorted(kw)))
+    assert gh._dispatch({"name": "flex", "arguments": {"a": 1, "b": 2}}) == "a,b"
+
+
+@pytest.mark.parametrize("raw", [None, [], ["a"], "tekst", 5, [1, 2]])
+def test_non_object_arguments_are_treated_as_none(monkeypatch, raw):
+    monkeypatch.setitem(gh.functies_dispatcher, "geen_args", lambda: "gedaan")
+    assert gh._dispatch({"name": "geen_args", "arguments": raw}) == "gedaan"
+
+
+def test_huge_tool_results_are_truncated(monkeypatch):
+    monkeypatch.setitem(gh.functies_dispatcher, "groot", lambda: "x" * 50_000)
+    out = gh._dispatch({"name": "groot", "arguments": {}})
+    assert len(out) < gh._MAX_TOOL_RESULT_CHARS + 40 and out.endswith("(ingekort)")
+    monkeypatch.setitem(gh.functies_dispatcher, "klein", lambda: "kort")
+    assert gh._dispatch({"name": "klein", "arguments": {}}) == "kort"

@@ -7,6 +7,7 @@ otherwise we return the model's plain reply.
 from __future__ import annotations
 
 import asyncio
+import inspect
 import json
 import threading
 import time
@@ -448,6 +449,31 @@ def _begin_turn(s):
 friendly_ai_error = llm.friendly_error      # bewaard voor bestaande aanroepers/tests
 
 
+# Een tool-uitkomst gaat als tekst terug de prompt in; onbegrensd (een lange notitielijst, een
+# webresultaat) rekt dat de context van een klein model op een Pi tot minutenlange antwoorden.
+_MAX_TOOL_RESULT_CHARS = 4000
+
+
+def _tool_kwargs(name: str, fn, raw) -> dict:
+    """De argumenten die het model meegaf, geschikt voor ``fn``. Kleine modellen verzinnen parameters
+    (logboek 2026-09-14: ``verzend_logs_per_mail() got an unexpected keyword argument 'prompt'``) of
+    geven geen object mee; een onbekende parameter weggooien is veiliger dan de hele tool laten falen,
+    en een ontbrekende verplichte parameter geeft nog steeds een duidelijke foutmelding."""
+    if not isinstance(raw, dict):
+        return {}
+    try:
+        params = inspect.signature(fn).parameters
+    except (TypeError, ValueError):
+        return dict(raw)
+    if any(p.kind is inspect.Parameter.VAR_KEYWORD for p in params.values()):
+        return dict(raw)
+    kwargs = {k: v for k, v in raw.items() if k in params}
+    dropped = sorted(set(raw) - set(kwargs))
+    if dropped:
+        log("AI", f"Functie {name}: onbekende parameters van het model genegeerd: {', '.join(map(str, dropped))}")
+    return kwargs
+
+
 def _dispatch(call) -> str:
     """Eén tool draaien; een fout wordt een nette string i.p.v. een traceback."""
     name = call.get("name", "?")
@@ -455,9 +481,12 @@ def _dispatch(call) -> str:
     if not fn:
         return f"(onbekende functie '{name}')"
     try:
-        uitkomst = fn(**(call.get("arguments") or {}))
+        uitkomst = fn(**_tool_kwargs(name, fn, call.get("arguments")))
         log("AI", f"Functie {name} -> {uitkomst}")
-        return str(uitkomst)
+        text = str(uitkomst)
+        if len(text) > _MAX_TOOL_RESULT_CHARS:
+            text = text[:_MAX_TOOL_RESULT_CHARS].rstrip() + " ... (ingekort)"
+        return text
     except Exception as exc:  # noqa: BLE001
         log("ERROR", f"Functie {name} faalde: {exc}")
         return f"(kon '{name}' niet uitvoeren: {exc})"
