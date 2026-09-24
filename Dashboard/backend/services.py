@@ -420,7 +420,7 @@ def pi_spotify_device(fresh: bool = False) -> dict | None:
     lookup op elke poll betekenen."""
     if fresh:
         _data_cache.pop("spotify:pi_device", None)
-    return _cached("spotify:pi_device", 60, _discover_pi_spotify_device)
+    return _cached("spotify:pi_device", 60, _discover_pi_spotify_device, fallback=None)
 
 
 def start_playback(sp, **kwargs):
@@ -495,42 +495,50 @@ def _probe(name: str):
 
 
 def _spotify_has_device() -> bool:
-    """Gecached (TTL): heeft de gebruiker OVERHAUPT een Spotify-apparaat
-    geregistreerd (voor de 'geen apparaat'-waarschuwing op het dashboard) --
-    los van of er nu iets actief speelt en los van of het specifiek de Pi
-    is. active_device_id() is hier bewust NIET voor bedoeld sinds die
-    alleen nog het actieve apparaat of de Pi teruggeeft (zie aldaar); deze
-    check kijkt naar de volledige apparatenlijst."""
-    now = time.time()
-    cached = _health_cache.get("spotify_device")
-    if cached and cached[1] >= now:
-        return cached[0]
-    s = _services.get("spotify")
-    try:
-        has = bool(s and s.sp.devices().get("devices"))
-    except Exception:  # noqa: BLE001 - check zelf mag niet zeuren
-        has = True
-    _health_cache["spotify_device"] = (has, now + _HEALTH_TTL)
-    return has
+    """Gecached (TTL, single-flight): heeft de gebruiker OVERHAUPT een Spotify-
+    apparaat geregistreerd (voor de 'geen apparaat'-waarschuwing op het
+    dashboard) -- los van of er nu iets actief speelt en los van of het
+    specifiek de Pi is. active_device_id() is hier bewust NIET voor bedoeld
+    sinds die alleen nog het actieve apparaat of de Pi teruggeeft (zie
+    aldaar); deze check kijkt naar de volledige apparatenlijst."""
+    def has():
+        s = _services.get("spotify")
+        try:
+            return bool(s and s.sp.devices().get("devices"))
+        except Exception:  # noqa: BLE001 - check zelf mag niet zeuren
+            return True
+
+    return _cached("spotify:has_device", _HEALTH_TTL, has, fallback=True)
 
 
 def service_status() -> dict:
-    now = time.time()
     names = ("spotify", "radio", "weer", "agenda")
 
-    # verlopen probes parallel doen — scheelt seconden op trage wifi
-    stale = [n for n in names
-             if not (_health_cache.get(n) and _health_cache[n][2] >= now)]
-    if stale:
-        from concurrent.futures import ThreadPoolExecutor
+    def stale_names():
+        now = time.time()
+        return [n for n in names if not (_health_cache.get(n) and _health_cache[n][2] >= now)]
 
-        with ThreadPoolExecutor(max_workers=len(stale)) as ex:
-            for n, res in zip(stale, ex.map(_probe, stale)):
-                _health_cache[n] = (res[0], res[1], now + _HEALTH_TTL)
+    if stale_names():
+        # Eén thread ververst de probes (parallel -- scheelt seconden op trage
+        # wifi); anderen serveren het oude resultaat i.p.v. elk zelf dezelfde
+        # (mogelijk hangende) probes te draaien en workers vast te zetten.
+        first_time = any(n not in _health_cache for n in names)
+        if _status_lock.acquire(timeout=_CACHE_FIRST_WAIT_S if first_time else 0):
+            try:
+                stale = stale_names()
+                if stale:
+                    from concurrent.futures import ThreadPoolExecutor
+
+                    with ThreadPoolExecutor(max_workers=len(stale)) as ex:
+                        for n, res in zip(stale, ex.map(_probe, stale)):
+                            _health_cache[n] = (res[0], res[1], time.time() + _HEALTH_TTL)
+            finally:
+                _status_lock.release()
 
     out = {}
     for n in names:
-        ok, err, _ = _health_cache[n]
+        entry = _health_cache.get(n)
+        ok, err = (entry[0], entry[1]) if entry else (False, "wordt gecontroleerd")
         out[n] = {"ok": ok, "error": err}
         if n == "spotify":
             relink = bool(err and "opnieuw koppelen" in err)
@@ -542,35 +550,72 @@ def service_status() -> dict:
 
 
 # /api/overview wordt elke ~10s gepolld; weer/agenda hoeven niet zo vaak vers
-def _cached(key: str, ttl: float, produce):
-    now = time.time()
+_CACHE_FIRST_WAIT_S = 4.0    # zo lang mag een aanroep wachten op de EERSTE ophaalactie van een key
+_status_lock = threading.Lock()
+
+
+def _expire(key: str) -> None:
+    """Markeer een cache-entry als verlopen maar BEWAAR de waarde: de eerstvolgende
+    aanroep ververst (single-flight), gelijktijdige aanroepen krijgen ondertussen
+    de oude waarde i.p.v. te blokkeren. (Wegpoppen, zoals eerder bij fresh=True/
+    invalidate, maakte van elke follower een wachtende thread.)"""
     hit = _data_cache.get(key)
-    if hit and hit[1] >= now:
+    if hit:
+        _data_cache[key] = (hit[0], 0.0)
+
+
+def _store(key: str, ttl: float, val):
+    # een foutresultaat kort cachen zodat we niet elke 10s opnieuw hameren
+    _data_cache[key] = (val, time.time() + (20 if isinstance(val, dict) and val.get("error") else ttl))
+
+
+def _cached(key: str, ttl: float, produce, fallback=None):
+    """Single-flight + stale-while-revalidate.
+
+    Precies één thread ververst een verlopen key (``produce()`` mag lang
+    duren); gelijktijdige aanroepen krijgen meteen de laatste bekende waarde
+    terug i.p.v. een waitress-worker vast te zetten achter de lock. Lokaal
+    gereproduceerd (tools/stress_dashboard.py): met een trage Spotify/weer/
+    agenda stapelden de polls van een paar tabbladen zich op tot alle 16
+    workers bezet waren en het HELE dashboard bevroor. Bestond er nog
+    helemaal niets voor deze key, dan wacht een aanroep (begrensd) op de
+    lopende eerste ophaalactie en valt daarna terug op ``fallback``. Zelfde
+    principe verhinderde eerder al de cache-stampede (12 gelijktijdige
+    /api/overview-aanvragen = 6+ parallelle Google Calendar-verbindingen)."""
+    hit = _data_cache.get(key)
+    if hit and hit[1] >= time.time():
         return hit[0]
-    # Cache-stampede: zonder lock zouden meerdere gelijktijdige /api/overview-
-    # aanvragen (meerdere tabbladen, of gewoon de ~10s-poll die net samenvalt
-    # met een verlopen cache) allemaal tegelijk produce() aanroepen -- elk
-    # zijn EIGEN, volledig aparte live aanroep naar Google/iCloud/weer doen
-    # i.p.v. dat er maar één de cache vult en de rest meelift. Live gezien:
-    # 12 gelijktijdige /api/overview-aanvragen op de Pi triggerden 6+
-    # aparte, gelijktijdige Google Calendar-verbindingen, met SSL-fouten en
-    # timeouts tot gevolg. Zelfde dubbel-gecontroleerde locking als svc()
-    # hierboven al gebruikt voor het bouwen van een service.
-    with _named_lock(_data_cache_locks, key):
-        now = time.time()
-        hit = _data_cache.get(key)
-        if hit and hit[1] >= now:
-            return hit[0]
-        val = produce()
-        # een foutresultaat kort cachen zodat we niet elke 10s opnieuw hameren
-        _data_cache[key] = (val, now + (20 if isinstance(val, dict) and val.get("error") else ttl))
-        return val
+    lock = _named_lock(_data_cache_locks, key)
+    if lock.acquire(blocking=False):
+        try:
+            hit = _data_cache.get(key)
+            if hit and hit[1] >= time.time():   # net door een ander gevuld
+                return hit[0]
+            val = produce()
+            _store(key, ttl, val)
+            return val
+        finally:
+            lock.release()
+    # een andere thread ververst al
+    if hit:
+        return hit[0]                   # oud maar bruikbaar: geen thread vastzetten
+    if lock.acquire(timeout=_CACHE_FIRST_WAIT_S):
+        try:
+            hit = _data_cache.get(key)
+            if hit:
+                return hit[0]
+            val = produce()             # de eerste ophaalactie mislukte (exception): zelf proberen
+            _store(key, ttl, val)
+            return val
+        finally:
+            lock.release()
+    return fallback
 
 
 def weather_data(city=None, fresh: bool = False) -> dict:
     key = f"weather:{city or '_'}"
     if fresh:
-        _data_cache.pop(key, None)
+        _expire(key)
 
     def fetch():
         w = svc("weer")
@@ -578,12 +623,12 @@ def weather_data(city=None, fresh: bool = False) -> dict:
             return {"error": _errors.get("weer", "weer niet beschikbaar")}
         return w.fetch_weather(city) or {"error": "geen weerdata"}
 
-    return _cached(key, 600, fetch)   # 10 min
+    return _cached(key, 600, fetch, fallback={"error": "weer wordt opgehaald"})   # 10 min
 
 
 def calendar_today(fresh: bool = False) -> dict:
     if fresh:
-        _data_cache.pop("calendar:today", None)
+        _expire("calendar:today")
 
     def fetch():
         cal = svc("agenda")
@@ -594,7 +639,8 @@ def calendar_today(fresh: bool = False) -> dict:
         except Exception as exc:  # noqa: BLE001
             return {"events": [], "error": str(exc)}
 
-    return _cached("calendar:today", 300, fetch)           # 5 min
+    return _cached("calendar:today", 300, fetch,
+                   fallback={"events": [], "error": "agenda wordt opgehaald"})   # 5 min
 
 
 def calendar_events(start, end) -> dict:
@@ -619,10 +665,26 @@ def calendar_events(start, end) -> dict:
             return {"events": [], "error": str(exc)}
         return {"events": events, "error": cal.error}
 
-    return _cached(key, 300, fetch)   # 5 min
+    return _cached(key, 300, fetch,
+                   fallback={"events": [], "error": "agenda wordt opgehaald"})   # 5 min
+
+
+def invalidate(*keys: str) -> None:
+    """Gooi cache-keys weg na een actie die de getoonde staat verandert (bv.
+    pauze/volgende/apparaat kiezen), zodat de eerstvolgende refresh geen
+    (max. paar seconden) oude waarde toont."""
+    for k in keys:
+        _expire(k)
 
 
 def current_playing() -> dict:
+    """Gecached (2s, single-flight): met N tabbladen die elke ~4s pollen was dit
+    N Spotify-API-aanroepen per poll -- en bij een trage Spotify N vastgezette
+    workers. Acties in media_api roepen invalidate("now_playing") aan."""
+    return _cached("now_playing", 2.0, _current_playing_uncached, fallback={"type": "none"})
+
+
+def _current_playing_uncached() -> dict:
     sp = svc("spotify")
     if sp:
         try:
@@ -643,3 +705,64 @@ def current_playing() -> dict:
         except Exception as exc:  # noqa: BLE001
             _degrade("current_playing/radio", exc)
     return {"type": "none"}
+
+
+def spotify_device_list() -> dict:
+    """Voor /api/devices: Spotify's Web API-apparaten aangevuld met de Pi zelf
+    (mDNS) zolang die nog niet gekoppeld is. Gecached (5s, single-flight) --
+    media.js pollt dit, en bij een trage Spotify stapelden die polls op."""
+    return _cached("spotify:devices", 5.0, _build_spotify_device_list,
+                   fallback={"success": False, "error": "apparaten worden opgehaald"})
+
+
+def _build_spotify_device_list() -> dict:
+    try:
+        sp = sp_dj().sp
+    except Exception as exc:  # noqa: BLE001 - geen Spotify-koppeling
+        return {"success": False, "error": str(exc)}
+
+    devs: dict = {}
+    errors = []
+    # sp.devices() laat een Sonos/SYMFONISK vaak weg, óók terwijl 'ie speelt...
+    try:
+        for d in (sp.devices().get("devices") or []):
+            if d.get("id"):
+                devs[d["id"]] = d
+    except Exception as exc:  # noqa: BLE001
+        errors.append(str(exc))
+    # ...maar current_playback() kent 'm wel. Een Sonos/Cast krijgt van Spotify
+    # geen id (je kunt er niet via de Web-API naartoe schakelen) -> toch tonen,
+    # maar als 'speelt hier', niet als kies-doel.
+    playing = None
+    try:
+        dev = (sp.current_playback() or {}).get("device") or {}
+        if dev.get("id"):
+            devs.setdefault(dev["id"], dev)
+        elif dev.get("name"):
+            playing = {"id": None, "name": dev["name"], "type": dev.get("type", "Speaker"), "active": True}
+    except Exception as exc:  # noqa: BLE001
+        errors.append(str(exc))
+
+    # De Pi is via Spotify's Web API pas zichtbaar NADAT iemand 'm één keer
+    # via de officiële Spotify-app heeft geselecteerd en er iets op heeft
+    # afgespeeld (zie active_device_id()). Daarvóór is-ie al wel gewoon op het
+    # netwerk te vinden via mDNS -- reken dat mee bij het bepalen of er "niks"
+    # is, anders krijgt precies het geval waar deze check voor bedoeld is
+    # (Web API geeft niks terug) de Pi nooit de kans om zich alsnog te melden.
+    pi_name = config.get("spotify.pi_device_name", "Kamer-AI")
+    pi_known = any(d.get("name") == pi_name for d in devs.values()) or bool(playing and playing["name"] == pi_name)
+    local_pi = None if pi_known else pi_spotify_device()
+
+    if not devs and not playing and not local_pi and errors:
+        return {"success": False, "error": errors[0]}
+
+    out = [{"id": d["id"], "name": d.get("name", "?"), "type": d.get("type", "?"),
+            "active": bool(d.get("is_active"))} for d in devs.values()]
+    if playing:
+        out.append(playing)
+    if local_pi:
+        # Vooraan: het is Kamer-AI's eigen luidspreker, zodat je meteen ziet
+        # dat-ie er is en (via de tooltip) wat je moet doen om 'm te koppelen.
+        out.insert(0, {"id": None, "name": pi_name, "type": "Speaker",
+                       "active": False, "local_only": True})
+    return {"success": True, "warning": errors[0] if errors else None, "devices": out}

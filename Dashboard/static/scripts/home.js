@@ -223,7 +223,19 @@ $("note-input").addEventListener("keydown", e => { if (e.key === "Enter") { e.pr
   const npMs = Math.max(p.poll_now_playing_ms || 4000, 2000);
 
   await refreshAll();
-  setInterval(refreshAll, overviewMs);
+  // geen overlappende polls en niet op de achtergrond: bij een trage server
+  // stapelden aanvragen zich op (elk bezet een waitress-worker)
+  const guarded = fn => {
+    let busy = false;
+    return async () => {
+      if (busy || document.hidden) return;
+      busy = true;
+      try { await fn(); } finally { busy = false; }
+    };
+  };
+  const gOverview = guarded(refreshAll);
+  setInterval(gOverview, overviewMs);
+  document.addEventListener("visibilitychange", () => { if (!document.hidden) gOverview(); });
   // only add a separate now-playing poll if it's meaningfully faster
-  if (npMs < overviewMs - 1000) setInterval(refreshNowPlaying, npMs);
+  if (npMs < overviewMs - 1000) setInterval(guarded(refreshNowPlaying), npMs);
 })();

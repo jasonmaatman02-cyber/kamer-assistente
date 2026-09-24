@@ -22,6 +22,8 @@ class SpotifyError(RuntimeError):
 
 
 class SpotifyDJ:
+    last_error: str | None = None   # reden van de laatste mislukte _call (voor de dashboard-melding)
+
     def __init__(self):
         self.scope = SPOTIFY_SCOPE
         # requests_timeout blokkeert een eindeloze hang; retries op de default (3)
@@ -51,16 +53,19 @@ class SpotifyDJ:
     def _call(self, what, fn, *a, **kw):
         try:
             fn(*a, **kw)
+            self.last_error = None
             return True
         except spotipy.SpotifyException as exc:
             msg = "Geen actief Spotify-apparaat." if "NO_ACTIVE_DEVICE" in str(exc) or exc.http_status == 404 \
                 else f"Spotify-fout: {exc.msg or exc}"
             log("Muziek", f"{what} mislukt: {exc}")
             print(msg)
+            self.last_error = msg
             return False
         except Exception as exc:  # noqa: BLE001
             log("Muziek", f"{what} mislukt: {exc}")
             print(f"Spotify onbereikbaar: {exc}")
+            self.last_error = f"Spotify onbereikbaar: {exc}"
             return False
 
     # ------------------------------------------------------------------ #

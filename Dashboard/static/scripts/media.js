@@ -241,10 +241,10 @@ $("np-play-pause").addEventListener("click", async () => {
   const url = currentType === "radio"
     ? (isPlaying ? "/api/radio_pause" : "/api/radio_resume")
     : (isPlaying ? "/api/spotify_pause" : "/api/spotify_resume");
-  await jpost(url); updateCurrentPlaying();
+  await playAction(url); updateCurrentPlaying();
 });
-$("next-btn").addEventListener("click", async () => { await jpost("/api/spotify_next"); updateCurrentPlaying(); });
-$("prev-btn").addEventListener("click", async () => { await jpost("/api/spotify_previous"); updateCurrentPlaying(); });
+$("next-btn").addEventListener("click", async () => { await playAction("/api/spotify_next"); updateCurrentPlaying(); });
+$("prev-btn").addEventListener("click", async () => { await playAction("/api/spotify_previous"); updateCurrentPlaying(); });
 
 // volume
 const volumeSlider = $("volume-slider");
@@ -359,6 +359,16 @@ searchInput.addEventListener("input", () => {
   loadRadioStations();
   loadSpotifyDevices();
 
-  setInterval(updateCurrentPlaying, npMs);
-  setInterval(() => { if (deviceFails < 3) loadSpotifyDevices(); }, devMs);
+  // geen overlappende polls: bij een trage server stapelden aanvragen zich op
+  let npBusy = false, devBusy = false;
+  setInterval(async () => {
+    if (npBusy || document.hidden) return;
+    npBusy = true;
+    try { await updateCurrentPlaying(); } finally { npBusy = false; }
+  }, npMs);
+  setInterval(async () => {
+    if (devBusy || document.hidden || deviceFails >= 3) return;
+    devBusy = true;
+    try { await loadSpotifyDevices(); } finally { devBusy = false; }
+  }, devMs);
 })();

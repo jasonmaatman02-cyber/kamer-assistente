@@ -105,6 +105,7 @@ def play_playlist():
         return jsonify({"success": False, "error": "Geen playlist ID"}), 400
     try:
         _start_playback(S.sp_dj().sp, context_uri=f"spotify:playlist:{pid}")
+        S.invalidate("now_playing", "spotify:devices")
         return jsonify({"success": True})
     except Exception as exc:  # noqa: BLE001
         return _play_error(exc)
@@ -131,6 +132,7 @@ def play_track():
                 _start_playback(sp, context_uri=album_uri, offset={"uri": track_uri})
             else:
                 _start_playback(sp, uris=[track_uri])
+        S.invalidate("now_playing", "spotify:devices")
         return jsonify({"success": True, "track_id": track_id})
     except Exception as exc:  # noqa: BLE001
         return _play_error(exc)
@@ -157,10 +159,19 @@ def search_spotify():
 
 def _simple(fn):
     try:
-        fn()
-        return jsonify({"success": True})
+        result = fn()
     except Exception as exc:  # noqa: BLE001
         return _play_error(exc)
+    if result is False:
+        # SpotifyDJ._call() vangt de fout zelf af en geeft False terug -- dat werd
+        # hier als succes gemeld (pauze/hervat zonder actief apparaat leek te
+        # lukken, de reden bereikte de UI nooit).
+        reason = getattr(S.svc("spotify"), "last_error", None) or "Spotify-commando mislukt"
+        if "Geen actief" in reason:
+            return _no_device_response()
+        return jsonify({"success": False, "error": reason}), 502
+    S.invalidate("now_playing", "spotify:devices")   # UI toont meteen de nieuwe staat
+    return jsonify({"success": True})
 
 
 @media_bp.route("/api/spotify_pause", methods=["POST"])
@@ -193,59 +204,8 @@ def seek():
 
 @media_bp.route("/api/devices")
 def devices():
-    try:
-        sp = S.sp_dj().sp
-    except Exception as exc:  # noqa: BLE001 - geen Spotify-koppeling
-        return jsonify({"success": False, "error": str(exc)}), 503
-
-    devs: dict = {}
-    errors = []
-    # sp.devices() laat een Sonos/SYMFONISK vaak weg, óók terwijl 'ie speelt...
-    try:
-        for d in (sp.devices().get("devices") or []):
-            if d.get("id"):
-                devs[d["id"]] = d
-    except Exception as exc:  # noqa: BLE001
-        errors.append(str(exc))
-    # ...maar current_playback() kent 'm wel. Een Sonos/Cast krijgt van Spotify
-    # geen id (je kunt er niet via de Web-API naartoe schakelen) -> toch tonen,
-    # maar als 'speelt hier', niet als kies-doel.
-    playing = None
-    try:
-        dev = (sp.current_playback() or {}).get("device") or {}
-        if dev.get("id"):
-            devs.setdefault(dev["id"], dev)
-        elif dev.get("name"):
-            playing = {"id": None, "name": dev["name"], "type": dev.get("type", "Speaker"), "active": True}
-    except Exception as exc:  # noqa: BLE001
-        errors.append(str(exc))
-
-    # De Pi is via Spotify's Web API pas zichtbaar NADAT iemand 'm één keer
-    # via de officiële Spotify-app heeft geselecteerd en er iets op heeft
-    # afgespeeld (zie services.active_device_id()). Daarvóór is-ie al wel
-    # gewoon op het netwerk te vinden via mDNS -- reken dat mee bij het
-    # bepalen of er "niks" is, anders krijgt precies het geval waar deze
-    # check voor bedoeld is (Web API geeft niks terug) de Pi nooit de kans
-    # om zich alsnog te melden.
-    pi_name = config.get("spotify.pi_device_name", "Kamer-AI")
-    pi_known = any(d.get("name") == pi_name for d in devs.values()) or bool(playing and playing["name"] == pi_name)
-    local_pi = None if pi_known else S.pi_spotify_device()
-
-    if not devs and not playing and not local_pi and errors:
-        return jsonify({"success": False, "error": errors[0]}), 503
-
-    out = [{"id": d["id"], "name": d.get("name", "?"), "type": d.get("type", "?"),
-            "active": bool(d.get("is_active"))} for d in devs.values()]
-    if playing:
-        out.append(playing)
-    if local_pi:
-        # Vooraan: het is Kamer-AI's eigen luidspreker, zodat je meteen ziet
-        # dat-ie er is en (via de tooltip) wat je moet doen om 'm te koppelen,
-        # i.p.v. dat het dashboard doet alsof de Pi niet bestaat.
-        out.insert(0, {"id": None, "name": pi_name, "type": "Speaker",
-                        "active": False, "local_only": True})
-
-    return jsonify({"success": True, "warning": errors[0] if errors else None, "devices": out})
+    data = S.spotify_device_list()
+    return jsonify(data), (200 if data.get("success") else 503)
 
 
 @media_bp.route("/api/set_device", methods=["POST"])
@@ -273,25 +233,33 @@ def radio_play():
         return jsonify({"success": False, "error": "radio niet beschikbaar"}), 503
     if not station:
         return jsonify({"success": False, "error": "Geen station"}), 400
-    return jsonify({"success": True, "message": r.play(station)})
+    msg = r.play(station)
+    S.invalidate("now_playing")
+    return jsonify({"success": True, "message": msg})
 
 
 @media_bp.route("/api/radio_stop", methods=["POST"])
 def radio_stop():
     r = S.svc("radio")
-    return jsonify({"success": True, "message": r.stop() if r else "radio niet beschikbaar"})
+    msg = r.stop() if r else "radio niet beschikbaar"
+    S.invalidate("now_playing")
+    return jsonify({"success": True, "message": msg})
 
 
 @media_bp.route("/api/radio_pause", methods=["POST"])
 def radio_pause():
     r = S.svc("radio")
-    return jsonify({"success": True, "message": r.pause() if r else "-"})
+    msg = r.pause() if r else "-"
+    S.invalidate("now_playing")
+    return jsonify({"success": True, "message": msg})
 
 
 @media_bp.route("/api/radio_resume", methods=["POST"])
 def radio_resume():
     r = S.svc("radio")
-    return jsonify({"success": True, "message": r.resume() if r else "-"})
+    msg = r.resume() if r else "-"
+    S.invalidate("now_playing")
+    return jsonify({"success": True, "message": msg})
 
 
 # --------------------------------------------------------------------------- #
@@ -315,6 +283,7 @@ def set_volume():
             ok = r.set_volume(volume)
         else:
             return jsonify({"success": False, "error": "Niets speelt"}), 400
+        S.invalidate("now_playing")
         return jsonify({"success": bool(ok)})
     except Exception as exc:  # noqa: BLE001
         return jsonify({"success": False, "error": str(exc)}), 500
