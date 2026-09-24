@@ -126,6 +126,12 @@ Formaat per item: **ID | subsystem | probleem | oorzaak | oplossing | tests | re
 - **Voor Jason**: (1) de secrets uit de README-tabel moeten geroteerd zijn/worden (ze staan ook in de git-geschiedenis van de openbare repo, commits vóór `e562430`); (2) opruimen op de Pi kan zonder gevolgen voor de app: `rm -r /home/pi/kamer-assistente/keys` (de map is leeg op dit `.pyc` na). Verder bekeken: `.env`, `.cache` (Spotify) en `google_calendar_token.json` zijn `0600`; `settings.json` (644) bevat geen geheimen (alleen sleutelnamen/waarden voor camera, presence, lampen, routines); `data/notes.json` is 664 (persoonlijke notities, `pi`-groep) -- laag risico, niet gewijzigd.
 - **Tests**: n.v.t. (systeeminspectie). **Resterend risico**: zolang het `.pyc` er staat en de oude sleutels niet zijn ingetrokken, is een lokale gebruiker op de Pi of iemand met een back-up van de SD-kaart in staat ze te lezen.
 
+### S3-20 | security | netwerkoppervlak van de Pi (read-only inventaris)
+- **Luisterend (`ss -tuln`)**: `tcp 22` (ssh), **`tcp 5000` (dashboard, 0.0.0.0)**, `tcp 1194` (OpenVPN-server), `tcp 443` (stunnel4), `tcp 127.0.0.1:11434` (Ollama, alleen lokaal -- goed), mDNS (`udp 5353`, avahi/zeroconf) en enkele tijdelijke poorten. Draaiende services buiten de app: `openvpn@server`, `stunnel4`, `raspotify` (het Spotify Connect-apparaat "Kamer-AI"), `bluetooth`, `ModemManager`, `unattended-upgrades`, `avahi-daemon`.
+- **Beoordeling**: het dashboard is bewust een LAN-dashboard (schrijfacties achter het optionele wachtwoord, camera/chat/instellingen wachtwoord-beschermd, CSRF-guard, bodylimiet). Die aanname geldt alleen zolang de router **poort 5000 niet doorstuurt**; de Pi draait daarnaast een OpenVPN-eindpunt (1194, met stunnel op 443), dus de Pi is mogelijk van buiten bereikbaar -- controleer in de router dat alleen 443/1194 zijn doorgestuurd, nooit 5000 of 22 zonder sleutel-login.
+- **Advies (niet uitgevoerd, systeemconfiguratie)**: `ModemManager` en `bluetooth` uitzetten als ze niet worden gebruikt (kleiner aanvalsvlak, geringe RAM/CPU-winst); zet een dashboard-wachtwoord (`DASHBOARD_PASSWORD`) als er ooit VPN-clients of gasten in het netwerk komen -- `password_set: true` staat nu al aan op de Pi.
+- **Tests**: n.v.t. **Resterend risico**: hangt af van de routerconfiguratie (buiten mijn bereik).
+
 ## Sessie 2 (2026-09-24, Pi tijdelijk onbereikbaar -> alles lokaal getest)
 
 Omgeving: Windows 11 dev-machine, Python 3.12. Geen SSH/deploy mogelijk;
