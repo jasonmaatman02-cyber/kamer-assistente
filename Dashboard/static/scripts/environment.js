@@ -29,12 +29,17 @@ document.getElementById("save-city").addEventListener("click", async () => {
   const msg = document.getElementById("city-msg");
   if (!city) return;
   msg.textContent = "Opslaan…";
-  await fetch("/api/settings", {
-    method: "POST", headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ weather: { city } }),
-  });
-  msg.textContent = "Opgeslagen ✓";
-  loadWeather();
+  try {
+    const r = await fetch("/api/settings", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ weather: { city } }),
+    });
+    const d = await r.json().catch(() => ({}));
+    // niet altijd "Opgeslagen" melden: bij een wachtwoord-slot (401) of een ongeldige waarde (400) was dat onwaar
+    msg.textContent = r.ok && d.success ? "Opgeslagen ✓"
+      : (d.login_required ? "Log eerst in (Settings)" : `Mislukt: ${d.error || "HTTP " + r.status}`);
+    if (r.ok) loadWeather();
+  } catch (e) { msg.textContent = "Netwerkfout"; }
   setTimeout(() => (msg.textContent = ""), 3000);
 });
 

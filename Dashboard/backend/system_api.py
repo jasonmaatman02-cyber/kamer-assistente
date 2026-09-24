@@ -21,12 +21,57 @@ def get_settings():
     return jsonify({"settings": config.all_settings(), "defaults": config.DEFAULTS, "errors": S.errors()})
 
 
+_MAX_SETTING_TEXT = 5000
+
+
+def _settings_type_errors(patch: dict, defaults: dict, path: str = "") -> list[str]:
+    """Typecontrole van een settings-patch tegen DEFAULTS. Er werd niets gevalideerd: een
+    tekst in een getal-veld (``camera.fps: "snel"``) of ``null`` werd bewaard en liet daarna
+    de camera-/presence-/AI-code bij elke aanroep falen tot settings.json met de hand
+    gerepareerd was. Onbekende sleutels (eigen routines, ...) blokkeren we niet."""
+    errors: list[str] = []
+    for key, val in patch.items():
+        if key not in defaults:
+            continue
+        p = f"{path}{key}"
+        default = defaults[key]
+        if isinstance(default, dict):
+            if not isinstance(val, dict):
+                errors.append(f"{p}: verwacht een object")
+            else:
+                errors += _settings_type_errors(val, default, p + ".")
+        elif default is None:
+            continue
+        elif isinstance(default, bool):
+            if not isinstance(val, bool):
+                errors.append(f"{p}: verwacht aan/uit")
+        elif isinstance(default, (int, float)):
+            if isinstance(val, bool) or not isinstance(val, (int, float)) or val != val or abs(val) == float("inf"):
+                errors.append(f"{p}: verwacht een getal")
+        elif isinstance(default, str):
+            if not isinstance(val, str):
+                errors.append(f"{p}: verwacht tekst")
+            elif len(val) > _MAX_SETTING_TEXT:
+                errors.append(f"{p}: te lang (max {_MAX_SETTING_TEXT})")
+        elif isinstance(default, list):
+            if not isinstance(val, list):
+                errors.append(f"{p}: verwacht een lijst")
+            elif p == "devices.lamps":
+                if len(val) > 20 or not all(isinstance(e, dict) and isinstance(e.get("ip", ""), str)
+                                            and isinstance(e.get("name", ""), str) for e in val):
+                    errors.append(f"{p}: max 20 lampen, elk met tekst-velden name en ip")
+    return errors
+
+
 @system_bp.route("/api/settings", methods=["POST"])
 @require_password
 def set_settings():
     patch = json_body()
-    if not isinstance(patch, dict):
+    if not patch:
         return jsonify({"success": False, "error": "verwacht een JSON-object"}), 400
+    errors = _settings_type_errors(patch, config.DEFAULTS)
+    if errors:
+        return jsonify({"success": False, "error": "; ".join(errors[:5])}), 400
     config.update(patch)
     S.reset_services()
     return jsonify({"success": True, "settings": config.all_settings()})

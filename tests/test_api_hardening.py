@@ -195,3 +195,52 @@ def test_thermostat_rejects_unusable_targets_with_400(client, raw):
     r = client.post("/api/thermostat", data=f'{{"target": {raw}}}', content_type="application/json")
     assert r.status_code == 400, r.get_data(as_text=True)[:200]
     assert r.is_json
+
+
+# --------------------------------------------------------------------------- #
+# Settings: typecontrole tegen DEFAULTS
+# --------------------------------------------------------------------------- #
+@pytest.mark.parametrize("patch", [
+    {"camera": {"fps": "snel"}},
+    {"camera": {"fps": None}},
+    {"camera": {"fps": True}},
+    {"camera": {"enabled": "ja"}},
+    {"camera": "aan"},
+    {"presence": {"interval_s": [3]}},
+    {"weather": {"city": 5}},
+    {"weather": {"city": "x" * 6000}},
+    {"devices": {"lamps": "geen-lijst"}},
+    {"devices": {"lamps": [{"name": "A", "ip": 5}]}},
+    {"devices": {"lamps": [1, 2]}},
+    {"ai": {"temperature": "warm"}},
+])
+def test_settings_patch_with_wrong_types_is_rejected_and_not_saved(client, patch):
+    before = client.get("/api/settings").get_json()["settings"]
+    r = client.post("/api/settings", json=patch)
+    assert r.status_code == 400 and r.get_json()["success"] is False
+    assert client.get("/api/settings").get_json()["settings"] == before
+
+
+def test_settings_patch_with_right_types_still_works(client):
+    r = client.post("/api/settings", json={
+        "camera": {"fps": 7.5, "enabled": False}, "weather": {"city": "Utrecht"},
+        "presence": {"interval_s": 4}, "routines": [{"id": "x"}], "onbekende": {"sleutel": 1},
+        "devices": {"lamps": [{"name": "Bureau", "ip": ""}]},
+    })
+    assert r.status_code == 200, r.get_data(as_text=True)
+    cfg = r.get_json()["settings"]
+    assert cfg["camera"]["fps"] == 7.5 and cfg["weather"]["city"] == "Utrecht"
+    assert cfg["devices"]["lamps"] == [{"name": "Bureau", "ip": ""}]
+
+
+def test_empty_or_non_object_patch_is_a_400(client):
+    assert client.post("/api/settings", json={}).status_code == 400
+    assert client.post("/api/settings", json=[1]).status_code == 400
+
+
+def test_roundtrip_of_all_current_settings_is_accepted(client):
+    """De Settings-pagina stuurt de hele boom terug; de typecontrole mag dat nooit weigeren."""
+    current = client.get("/api/settings").get_json()["settings"]
+    r = client.post("/api/settings", json=current)
+    assert r.status_code == 200, r.get_json()
+    assert client.get("/api/settings").get_json()["settings"] == current

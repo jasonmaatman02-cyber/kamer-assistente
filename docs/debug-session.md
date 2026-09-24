@@ -24,7 +24,8 @@ requirements-dashboard.txt` voor de nieuwe `zeroconf`-dependency).
 - c8a6ac6 agenda/ICS-parsing (S2-14)
 - 3c04aac AI-tools melden echte uitkomst (S2-15)
 - e4da17f begrensde groei, calendar-API auth, key-redactie (S2-16)
-- (volgende commit) verse presence-frames + chaos-test (S2-17)
+- b22ae23 verse presence-frames + chaos-test (S2-17)
+- (volgende commit) settings-typecontrole (S2-18)
 
 ### Items
 
@@ -171,6 +172,12 @@ Langlopende stabiliteit: alles wat een client kan laten groeien moet een bovengr
 - **Fix**: `_cv2_reader(cap).read(fresh=True)` trekt de rij eerst leeg met 3 goedkope `grab()`'s (dequeue, geen decode) en doet dan `read()`. Alleen in presence-only-modus (`_presence_only()`); de volle framerate (kijkers) blijft ongewijzigd; zonder `grab` of bij een falende grab valt het terug op een gewone `read()`; picamera2 ongewijzigd. Getest met een nep-cap en live op de dev-webcam (frames < 0,6 s oud). **Niet op V4L2/Pi getest** (dev-machine gebruikt MSMF): meten via `/api/health` -> `camera.frame_age_s` en de tijd tot lamp-AAN na binnenkomen.
 - **Eigenschappen-test** `tests/test_presence_chaos.py` (60 seeds x 400 ticks; persoon/leeg/geen beeld/falende detector): R1 lamp nooit UIT binnen de grace na een persoon, R2 niet binnen de grace na herstel van een storing, R3 geen lamp-actie tijdens een storing, R4 liveness. Mutatie-check: de oude "fout = 0 personen" wordt in 59/60 seeds gevangen.
 - **Bestanden**: `Dashboard/backend/camera_api.py`, `tests/test_camera.py` (+3), `tests/test_presence_chaos.py`.
+
+#### S2-18 Settings: typecontrole, ontbrekende foutmelding in de Environment-pagina
+- **Probleem**: `POST /api/settings` bewaarde elke waarde ongecontroleerd. Een tekst in een getal-veld (`camera.fps: "snel"`), `null`, `true` voor een getal, of een lamp zonder tekst-`ip` werd naar settings.json geschreven en liet daarna de camera-/presence-/AI-/routine-code bij elke aanroep falen tot het bestand met de hand gerepareerd werd. Ook `weather.city` van 1 MB was toegestaan.
+- **Fix**: `_settings_type_errors()` toetst de patch tegen `config.DEFAULTS` (bool/getal/tekst/lijst/object; bool geldt niet als getal; NaN/inf niet; tekst max 5000; `devices.lamps` max 20 met tekst-`name`/`ip`); onbekende sleutels (eigen routines, ...) blijven vrij; een lege patch is een 400. De Settings-pagina stuurt lege getal-velden al niet mee, en een round-trip van de hele huidige boom wordt geaccepteerd (test).
+- **Environment-pagina**: de knop "Stad opslaan" meldde altijd "Opgeslagen ✓", ook bij 401 (wachtwoord-slot) of 400 -> nu de echte uitkomst.
+- **Bestanden**: `Dashboard/backend/system_api.py`, `Dashboard/static/scripts/environment.js`, `tests/test_api_hardening.py` (+17).
 
 #### Statische analyse (uitgevoerd, geen verdere bevindingen)
 - ruff F: schoon na S2-2. bandit: 0 High, 1 Medium (`0.0.0.0` bind in `rundashboard.py`, bewust: LAN-dashboard achter optioneel wachtwoord), 21 Low (vaste-argv-subprocess, `try/except/pass`; beoordeeld, alleen tts-argv was echt).
