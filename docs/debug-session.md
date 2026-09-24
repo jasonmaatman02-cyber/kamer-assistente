@@ -21,7 +21,8 @@ requirements-dashboard.txt` voor de nieuwe `zeroconf`-dependency).
 - e45b475 detectiefout-als-onbekend + notifications (S2-11)
 - dd228cf API-invoer/CSRF/radio/kleuren + fuzz/soak (S2-12)
 - fc33b02 routine-uitkomsten, settings.json-quarantaine, lamp-fouten (S2-13)
-- (volgende commit) agenda/ICS-parsing (S2-14)
+- c8a6ac6 agenda/ICS-parsing (S2-14)
+- (volgende commit) AI-tools melden echte uitkomst (S2-15)
 
 ### Items
 
@@ -146,6 +147,11 @@ Bron: `scheduler/agenda.py::_normalize_event`/`_parse_event` lazen de ruwe VEVEN
 - **UTC-tijden** (`DTSTART:...Z`) werden als UTC-klokslag voorgelezen ("om 07:00" voor een afspraak om 09:00); nu naar lokale tijd.
 - **Injectie/collisie**: `add_event()` en de Google->ICS-conversie zetten de titel onge-escaped in de ICS (een newline in de titel voegde eigenschappen toe, bv. ATTENDEE/LOCATION); `add_event` gebruikte `int(timestamp)` als UID (twee events in dezelfde seconde overschreven elkaar) -> uuid4. (`add_event` wordt nu door geen enkele tool aangeroepen; toch robuust gemaakt.)
 - **Resterend risico (P3)**: `DTSTART;TZID=<andere zone>` wordt als zwevende tijd doorgegeven (geen TZID-conversie): correct zolang browser/Pi in dezelfde zone als de agenda staan (NL); Google-events in een andere zone tonen de klokslag van die zone.
+
+#### S2-15 AI-tools: dummy-succes bij muziek/volume/radio
+- **Probleem**: `speel_muziek` gaf altijd "Muziek gestart: X" terug, ook als Spotify onbereikbaar was, er geen actief apparaat was of er niets gevonden werd (`SpotifyDJ.speel_muziek` gaf `False`, het resultaat werd genegeerd). Hetzelfde voor `stop_audio`, `pauze_audio`, `resume_audio` ("Muziek gestopt" bij een mislukte stop) en `pas_volume_aan` (`set_volume`-resultaat genegeerd; bij "niets speelt" gaf `current_playback().get(...)` een AttributeError op `None`). Het model gaf die tekst rechtstreeks door als succes aan de gebruiker. `speel_radio` logde "Radio gestart" ook als de stream niet startte. `zet_lamp(helderheid=0|250|"fel")` liet de Tapo-fout doorborrelen.
+- **Fix**: alle tools rapporteren de echte uitkomst met de reden uit `SpotifyDJ.last_error` ("Kon 'abba' niet afspelen: Geen actief Spotify-apparaat."); `speel_muziek` zet `last_error` ook bij "geen resultaat"/zoekfout; radio-log klopt; helderheid wordt geklemd op 1-100 (onleesbaar = nette melding, lamp niet aangeraakt).
+- **Bestanden**: `logic/gpt_handler.py`, `sound_system/muziek.py`, `tests/test_ai_tools.py` (13 tests; 12 falen tegen de oude code).
 
 #### Statische analyse (uitgevoerd, geen verdere bevindingen)
 - ruff F: schoon na S2-2. bandit: 0 High, 1 Medium (`0.0.0.0` bind in `rundashboard.py`, bewust: LAN-dashboard achter optioneel wachtwoord), 21 Low (vaste-argv-subprocess, `try/except/pass`; beoordeeld, alleen tts-argv was echt).

@@ -103,6 +103,11 @@ def start_party_mode(locatie="kamer"):
 
 
 def zet_lamp(locatie="kamer", aan=None, kleur=None, helderheid=None):
+    if aan is None and not kleur and helderheid is not None:
+        try:
+            helderheid = max(1, min(100, int(helderheid)))     # de Tapo weigert 0 en >100
+        except (TypeError, ValueError):
+            return "Geen geldige helderheid (verwacht 1-100)"
     lamp = _lamp(locatie)
     if aan is True:
         asyncio.run(lamp.aan())
@@ -124,13 +129,26 @@ def zet_lamp(locatie="kamer", aan=None, kleur=None, helderheid=None):
 
 
 def speel_radio(zender):
-    result = _get("radio").play(zender)
-    log("Radio", f"Radio gestart: {zender}")
+    player = _get("radio")
+    result = player.play(zender)
+    if getattr(player, "last_error", None):
+        log("Radio", f"Radio starten mislukt ({zender}): {player.last_error}")
+    else:
+        log("Radio", f"Radio gestart: {zender}")
     return result
 
 
+def _spotify_reason(dj) -> str:
+    return getattr(dj, "last_error", None) or "onbekende fout"
+
+
 def speel_muziek(zoekterm):
-    _get("spotify").speel_muziek(zoekterm)
+    dj = _get("spotify")
+    if not dj.speel_muziek(zoekterm):
+        # voorheen altijd "Muziek gestart", ook als Spotify onbereikbaar was of er niets
+        # gevonden werd -- het model meldde de gebruiker dan een succes dat er niet was
+        log("Muziek", f"Muziek starten mislukt: {zoekterm} ({_spotify_reason(dj)})")
+        return f"Kon '{zoekterm}' niet afspelen: {_spotify_reason(dj)}"
     log("Muziek", f"Muziek gestart: {zoekterm}")
     return f"Muziek gestart: {zoekterm}"
 
@@ -153,8 +171,8 @@ def _audio_active():
 def stop_audio():
     which = _audio_active()
     if which == "spotify":
-        _get("spotify").stop()
-        return "Muziek gestopt"
+        dj = _get("spotify")
+        return "Muziek gestopt" if dj.stop() else f"Kon de muziek niet stoppen: {_spotify_reason(dj)}"
     if which == "radio":
         _get("radio").stop()
         return "Radio gestopt"
@@ -164,8 +182,8 @@ def stop_audio():
 def pauze_audio():
     which = _audio_active()
     if which == "spotify":
-        _get("spotify").pauze()
-        return "Muziek gepauzeerd"
+        dj = _get("spotify")
+        return "Muziek gepauzeerd" if dj.pauze() else f"Kon de muziek niet pauzeren: {_spotify_reason(dj)}"
     if which == "radio":
         _get("radio").pause()
         return "Radio gepauzeerd"
@@ -177,8 +195,8 @@ def resume_audio():
     if which == "radio":
         _get("radio").resume()
         return "Radio hervat"
-    _get("spotify").resume()
-    return "Muziek hervat"
+    dj = _get("spotify")
+    return "Muziek hervat" if dj.resume() else f"Kon de muziek niet hervatten: {_spotify_reason(dj)}"
 
 
 def pas_volume_aan(richting):
@@ -188,11 +206,15 @@ def pas_volume_aan(richting):
         if which == "radio":
             player = _get("radio")
             cur = player.player.audio_get_volume()
-            player.set_volume(cur + delta)
+            ok = player.set_volume(cur + delta)
         else:
             player = _get("spotify")
-            cur = player.sp.current_playback().get("device", {}).get("volume_percent", 50)
-            player.set_volume(max(0, min(100, cur + delta)))
+            playback = player.sp.current_playback() or {}      # None als er niets speelt
+            cur = (playback.get("device") or {}).get("volume_percent", 50)
+            ok = player.set_volume(max(0, min(100, cur + delta)))
+        if not ok:
+            reason = getattr(player, "last_error", None)
+            return f"Kon het volume niet aanpassen{': ' + reason if reason else ''}"
         return "Geluid harder gezet" if delta > 0 else "Geluid zachter gezet"
     except Exception as exc:  # noqa: BLE001
         return f"Kon volume niet aanpassen: {exc}"

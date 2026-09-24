@@ -74,9 +74,11 @@ class SpotifyDJ:
             result = self.sp.search(q=zoekterm, type="track", limit=1)
         except Exception as exc:  # noqa: BLE001
             log("Muziek", f"zoeken mislukt: {exc}")
+            self.last_error = f"Spotify onbereikbaar: {exc}"
             return False
         items = result.get("tracks", {}).get("items") or []
         if not items:
+            self.last_error = f"Geen resultaat voor '{zoekterm}'"
             return False
         track = items[0]
         # Zelfde apparaat-standaardgedrag als de dashboard-knoppen (zie
