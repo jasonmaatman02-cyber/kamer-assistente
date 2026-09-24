@@ -22,6 +22,9 @@ def get_settings():
 
 
 _MAX_SETTING_TEXT = 5000
+# Velden die zowel een getal als tekst mogen zijn: 'presence.lamp' is "index of naam" (default 0, maar
+# de Settings-pagina bewaart het als tekst, ook op de echte Pi: "lamp": "0").
+_NUMBER_OR_TEXT = {"presence.lamp"}
 
 
 def _settings_type_errors(patch: dict, defaults: dict, path: str = "") -> list[str]:
@@ -42,6 +45,9 @@ def _settings_type_errors(patch: dict, defaults: dict, path: str = "") -> list[s
                 errors += _settings_type_errors(val, default, p + ".")
         elif default is None:
             continue
+        elif p in _NUMBER_OR_TEXT:
+            if isinstance(val, bool) or not isinstance(val, (int, float, str)) or (isinstance(val, str) and len(val) > 200):
+                errors.append(f"{p}: verwacht een getal of tekst")
         elif isinstance(default, bool):
             if not isinstance(val, bool):
                 errors.append(f"{p}: verwacht aan/uit")

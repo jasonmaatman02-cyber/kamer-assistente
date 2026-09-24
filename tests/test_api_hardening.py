@@ -268,3 +268,47 @@ def test_lamp_endpoint_with_an_index_that_does_not_exist_does_not_act_on_lamp_ze
     r = client.put("/api/lamp/on", json={"lamp": 5})
     assert r.status_code == 400 and r.get_json()["message"] == "geen lamp geconfigureerd"
     assert touched == []
+
+
+def test_every_settings_page_field_passes_the_type_check():
+    """De Settings-pagina bewaart sommige getalachtige velden als tekst (presence.lamp = "0" op de echte
+    Pi). Lees het UI-schema en toets per veld een waarde van het TYPE dat de pagina echt stuurt -- zo
+    kan de typecontrole nooit stilzwijgend het opslaan van de Settings-pagina breken."""
+    import re
+    from pathlib import Path
+
+    from Dashboard.backend.system_api import _settings_type_errors
+
+    src = (Path(__file__).resolve().parent.parent / "Dashboard" / "static" / "scripts" / "settings.js").read_text(encoding="utf-8")
+    block = src[src.index("const SCHEMA"):src.index("function fieldId")]
+    sample = {"bool": True, "number": 1, "list": ["a"], "text": "0", "select": "x", "password": "x", "textarea": "x"}
+    section, fields = None, 0
+    for line in block.split("\n"):
+        m = re.search(r'\bkey:\s*"([a-z_]+)"', line)
+        if m:
+            section = m.group(1)
+        m2 = re.search(r'\{\s*path:\s*"([^"]+)"[^}]*?\btype:\s*"([a-z]+)"', line)
+        if m2 and section:
+            fields += 1
+            patch = {section: {}}
+            node = patch[section]
+            parts = m2.group(1).split(".")
+            for part in parts[:-1]:
+                node = node.setdefault(part, {})
+            node[parts[-1]] = sample[m2.group(2)]
+            errors = _settings_type_errors(patch, config.DEFAULTS)
+            assert not errors, f"{section}.{m2.group(1)} ({m2.group(2)}): {errors}"
+    assert fields > 40, fields          # het schema is echt gelezen
+
+
+def test_settings_saved_as_the_pi_has_them_are_accepted(client):
+    """Werkelijke settings.json van de Pi (presence.lamp als tekst, kleine cijfers, routines)."""
+    r = client.post("/api/settings", json={
+        "camera": {"fps": 15, "browser_detection": True, "detect_threshold": 0.4, "lamp_quiet_from": "21:30", "lamp_quiet_to": "7:00"},
+        "dashboard": {"poll_system_ms": 500}, "alarm": {"time": "07:00"},
+        "presence": {"enabled": True, "interval_s": 4, "auto_light_enabled": True, "lamp": "0"},
+        "devices": {"lamps": [{"name": "Bedroom Lamp", "ip": "192.168.2.2"}, {"name": "Desk Lamp", "ip": "192.168.2.26"}]},
+    })
+    assert r.status_code == 200, r.get_json()
+    assert client.post("/api/settings", json={"presence": {"lamp": 1}}).status_code == 200
+    assert client.post("/api/settings", json={"presence": {"lamp": True}}).status_code == 400
