@@ -101,7 +101,8 @@ def _run_step(step):
     elif kind == "say":
         from voice.tts_output import speak
 
-        speak(step.get("text", ""))
+        if speak(step.get("text", "")) is False:
+            raise RuntimeError("spraak kon niet worden afgespeeld (TTS/audio)")
     else:
         raise ValueError(f"onbekende actie: {kind}")
 

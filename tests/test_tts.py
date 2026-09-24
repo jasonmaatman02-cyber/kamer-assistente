@@ -322,3 +322,55 @@ def test_direct_espeak_timeout_scales_with_the_text(monkeypatch):
     monkeypatch.setattr(subprocess, "run", fake_run)
     tts._speak_espeak("y" * 500)
     assert seen["timeout"] == 70.0
+
+
+# --------------------------------------------------------------------------- #
+# speak() meldt of er echt iets uitgesproken is
+# --------------------------------------------------------------------------- #
+def test_play_system_reports_whether_any_player_worked(monkeypatch):
+    import ai.tts as tts
+
+    monkeypatch.setattr(tts, "_printed", {})
+
+    def none_available(cmd, **kw):
+        raise FileNotFoundError(cmd[0])
+
+    monkeypatch.setattr(subprocess, "run", none_available)
+    assert tts._play_system("/tmp/x.wav") is False
+
+    monkeypatch.setattr(subprocess, "run", lambda cmd, **kw: subprocess.CompletedProcess(cmd, 0))
+    assert tts._play_system("/tmp/x.wav") is True
+
+
+def test_speak_returns_true_only_when_something_was_spoken(monkeypatch, tmp_path):
+    import ai.tts as tts
+    import config
+
+    assert tts.speak("") is True and tts.speak("   ") is True          # niets te zeggen
+    config.set("tts.backend", "none")
+    assert tts.speak("hoi") is True                                     # bewust stil
+
+    config.set("tts.backend", "piper")
+    wav = tmp_path / "x.wav"
+    wav.write_bytes(b"RIFF")
+    monkeypatch.setattr(tts, "synthesize", lambda text: None)
+    assert tts.speak("hoi") is False                                    # synthese mislukt
+
+    monkeypatch.setattr(tts, "synthesize", lambda text: str(wav))
+    monkeypatch.setattr(tts, "_play", lambda path: False)
+    assert tts.speak("hoi") is False                                    # geen speler/geluidskaart
+    assert not wav.exists()                                             # tempbestand toch opgeruimd
+
+    wav.write_bytes(b"RIFF")
+    monkeypatch.setattr(tts, "_play", lambda path: True)
+    assert tts.speak("hoi") is True
+
+    config.set("tts.backend", "espeak")
+    monkeypatch.setattr(tts, "_speak_espeak", lambda text: None)
+    assert tts.speak("hoi") is True
+
+    def boom(text):
+        raise RuntimeError("espeak weg")
+
+    monkeypatch.setattr(tts, "_speak_espeak", boom)
+    assert tts.speak("hoi") is False

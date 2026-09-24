@@ -164,7 +164,8 @@ def _synth_openai(text: str, out_path: str) -> str:
 # --------------------------------------------------------------------------- #
 # Playback
 # --------------------------------------------------------------------------- #
-def _play(path: str) -> None:
+def _play(path: str) -> bool:
+    """Speel ``path`` af. True = afgespeeld, False = geen enkele speler kon het (geen geluidskaart/speler)."""
     global _mixer_ready
     try:
         try:
@@ -172,8 +173,7 @@ def _play(path: str) -> None:
         except ImportError:
             # Dashboard-only installatie (de Pi): pygame is er bewust niet; gewoon de systeemspeler,
             # zonder bij elke uitspraak een foutmelding naar het journal te schrijven.
-            _play_system(path)
-            return
+            return _play_system(path)
 
         if _mixer_ready is None:
             if os.name == "nt":
@@ -194,10 +194,11 @@ def _play(path: str) -> None:
                 break
             time.sleep(0.1)
         pygame.mixer.music.unload()
+        return True
     except Exception as exc:  # noqa: BLE001
         _mixer_ready = False
         print(f"[tts] afspelen mislukt ({exc}); probeer systeemspeler")
-        _play_system(path)
+        return _play_system(path)
 
 
 def _system_play_timeout(path: str) -> float:
@@ -214,7 +215,9 @@ def _system_play_timeout(path: str) -> float:
         return 20.0 if not str(path).lower().endswith(".mp3") else 120.0
 
 
-def _play_system(path: str) -> None:
+def _play_system(path: str) -> bool:
+    """True als een systeemspeler het afspeelde; False als ze allemaal faalden (geen speler geinstalleerd,
+    geen geluidskaart, apparaat bezet). Voorheen werd dat stil ingeslikt: spraak "lukte" dan zonder geluid."""
     timeout = _system_play_timeout(path)
     for player in (["aplay", path], ["ffplay", "-nodisp", "-autoexit", path], ["afplay", path]):
         try:
@@ -222,9 +225,11 @@ def _play_system(path: str) -> None:
             # ALSA gebruikt) mag deze speler nooit voorgoed laten hangen -- dan
             # gewoon door naar de volgende speler in de lijst.
             subprocess.run(player, check=True, capture_output=True, timeout=timeout)
-            return
+            return True
         except Exception:  # noqa: BLE001
             continue
+    _print_dedup("[tts] geen enkele audiospeler kon het afspelen (geen geluidskaart of speler?)")
+    return False
 
 
 # --------------------------------------------------------------------------- #
@@ -275,38 +280,42 @@ def synthesize(text: str, out_path: str | None = None) -> str | None:
         return None
 
 
-def speak(text: str) -> None:
+def speak(text: str) -> bool:
+    """Spreek ``text`` uit. True = uitgesproken (of bewust niets te doen: lege tekst / backend "none");
+    False = synthese of afspelen mislukte. Blijft blokkeren tot de spraak klaar is; nooit een exceptie."""
     backend = (config.get("tts.backend") or "piper").lower()
     if not text or not text.strip():
-        return
+        return True
     if backend == "none":
         print(f"[tts:none] {text}")
-        return
+        return True
     global _speaking_since
     with _speak_lock:
         _speaking_since = time.monotonic()
         try:
-            _speak_locked(text, backend)
+            return _speak_locked(text, backend)
         finally:
             _speaking_since = None
 
 
-def _speak_locked(text: str, backend: str) -> None:
+def _speak_locked(text: str, backend: str) -> bool:
     if backend == "espeak":
         try:
             _speak_espeak(text)
+            return True
         except Exception as exc:  # noqa: BLE001
             print(f"[tts] espeak faalde: {exc}")
-        return
+            return False
     path = synthesize(text)
-    if path:
+    if not path:
+        return False
+    try:
+        return bool(_play(path))
+    finally:
         try:
-            _play(path)
-        finally:
-            try:
-                os.remove(path)
-            except OSError:
-                pass
+            os.remove(path)
+        except OSError:
+            pass
 
 
 # Backwards-compat: old code did ``from voice.tts_output import TextToSpeech``.

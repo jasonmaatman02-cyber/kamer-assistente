@@ -284,3 +284,40 @@ def test_a_quick_llm_answer_is_spoken_as_before(monkeypatch):
     monkeypatch.setattr(llm, "complete", lambda p, **kw: "  Goedemorgen, slaapkop!  ")
     R._say_generated("prompt", "vast")
     assert spoken == ["Goedemorgen, slaapkop!"]
+
+
+def test_routine_reports_a_step_whose_speech_could_not_be_played(monkeypatch):
+    """Geen geluidskaart/speler: speak() geeft False; de stap 'slaagde' voorheen stil zonder geluid."""
+    import scheduler.routines as R
+    from ai import llm
+
+    monkeypatch.setattr(R, "speak", lambda text: False)
+    monkeypatch.setattr(llm, "complete", lambda p, **kw: "hoi")
+    monkeypatch.setattr(R, "get_notes", lambda cat: [])
+    config.set("features.radio", False)
+    failures = R.morning_routine()
+    assert len(failures) == 2                                       # groet + notities
+    assert all("spraak kon niet worden afgespeeld" in f for f in failures)
+
+
+def test_a_speak_that_returns_none_or_true_is_fine(monkeypatch):
+    import scheduler.routines as R
+    from ai import llm
+
+    monkeypatch.setattr(llm, "complete", lambda p, **kw: "hoi")
+    monkeypatch.setattr(R, "get_notes", lambda cat: [])
+    config.set("features.radio", False)
+    for value in (None, True):
+        monkeypatch.setattr(R, "speak", lambda text, v=value: v)
+        assert R.morning_routine() == []
+
+
+def test_custom_say_step_reports_unplayable_speech(client, monkeypatch):
+    import voice.tts_output as T
+
+    monkeypatch.setattr(T, "speak", lambda text: False)
+    config.set("routines", [{"id": "zeg", "name": "Zeg", "desc": "", "steps": [{"action": "say", "text": "hoi"}]}])
+    r = client.post("/api/routines/run", json={"id": "zeg"})
+    assert r.status_code == 502 and "spraak kon niet" in r.get_json()["error"]
+    monkeypatch.setattr(T, "speak", lambda text: True)
+    assert client.post("/api/routines/run", json={"id": "zeg"}).status_code == 200

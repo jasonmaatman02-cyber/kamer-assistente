@@ -36,12 +36,19 @@ def _say_generated(prompt: str, fallback: str) -> None:
     worker.start()
     worker.join(_GREETING_WAIT_S)
     if worker.is_alive():
-        speak(fallback)
+        _speak_or_raise(fallback)
         raise TimeoutError(f"het model antwoordde niet binnen {int(_GREETING_WAIT_S)} s")
     if "exc" in result:
-        speak(fallback)
+        _speak_or_raise(fallback)
         raise result["exc"]
-    speak((result.get("text") or "").strip() or fallback)
+    _speak_or_raise((result.get("text") or "").strip() or fallback)
+
+
+def _speak_or_raise(text: str) -> None:
+    """Spreek uit en meld het als het NIET lukte (geen geluidskaart/speler/TTS-fout): de stap telt dan als
+    mislukt i.p.v. stil te "slagen" zonder dat er iets te horen was."""
+    if speak(text) is False:
+        raise RuntimeError("spraak kon niet worden afgespeeld (TTS/audio)")
 
 
 def _all_lamps():
@@ -94,11 +101,11 @@ def morning_routine() -> list[str]:
     def _notes():
         notes = get_notes("default")
         if notes:
-            speak("Hier zijn je notities voor vandaag.")
+            _speak_or_raise("Hier zijn je notities voor vandaag.")
             for note in notes:
-                speak(f"{note.get('timestamp', '')}: {note.get('note', '')}".strip(": "))
+                _speak_or_raise(f"{note.get('timestamp', '')}: {note.get('note', '')}".strip(": "))
         else:
-            speak("Je hebt geen notities voor vandaag.")
+            _speak_or_raise("Je hebt geen notities voor vandaag.")
 
     _step("Notes", _notes, failures)
     log("ROUTINE", "Finished morning routine")
