@@ -86,3 +86,32 @@ def test_normal_routine_ids_still_work(client):
     ids = [r["id"] for r in client.get("/api/routines").get_json()["routines"]]
     assert "mijn-routine_2" in ids
     assert client.delete("/api/routines/mijn-routine_2").status_code == 200
+
+
+def test_oversized_request_bodies_are_refused(client):
+    """waitress' default is 1 GB per request (gespoold naar schijf)."""
+    from Dashboard.backend.main import MAX_BODY_BYTES
+
+    big = '{"note": "' + "x" * (MAX_BODY_BYTES + 10) + '"}'
+    r = client.post("/api/notes", data=big, content_type="application/json")
+    assert r.status_code == 413
+    ok = client.post("/api/notes", json={"note": "gewoon"})
+    assert ok.status_code == 200
+
+
+def test_waitress_is_started_with_the_same_body_limit(monkeypatch):
+    import rundashboard
+
+    seen = {}
+
+    class FakeWorker:
+        def start(self):
+            pass
+
+    import waitress
+    import Dashboard.backend.presence as presence_mod
+
+    monkeypatch.setattr(presence_mod, "worker", FakeWorker())
+    monkeypatch.setattr(waitress, "serve", lambda app, **kw: seen.update(kw))
+    rundashboard.main()
+    assert seen["max_request_body_size"] == rundashboard.MAX_BODY_BYTES

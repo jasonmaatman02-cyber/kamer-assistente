@@ -3,7 +3,7 @@
 Uses waitress (production WSGI server) when it's installed, else falls back to
 the Flask dev server.
 """
-from Dashboard.backend.main import app
+from Dashboard.backend.main import MAX_BODY_BYTES, app
 from logic.logger import log
 
 HOST, PORT = "0.0.0.0", 5000
@@ -34,7 +34,8 @@ def main():
         # eerste token binnenkomt; in die stille periode stuurt de SSE-stream
         # nog niks, en waitress kapt een kanaal zonder dataverkeer anders af
         # (live gemeten op de Pi: één 1407-token bericht duurde 3m45s totaal).
-        serve(app, host=HOST, port=PORT, threads=16, channel_timeout=300, ident="kamer-dashboard")
+        serve(app, host=HOST, port=PORT, threads=16, channel_timeout=300, ident="kamer-dashboard",
+              max_request_body_size=MAX_BODY_BYTES)
     except ImportError:
         app.run(host=HOST, port=PORT, threaded=True, use_reloader=False)
 

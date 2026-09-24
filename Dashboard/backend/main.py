@@ -11,6 +11,12 @@ from flask import Flask, request
 
 app = Flask(__name__, template_folder="../", static_folder="../static")
 
+# Alle legitieme requests zijn kleine JSON-bodies (Settings is het grootst, ~tientallen
+# kB). Zonder limiet accepteert waitress 1 GB per request (default) en spoolt dat naar
+# schijf: een LAN-client kon zo de SD-kaart van de Pi vollopen.
+MAX_BODY_BYTES = 2 * 1024 * 1024
+app.config["MAX_CONTENT_LENGTH"] = MAX_BODY_BYTES
+
 
 _SIDE_EFFECT_GETS = {"/api/chat_stream"}
 
