@@ -447,3 +447,86 @@ def test_expired_google_token_gives_an_actionable_message():
     cal.error = None
     cal._connect()
     assert "koppel opnieuw" in cal.error and cal.error.startswith("a@b.c:")
+
+
+# --------------------------------------------------------------------------- #
+# Agenda die bij het opstarten faalt herstelt zichzelf
+# --------------------------------------------------------------------------- #
+class _FlakyCal:
+    name = "Prive"
+
+    def date_search(self, start, end):
+        class E:
+            data = "BEGIN:VEVENT\r\nSUMMARY:Tandarts\r\nDTSTART:20260924T090000\r\nEND:VEVENT\r\n"
+        return [E()]
+
+
+class _FlakyAccount:
+    provider = "google"
+
+    def __init__(self, email, fail_times):
+        self.email = email
+        self.fail_times = fail_times
+        self.calls = 0
+
+    def calendars(self):
+        self.calls += 1
+        if self.calls <= self.fail_times:
+            raise ConnectionError("Temporary failure in name resolution")
+        return [_FlakyCal()]
+
+
+def _multi(accounts):
+    import scheduler.agenda as A
+
+    cal = object.__new__(A.MultiProviderCalendar)
+    cal._accounts = accounts
+    cal.error = None
+    cal.calendars = cal._connect()
+    return cal
+
+
+def test_calendar_that_failed_at_startup_is_retried_and_recovers():
+    """De verbinding werd maar EEN keer gemaakt (bij het opstarten): was het netwerk toen even weg,
+    dan bleef de agenda kapot tot een herstart."""
+    acc = _FlakyAccount("a@b.c", fail_times=1)
+    cal = _multi([acc])
+    assert cal.calendars == [] and "a@b.c" in cal.error and acc.calls == 1
+
+    assert cal.get_all_events(None, None) == [] and acc.calls == 1      # binnen de wachttijd: geen nieuwe poging
+
+    cal._last_attempt -= 61                                             # een minuut later
+    events = cal.get_all_events(None, None)
+    assert acc.calls == 2 and len(events) == 1
+    assert cal.error is None and len(cal.calendars) == 1
+
+    cal.get_all_events(None, None)                                      # verbonden: geen extra pogingen meer
+    assert acc.calls == 2
+
+
+def test_retry_only_touches_the_failed_account_and_keeps_the_error_for_it():
+    ok, bad = _FlakyAccount("goed@b.c", 0), _FlakyAccount("kapot@b.c", 99)
+    cal = _multi([ok, bad])
+    assert len(cal.calendars) == 1 and "kapot@b.c" in cal.error
+
+    cal._last_attempt -= 61
+    cal.get_all_events(None, None)
+    assert ok.calls == 1                                                # het werkende account niet opnieuw verbonden
+    assert bad.calls == 2 and len(cal.calendars) == 1
+    assert "kapot@b.c" in cal.error and "goed@b.c" not in cal.error
+
+
+def test_retries_are_rate_limited_and_never_concurrent():
+    import threading
+
+    acc = _FlakyAccount("a@b.c", fail_times=99)
+    cal = _multi([acc])
+    cal._last_attempt -= 61
+    threads = [threading.Thread(target=cal.get_all_events, args=(None, None)) for _ in range(8)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(5)
+    assert acc.calls == 2                                               # 1x opstart + 1x retry, niet 8x
+    cal.get_all_events(None, None)
+    assert acc.calls == 2                                               # en de volgende minuut weer pas

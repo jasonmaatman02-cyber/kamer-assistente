@@ -32,6 +32,8 @@ from __future__ import annotations
 
 import os
 import re
+import threading
+import time
 import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -345,16 +347,22 @@ def _configured_accounts() -> list:
 # Orchestrator: verzamelt agenda's van alle geconfigureerde accounts,
 # provider-onafhankelijk.
 # --------------------------------------------------------------------------- #
+_RECONNECT_AFTER_S = 60.0
+_reconnect_lock = threading.Lock()
+
+
 class MultiProviderCalendar:
     def __init__(self):
         self._accounts = _configured_accounts()
         self.error = None
+        self._failed: list = []          # accounts waarvan de verbinding (nog) niet lukte
+        self._last_attempt = 0.0
         self.calendars = self._connect()
 
-    def _connect(self):
-        cals = []
-        errors = []
-        for acc in self._accounts:
+    def _connect_accounts(self, accounts):
+        """(agenda's, foutmeldingen, mislukte accounts) voor de gegeven accounts."""
+        cals, errors, failed = [], [], []
+        for acc in accounts:
             try:
                 acc_cals = acc.calendars()
                 for cal in acc_cals:
@@ -368,6 +376,13 @@ class MultiProviderCalendar:
                 # alleen url+reason; onze eigen RuntimeErrors bevatten geen
                 # secrets), dus veilig om te loggen/tonen.
                 errors.append(f"{acc.email}: {describe_calendar_error(exc)}")
+                failed.append(acc)
+        return cals, errors, failed
+
+    def _connect(self):
+        cals, errors, failed = self._connect_accounts(self._accounts)
+        self._failed = failed
+        self._last_attempt = time.monotonic()
         # Ook zichtbaar maken als één account faalt terwijl een ander wel lukt --
         # anders verdwijnt een kapot account geruisloos zodra er nog een
         # werkend account is (agenda leek dan "ok").
@@ -375,11 +390,35 @@ class MultiProviderCalendar:
             self.error = "; ".join(errors)
         return cals
 
+    def _reconnect_if_needed(self) -> None:
+        """Probeer mislukte accounts opnieuw (hooguit 1x per minuut). De verbinding werd maar
+        EEN keer gemaakt, bij het opstarten van de service: was het netwerk/DNS/Google dan even weg
+        (Pi net gebooted), dan bleef de agenda kapot tot een herstart of een Settings-opslag."""
+        failed = getattr(self, "_failed", None)
+        if not failed or time.monotonic() - getattr(self, "_last_attempt", 0.0) < _RECONNECT_AFTER_S:
+            return
+        if not _reconnect_lock.acquire(blocking=False):
+            return                       # een andere thread is al bezig
+        try:
+            if time.monotonic() - self._last_attempt < _RECONNECT_AFTER_S:
+                return
+            self._last_attempt = time.monotonic()
+            cals, errors, still_failed = self._connect_accounts(failed)
+            if cals:
+                self.calendars = list(self.calendars) + cals
+            self._failed = still_failed
+            self.error = "; ".join(errors) if errors else None
+            print(f"[agenda] opnieuw verbinden: {len(cals)} agenda('s) erbij, "
+                  f"{len(still_failed)} account(s) nog niet bereikbaar")
+        finally:
+            _reconnect_lock.release()
+
     # ------------------------------------------------------------------ #
     def get_normalized_events(self, start_date, end_date) -> list[dict]:
         """Voor de Kalender-tab: platte, provider-onafhankelijke event-dicts
         (zie _normalize_event). Eén kapotte agenda breekt de rest niet af --
         zelfde per-agenda try/except-patroon als get_all_events()."""
+        self._reconnect_if_needed()
         out = []
         for cal in self.calendars:
             name = getattr(cal, "name", "Agenda") or "Agenda"
@@ -393,6 +432,7 @@ class MultiProviderCalendar:
 
     # ------------------------------------------------------------------ #
     def get_all_events(self, start_date, end_date):
+        self._reconnect_if_needed()
         events = []
         for cal in self.calendars:
             try:
