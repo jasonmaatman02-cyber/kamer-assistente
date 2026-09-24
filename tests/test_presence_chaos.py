@@ -41,7 +41,6 @@ def _run(seed, monkeypatch, ticks=400):
     last_recovery = None          # sim-tijd waarop een storing eindigde
     was_disturbed = False
     valid_empty_since = None
-    empties = []                  # (tijd waarop R4 had moeten gelden, staat)
 
     for _ in range(ticks):
         # kies de volgende toestand, met lange runs zodat grace-periodes ook echt verstrijken
