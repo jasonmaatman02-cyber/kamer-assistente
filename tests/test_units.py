@@ -809,6 +809,7 @@ def test_weather_data_is_cached(monkeypatch):
     a = services.weather_data()
     b = services.weather_data()                  # binnen TTL -> uit cache
     assert a == b and calls["n"] == 1
+    monkeypatch.setattr(services, "_FRESH_MIN_AGE_S", 0.0)   # de 15 s-begrenzing van 'verversen' staat in test_swr
     services.weather_data(fresh=True)            # bypass
     assert calls["n"] == 2
 

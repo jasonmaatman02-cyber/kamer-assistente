@@ -123,6 +123,7 @@ def reset_services():
         _build_failed_at.clear()
         _build_locks.clear()
         _data_cache_locks.clear()
+        _stored_at.clear()
     try:
         from Dashboard.backend.camera_api import camera
 
@@ -588,14 +589,25 @@ _CACHE_FIRST_WAIT_S = 4.0    # zo lang mag een aanroep wachten op de EERSTE opha
 _status_lock = threading.Lock()
 
 
-def _expire(key: str) -> None:
+_stored_at: dict = {}      # key -> tijdstip van de laatste (ver)se opslag, voor de 'fresh'-begrenzing
+_FRESH_MIN_AGE_S = 15.0    # 'verversen' mag een externe API (Google/Open-Meteo) hooguit 1x per 15 s raken
+
+
+def _expire(key: str, min_age: float = 0.0) -> None:
     """Markeer een cache-entry als verlopen maar BEWAAR de waarde: de eerstvolgende
     aanroep ververst (single-flight), gelijktijdige aanroepen krijgen ondertussen
     de oude waarde i.p.v. te blokkeren. (Wegpoppen, zoals eerder bij fresh=True/
-    invalidate, maakte van elke follower een wachtende thread.)"""
+    invalidate, maakte van elke follower een wachtende thread.)
+
+    ``min_age``: niet verlopen laten als de waarde jonger is (open GET-routes met ``fresh=True``
+    lieten anders elke aanroep -- ook van een script op het LAN -- een live Google-/weer-aanroep doen,
+    ~320 ms per keer op de Pi en een risico op API-limieten)."""
     hit = _data_cache.get(key)
-    if hit:
-        _data_cache[key] = (hit[0], 0.0)
+    if not hit:
+        return
+    if min_age and time.time() - _stored_at.get(key, 0.0) < min_age:
+        return
+    _data_cache[key] = (hit[0], 0.0)
 
 
 # Keys worden deels door de client bepaald (?city=..., ?start=..&end=..): zonder
@@ -625,6 +637,7 @@ def _prune_cache() -> None:
 def _store(key: str, ttl: float, val):
     # een foutresultaat kort cachen zodat we niet elke 10s opnieuw hameren
     _data_cache[key] = (val, time.time() + (20 if isinstance(val, dict) and val.get("error") else ttl))
+    _stored_at[key] = time.time()
     _prune_cache()
 
 
@@ -674,7 +687,7 @@ def _cached(key: str, ttl: float, produce, fallback=None):
 def weather_data(city=None, fresh: bool = False) -> dict:
     key = f"weather:{city or '_'}"
     if fresh:
-        _expire(key)
+        _expire(key, min_age=_FRESH_MIN_AGE_S)
 
     def fetch():
         w = svc("weer")
@@ -687,7 +700,7 @@ def weather_data(city=None, fresh: bool = False) -> dict:
 
 def calendar_today(fresh: bool = False) -> dict:
     if fresh:
-        _expire("calendar:today")
+        _expire("calendar:today", min_age=_FRESH_MIN_AGE_S)
 
     def fetch():
         cal = svc("agenda")

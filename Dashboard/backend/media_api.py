@@ -70,7 +70,7 @@ def playlist_tracks(playlist_id):
     market = config.get("spotify.market", "NL")
     tracks, offset = [], 0
     try:
-        while True:
+        for _page_no in range(10):        # harde bovengrens: een API die eindeloos 'next' blijft geven lus niet voor altijd
             page = sp.playlist_items(playlist_id, market=market, additional_types=("track",),
                                      limit=100, offset=offset)
             for it in page.get("items", []):
@@ -89,7 +89,7 @@ def playlist_tracks(playlist_id):
                     "thumbnail": imgs[0]["url"] if imgs else "",
                     "uri": t["uri"],
                 })
-            if not page.get("next") or len(tracks) >= 300:
+            if not page.get("next") or len(tracks) >= 300 or not page.get("items"):
                 break
             offset += 100
     except Exception as exc:  # noqa: BLE001

@@ -359,3 +359,37 @@ def test_radio_controls_without_a_radio_service_are_not_reported_as_success(clie
     monkeypatch.setattr(S, "svc", lambda name: None)
     r = client.post(url)
     assert r.status_code == 503 and r.get_json()["success"] is False
+
+
+def test_playlist_tracks_cannot_loop_forever_on_a_pager_that_never_ends(client, monkeypatch):
+    from Dashboard.backend import services as S
+
+    calls = {"n": 0}
+
+    class SP:
+        def playlist(self, pid, fields=None):
+            return {"name": "x", "images": []}
+
+        def playlist_items(self, pid, **kw):
+            calls["n"] += 1
+            return {"items": [], "next": "https://api.spotify.com/eindeloos"}      # nooit klaar, nooit items
+
+    class DJ:
+        sp = SP()
+
+    monkeypatch.setattr(S, "sp_dj", lambda: DJ())
+    r = client.get("/api/playlist_tracks/abc")
+    assert r.status_code == 200 and r.get_json()["tracks"] == []
+    assert calls["n"] == 1                                    # leeg blok: stoppen
+
+    calls["n"] = 0
+
+    class SP2(SP):
+        def playlist_items(self, pid, **kw):
+            calls["n"] += 1
+            return {"items": [{"track": {"type": "track", "uri": f"spotify:track:{calls['n']}", "id": "i", "name": "n",
+                                         "artists": [], "duration_ms": 1000, "album": {"images": []}}}], "next": "meer"}
+
+    DJ.sp = SP2()
+    r = client.get("/api/playlist_tracks/abc")
+    assert r.status_code == 200 and calls["n"] == 10          # begrensd op 10 pagina's

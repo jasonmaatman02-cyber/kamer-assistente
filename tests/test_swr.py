@@ -326,3 +326,68 @@ def test_repeated_identical_build_failures_are_logged_once(monkeypatch, capsys):
         S.svc("spotify")
         clock["t"] += 61
     assert capsys.readouterr().out.count("niet beschikbaar") == 1
+
+
+# --------------------------------------------------------------------------- #
+# 'fresh' (verversen) raakt een externe API hooguit 1x per 15 s
+# --------------------------------------------------------------------------- #
+def test_fresh_refresh_is_rate_limited_per_key(monkeypatch):
+    from Dashboard.backend import services as S
+
+    S._data_cache.clear()
+    S._stored_at.clear()
+    now = {"t": 5000.0}
+    monkeypatch.setattr(S.time, "time", lambda: now["t"])
+    fetches = []
+
+    class Weer:
+        def fetch_weather(self, city=None):
+            fetches.append(city)
+            return {"city": "x", "temp": len(fetches)}
+
+    S._services["weer"] = Weer()
+    assert S.weather_data(fresh=True)["temp"] == 1
+    for _ in range(20):                                     # een script dat de route rammelt
+        S.weather_data(fresh=True)
+    assert len(fetches) == 1
+    now["t"] += 16
+    assert S.weather_data(fresh=True)["temp"] == 2          # na 15 s mag verversen weer
+    assert len(fetches) == 2
+
+
+def test_invalidate_after_a_media_action_is_never_rate_limited(monkeypatch):
+    from Dashboard.backend import services as S
+
+    S._data_cache.clear()
+    S._stored_at.clear()
+    n = {"c": 0}
+
+    def produce():
+        n["c"] += 1
+        return {"v": n["c"]}
+
+    S._cached("now_playing", 60, produce)
+    S.invalidate("now_playing")                              # bv. na 'pauze': meteen verse staat tonen
+    assert S._cached("now_playing", 60, produce)["v"] == 2
+
+
+def test_calendar_today_route_does_not_hit_google_on_every_call(client, monkeypatch):
+    from Dashboard.backend import services as S
+
+    S._data_cache.clear()
+    S._stored_at.clear()
+    calls = []
+
+    class Cal:
+        error = None
+        calendars = [object()]
+        fetch_errors = []
+
+        def return_todays_events(self):
+            calls.append(1)
+            return ["Tandarts om 09:00"]
+
+    S._services["agenda"] = Cal()
+    for _ in range(10):
+        assert client.get("/api/calendar_today").get_json()["events"] == ["Tandarts om 09:00"]
+    assert len(calls) == 1
