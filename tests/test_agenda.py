@@ -652,3 +652,28 @@ def test_calendar_that_fails_to_fetch_is_reported_not_shown_as_no_events(monkeyp
     S._data_cache.clear()
     ok = S.calendar_today(fresh=True)
     assert ok.get("error") is None and any("Tandarts" in e for e in ok["events"])
+
+
+def test_events_of_a_utc_google_calendar_are_read_out_in_local_time(monkeypatch):
+    """Echte Pi-data: de Google-kalender staat op tijdzone UTC, dus de API levert 'dateTime' als UTC
+    ('2026-09-24T13:00:00Z', event-timeZone Europe/Amsterdam). De oude code kapte de 'Z' eraf en toonde/las
+    voor 13:00 i.p.v. 15:00 (alle Google-afspraken 2 uur te vroeg)."""
+    import datetime
+
+    import scheduler.agenda as A
+
+    monkeypatch.setattr(A, "_local_tz", lambda: datetime.timezone(datetime.timedelta(hours=2)))
+    payload = [
+        {"summary": "Charlotte, Meike en sophie blijven slapen", "start": {"dateTime": "2026-09-24T13:00:00Z", "timeZone": "Europe/Amsterdam"},
+         "end": {"dateTime": "2026-09-25T12:00:00Z", "timeZone": "Europe/Amsterdam"}},
+        {"summary": "HM gesprek MO20", "start": {"dateTime": "2026-09-24T18:00:00Z", "timeZone": "Europe/Brussels"},
+         "end": {"dateTime": "2026-09-24T19:00:00Z", "timeZone": "Europe/Brussels"}},
+        {"summary": "EM feestje nijmegen", "start": {"dateTime": "2026-09-24T21:00:00Z", "timeZone": "Europe/Amsterdam"},
+         "end": {"dateTime": "2026-09-25T02:00:00Z", "timeZone": "Europe/Amsterdam"}},
+    ]
+    spoken = [A.MultiProviderCalendar._parse_event(A._google_event_to_simple(item)) for item in payload]
+    assert spoken == [("Charlotte, Meike en sophie blijven slapen", "15:00"),
+                      ("HM gesprek MO20", "20:00"), ("EM feestje nijmegen", "23:00")]
+    tab = [A._normalize_event(A._google_event_to_simple(i), "G", "google") for i in payload]
+    assert [e["start"][11:16] for e in tab] == ["15:00", "20:00", "23:00"]
+    assert tab[2]["end"].startswith("2026-09-25T04:00")            # het feest loopt door tot 04:00 lokaal
