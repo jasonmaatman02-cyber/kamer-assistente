@@ -423,8 +423,9 @@ def _discover_pi_spotify_device() -> dict | None:
     except ImportError:  # niet geïnstalleerd -> deze functie is puur optioneel
         return None
     pi_name = config.get("spotify.pi_device_name", "Kamer-AI")
-    zc = Zeroconf()
+    zc = None
     try:
+        zc = Zeroconf()          # kan zelf falen (geen netwerkinterface, poort bezet): ook dat is "niet gevonden"
         info = zc.get_service_info(
             "_spotify-connect._tcp.local.",
             f"{pi_name}._spotify-connect._tcp.local.",
@@ -434,7 +435,11 @@ def _discover_pi_spotify_device() -> dict | None:
         _degrade("discover_pi_spotify_device", exc)
         return None
     finally:
-        zc.close()
+        if zc is not None:
+            try:
+                zc.close()
+            except Exception:  # noqa: BLE001
+                pass
     if not info:
         return None
     addrs = info.parsed_addresses()

@@ -61,7 +61,10 @@ def _cases(app):
 
 
 def test_no_route_crashes_on_malformed_input(fuzz_client):
+    from Dashboard.backend import main as _main
+
     client, app = fuzz_client
+    _main.unhandled.clear()
     crashes = []
     for method, url, body in _cases(app):
         kw = {"method": method}
@@ -75,3 +78,5 @@ def test_no_route_crashes_on_malformed_input(fuzz_client):
         if r.status_code >= 500 and "json" not in (r.content_type or ""):
             crashes.append((method, url[:60], (body or "")[:50], r.status_code))
     assert not crashes, "\n".join(map(str, crashes[:20]))
+    # de globale foutafhandeling maakt van een crash een JSON-500: die mag hier nooit optreden
+    assert not _main.unhandled, "\n".join(_main.unhandled)

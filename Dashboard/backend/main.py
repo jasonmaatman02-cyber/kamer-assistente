@@ -42,6 +42,30 @@ def _csrf_guard():
               f"origin={origin!r} host={request.host!r} sec-fetch-site={sfs!r}")
         return ("cross-site verzoek geweigerd", 403)
 
+# Onverwachte fouten in een /api-route: een JSON-foutmelding i.p.v. Flask's HTML-500-pagina (de pagina-scripts
+# lezen elk antwoord als JSON) en de traceback in het journal. ``unhandled`` bewaart de laatste meldingen zodat
+# tests (fuzz) een echte crash nog steeds kunnen onderscheiden van een bewuste JSON-500.
+unhandled: list = []
+
+
+@app.errorhandler(Exception)
+def _unexpected_error(exc):
+    from werkzeug.exceptions import HTTPException
+
+    if isinstance(exc, HTTPException):
+        return exc                                   # 404/405/413/...: gewoon zoals Flask het zelf afhandelt
+    app.logger.error("Onverwachte fout in %s %s", request.method, request.path, exc_info=exc)
+    unhandled.append(f"{request.method} {request.path}: {type(exc).__name__}: {exc}")
+    del unhandled[:-20]
+    if request.path.startswith("/api/"):
+        from flask import jsonify
+
+        return jsonify({"success": False, "error": "interne fout -- zie het logboek van de server"}), 500
+    from werkzeug.exceptions import InternalServerError
+
+    return InternalServerError()
+
+
 from Dashboard.backend.auth import auth_bp
 from Dashboard.backend.calendar_api import calendar_bp
 from Dashboard.backend.camera_api import camera_bp

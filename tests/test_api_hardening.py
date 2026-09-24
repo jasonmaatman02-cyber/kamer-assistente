@@ -393,3 +393,52 @@ def test_playlist_tracks_cannot_loop_forever_on_a_pager_that_never_ends(client, 
     DJ.sp = SP2()
     r = client.get("/api/playlist_tracks/abc")
     assert r.status_code == 200 and calls["n"] == 10          # begrensd op 10 pagina's
+
+
+# --------------------------------------------------------------------------- #
+# Onverwachte fouten: JSON voor /api, traceback in het log, HTTP-fouten ongemoeid
+# --------------------------------------------------------------------------- #
+@pytest.fixture()
+def boom_app():
+    """Een los Flask-appje met dezelfde foutafhandeling (aan de echte app kan na het eerste verzoek
+    geen route meer worden toegevoegd)."""
+    from flask import Flask
+
+    from Dashboard.backend import main as m
+
+    app = Flask("boom")
+    app.register_error_handler(Exception, m._unexpected_error)
+
+    @app.route("/api/_boom")
+    def _boom_api():
+        raise RuntimeError("kapot: geheim-detail")
+
+    @app.route("/_boom_page")
+    def _boom_page():
+        raise RuntimeError("kapot")
+
+    m.unhandled.clear()
+    with app.test_client() as c:
+        yield c, m
+
+
+def test_unexpected_api_error_is_json_and_hides_the_detail(boom_app):
+    c, m = boom_app
+    r = c.get("/api/_boom")
+    assert r.status_code == 500 and r.is_json
+    body = r.get_json()
+    assert body["success"] is False and "geheim-detail" not in str(body)
+    assert m.unhandled and "RuntimeError" in m.unhandled[-1] and "/api/_boom" in m.unhandled[-1]
+
+
+def test_unexpected_page_error_stays_an_html_500(boom_app):
+    c, _ = boom_app
+    r = c.get("/_boom_page")
+    assert r.status_code == 500 and not r.is_json
+
+
+def test_http_errors_are_left_alone(boom_app):
+    c, m = boom_app
+    assert c.get("/api/bestaat-niet").status_code == 404
+    assert c.delete("/api/_boom").status_code == 405
+    assert not m.unhandled                    # een 404/405 is geen onverwachte fout

@@ -617,6 +617,19 @@ def test_discover_pi_spotify_device_survives_lookup_errors(monkeypatch):
     assert services._discover_pi_spotify_device() is None
 
 
+def test_discover_pi_spotify_device_survives_a_failing_zeroconf_constructor(monkeypatch):
+    """Zeroconf() zelf kan falen (geen netwerkinterface, poort bezet): voorheen stond de constructor
+    buiten de try en gaf /api/devices dan een 500 bij elke poll."""
+    from Dashboard.backend import services
+
+    class BrokenZeroconf:
+        def __init__(self):
+            raise OSError("Address already in use")
+
+    _fake_zeroconf_module(monkeypatch, BrokenZeroconf)
+    assert services._discover_pi_spotify_device() is None
+
+
 def test_discover_pi_spotify_device_none_when_zeroconf_not_installed(monkeypatch):
     """zeroconf is een optionele extra: ontbreekt het pakket (bv. een Pi waar
     requirements nog niet opnieuw is uitgevoerd), dan geen crash maar gewoon
