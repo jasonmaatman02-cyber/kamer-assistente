@@ -11,6 +11,7 @@ regardless of provider, so callers don't care which one is active.
 """
 from __future__ import annotations
 
+import re
 import time
 
 import requests
@@ -42,6 +43,15 @@ _WEATHERAPI_NL = {
 }
 
 
+_SECRET_QS = re.compile(r"(?i)(?<![A-Za-z_])(key|appid|api_key|apikey|token|access_token)=[^&\s'\"]+")
+
+
+def _redact(text: str) -> str:
+    """requests-fouten (HTTPError, 'Max retries exceeded with url: ...') bevatten de volledige
+    URL, dus ook ?key=<API-key> / ?appid=<API-key> -- die kwam zo in journald."""
+    return _SECRET_QS.sub(lambda m: f"{m.group(1)}=***", str(text))
+
+
 class WeerAPI:
     def __init__(self):
         self._geo_cache: dict[str, tuple[float, float]] = {}
@@ -67,7 +77,7 @@ class WeerAPI:
             else:
                 data = self._fetch_open_meteo(city)
         except requests.RequestException as exc:
-            print(f"[weer] ophalen mislukt: {exc}")
+            print(f"[weer] ophalen mislukt: {_redact(exc)}")
             return hit[1] if hit else None   # val terug op oude data indien beschikbaar
 
         if data:

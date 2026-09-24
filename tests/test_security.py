@@ -115,3 +115,36 @@ def test_waitress_is_started_with_the_same_body_limit(monkeypatch):
     monkeypatch.setattr(waitress, "serve", lambda app, **kw: seen.update(kw))
     rundashboard.main()
     assert seen["max_request_body_size"] == rundashboard.MAX_BODY_BYTES
+
+
+@pytest.mark.parametrize("provider,secret_name,secret_value", [
+    ("weatherapi", "WEATHERAPI_KEY", "wa-SECRET-123"),
+    ("openweathermap", "OPENWEATHER_KEY", "owm-SECRET-456"),
+])
+def test_weather_errors_never_print_the_api_key(monkeypatch, capsys, provider, secret_name, secret_value):
+    """requests' HTTPError-tekst bevat de volledige URL incl. ?key=... -> in journald."""
+    import requests
+
+    import config
+    from weer import weer as W
+
+    config.set("weather.provider", provider)
+    monkeypatch.setenv(secret_name, secret_value)
+
+    def fake_get(url, params=None, **kw):
+        qs = "&".join(f"{k}={v}" for k, v in (params or {}).items())
+        raise requests.HTTPError(f"401 Client Error: Unauthorized for url: {url}?{qs}")
+
+    monkeypatch.setattr(W.requests, "get", fake_get)
+    assert W.WeerAPI().fetch_weather("Arnhem") is None
+    out = capsys.readouterr().out
+    assert "ophalen mislukt" in out
+    assert secret_value not in out
+    assert "***" in out
+
+
+def test_redact_leaves_ordinary_text_alone():
+    from weer.weer import _redact
+
+    assert _redact("stad 'x' niet gevonden") == "stad 'x' niet gevonden"
+    assert _redact("https://a/b?q=Arnhem&key=abc123&units=metric") == "https://a/b?q=Arnhem&key=***&units=metric"
