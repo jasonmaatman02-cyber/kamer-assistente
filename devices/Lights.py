@@ -5,6 +5,19 @@ import time
 from tapo import ApiClient
 
 
+def _lamp_timeout_s() -> float:
+    """Timeout per Tapo-aanroep (connect + commando's). Gemeten: zonder
+    timeout duurt een poging naar een onbereikbare lamp ~21s (OS-connect-
+    timeout) -- lang genoeg om de presence-thread of, via devices.js-polls,
+    alle waitress-workers vast te zetten."""
+    try:
+        import config
+
+        return min(60.0, max(1.0, float(config.get("devices.lamp_timeout_s", 6) or 6)))
+    except Exception:  # noqa: BLE001 - nooit crashen op een configfout
+        return 6.0
+
+
 def hex_to_hsl(hex_color):
     hex_color = hex_color.lstrip('#')
     rgb = tuple(int(hex_color[i:i+2], 16) / 255.0 for i in (0, 2, 4))
@@ -31,7 +44,14 @@ class SlimmeLamp:
         self.lamp = None
 
     async def connect(self):
-        self.client = ApiClient(self.email, self.wachtwoord)
+        # tapo's timeout_s is een integer (een float geeft TypeError -- dat
+        # viel eerst stilzwijgend terug op GEEN timeout, gevonden met een
+        # echte-bibliotheek-test tegen een onbereikbaar adres).
+        timeout = max(1, int(round(_lamp_timeout_s())))
+        try:
+            self.client = ApiClient(self.email, self.wachtwoord, timeout_s=timeout)
+        except TypeError:   # oudere tapo-versie zonder timeout_s
+            self.client = ApiClient(self.email, self.wachtwoord)
         self.lamp = await self.client.l530(self.ip)
         return "Verbonden met lamp"
 

@@ -34,6 +34,8 @@ def _offline(monkeypatch, tmp_path):
     services._health_cache.clear()
     services._data_cache.clear()
     services._data_cache_locks.clear()
+    services._lamp_conns.clear()
+    services._lamp_fail_at.clear()
     # Geen echte mDNS-lookup (2s timeout) in tests -- zelfde "alles offline"
     # filosofie als de rest van deze fixture. Tests die de Pi-via-mDNS-
     # discovery zelf willen testen overschrijven dit met hun eigen

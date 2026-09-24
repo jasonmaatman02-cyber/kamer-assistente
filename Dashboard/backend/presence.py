@@ -111,6 +111,11 @@ class PresenceWorker:
         # hardware-gegronde moment waarop automatisering weer vers mag
         # beslissen).
         self._mode = "AUTO"
+        # Telt handmatige lampacties. Een automatische actie die al besloten was
+        # maar nog op de (trage) Tapo-verbinding wacht, controleert dit vlak voor
+        # het commando: is er intussen handmatig ingegrepen, dan slaat 'ie zijn
+        # commando over -- handmatig wint altijd van een eerdere auto-beslissing.
+        self._manual_epoch = 0
 
         # Retry-status voor een mislukte automatische lampactie (zie _retry_light).
         # None = geen mislukte poging openstaand -> retry-tick doet dan niets.
@@ -313,6 +318,12 @@ class PresenceWorker:
         if self._mode != "MANUAL":
             log("PEOPLE", "Manual lamp action detected -- automation paused until next presence change")
         self._mode = "MANUAL"
+        self._manual_epoch += 1
+        # Een openstaande automatische retry (bv. AAN dat eerder mislukte) mag
+        # een handmatige actie niet alsnog overrulen: na een handmatige UIT zou
+        # de retry de lamp anders weer AAN zetten.
+        self._pending_light = None
+        self._light_retries = 0
 
     # ------------------------------------------------------------------ #
     # Lamp-automatisering
@@ -328,6 +339,7 @@ class PresenceWorker:
         if on and is_auto_light_blocked():
             log("LIGHT", "Automatic ON blocked: after 21:30")
             return True
+        epoch = self._manual_epoch
         try:
             ip = S.lamp_ip(config.get("presence.lamp", 0))
             if not ip:
@@ -335,6 +347,9 @@ class PresenceWorker:
                 return True
             try:
                 lamp = S.lamp(ip)
+                if self._manual_epoch != epoch:   # tijdens het verbinden handmatig ingegrepen
+                    log("LIGHT", "Automatic light skipped: manual action took over")
+                    return True
                 asyncio.run(lamp.aan() if on else lamp.uit())
             except Exception as exc:  # noqa: BLE001
                 if not _is_session_timeout(exc):
@@ -345,6 +360,9 @@ class PresenceWorker:
                 # dat ook niet, dan neemt de gewone retrylogica het hierna over.
                 log("LIGHT", f"Tapo session timeout gedetecteerd ({exc}) — opnieuw authenticeren")
                 lamp = S.reconnect_lamp(ip)
+                if self._manual_epoch != epoch:
+                    log("LIGHT", "Automatic light skipped: manual action took over")
+                    return True
                 asyncio.run(lamp.aan() if on else lamp.uit())
             log("LIGHT", "Automatic light ON" if on else "Automatic light OFF")
             return True

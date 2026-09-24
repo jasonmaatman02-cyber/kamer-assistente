@@ -20,6 +20,16 @@ _services: dict = {}
 _errors: dict = {}
 _lamp_conns: dict = {}
 _lamp_locks: dict = {}            # ip -> Lock (één verbinding per lamp tegelijk)
+_lamp_fail_at: dict = {}          # ip -> _mono()-tijd van de laatste MISLUKTE connect
+_mono = time.monotonic            # seam voor tests
+# Direct na een mislukte connect (lamp offline) zo lang meteen falen i.p.v.
+# elke wachtende poll opnieuw een eigen (trage) connect te laten doen: zonder
+# dit stapelden devices.js-polls zich achter de per-lamp-lock op tot alle 16
+# waitress-workers vastzaten en het HELE dashboard bevroor (lokaal
+# gereproduceerd: 2 offline lampen + 2 open tabbladen). Bewust korter dan de
+# presence-interval (3s) zodat presence-retries wél echt opnieuw proberen.
+_LAMP_FAIL_TTL_S = 2.0
+_LAMP_LOCK_WAIT_S = 15.0          # langer wachten op de connect-lock heeft geen zin
 _health_cache: dict = {}          # name -> (ok, error, expires_at)
 _data_cache: dict = {}            # key -> (value, expires_at) — weer/agenda voor /api/overview
 _HEALTH_TTL = 60
@@ -88,6 +98,7 @@ def reset_services():
         _data_cache.clear()
         _lamp_conns.clear()
         _lamp_locks.clear()
+        _lamp_fail_at.clear()
         _build_locks.clear()
         _data_cache_locks.clear()
     try:
@@ -117,22 +128,47 @@ def _degrade(where: str, exc: BaseException) -> None:
 # --------------------------------------------------------------------------- #
 # Lamps
 # --------------------------------------------------------------------------- #
-def lamp(ip: str):
-    """Return a connected SlimmeLamp for ``ip``, reusing the connection.
-    Eén verbindingspoging per lamp tegelijk (connect() is een trage netwerkcall)."""
+def _connect_lamp_locked(ip: str):
+    """Bouw + connect een SlimmeLamp. Aanroeper houdt de per-IP lock vast."""
     from devices.Lights import SlimmeLamp
 
+    obj = SlimmeLamp(config.secret("TAPO_USER"), config.secret("TAPO_PASSWORD"), ip)
+    try:
+        asyncio.run(obj.connect())
+    except Exception:
+        _lamp_fail_at[ip] = _mono()
+        raise
+    _lamp_fail_at.pop(ip, None)
+    _lamp_conns[ip] = obj
+    return obj
+
+
+def _acquire_lamp_lock(ip: str) -> threading.Lock:
+    lock = _named_lock(_lamp_locks, ip)
+    if not lock.acquire(timeout=_LAMP_LOCK_WAIT_S):
+        raise RuntimeError(f"lamp {ip}: verbinding is bezet, probeer het zo opnieuw")
+    return lock
+
+
+def lamp(ip: str):
+    """Return a connected SlimmeLamp for ``ip``, reusing the connection.
+    Eén verbindingspoging per lamp tegelijk (connect() is een trage netwerkcall);
+    wachten op die lock is begrensd en een net-mislukte connect wordt niet
+    door elke wachtende thread opnieuw geprobeerd (zie _LAMP_FAIL_TTL_S)."""
     existing = _lamp_conns.get(ip)
     if existing is not None and existing.lamp is not None:
         return existing
-    with _named_lock(_lamp_locks, ip):
+    lock = _acquire_lamp_lock(ip)
+    try:
         existing = _lamp_conns.get(ip)
         if existing is not None and existing.lamp is not None:
             return existing
-        obj = SlimmeLamp(config.secret("TAPO_USER"), config.secret("TAPO_PASSWORD"), ip)
-        asyncio.run(obj.connect())
-        _lamp_conns[ip] = obj
-        return obj
+        failed_at = _lamp_fail_at.get(ip)
+        if failed_at is not None and _mono() - failed_at < _LAMP_FAIL_TTL_S:
+            raise RuntimeError(f"lamp {ip} is niet bereikbaar (zojuist mislukt)")
+        return _connect_lamp_locked(ip)
+    finally:
+        lock.release()
 
 
 def drop_lamp(ip: str):
@@ -145,14 +181,12 @@ def reconnect_lamp(ip: str):
     dezelfde per-IP lock als :func:`lamp`, zodat twee threads die tegelijk
     een sessie-timeout tegenkomen niet allebei gelijktijdig gaan
     herauthenticeren."""
-    from devices.Lights import SlimmeLamp
-
-    with _named_lock(_lamp_locks, ip):
+    lock = _acquire_lamp_lock(ip)
+    try:
         _lamp_conns.pop(ip, None)
-        obj = SlimmeLamp(config.secret("TAPO_USER"), config.secret("TAPO_PASSWORD"), ip)
-        asyncio.run(obj.connect())
-        _lamp_conns[ip] = obj
-        return obj
+        return _connect_lamp_locked(ip)
+    finally:
+        lock.release()
 
 
 def lamp_ip(name_or_index):

@@ -136,6 +136,8 @@ DEFAULTS: dict = {
             {"name": "Desk Lamp", "ip": "192.168.3.19"},
         ],
         "thermostat": {"target": 20, "min": 15, "max": 30},
+        # Timeout (s) per Tapo-aanroep; zonder timeout duurt een offline lamp ~21s.
+        "lamp_timeout_s": 6,
     },
     "features": {
         "voice_assistant": True,

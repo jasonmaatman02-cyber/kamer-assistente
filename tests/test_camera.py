@@ -381,3 +381,205 @@ def test_presence_tick_passes_clamped_detect_scale_and_reports_timing(monkeypatc
         w._tick()
         assert 0.25 <= seen["scale"] <= 1.0, f"{wild} -> {seen['scale']}"
     assert isinstance(w.status()["detect_ms"], float)
+
+
+# --------------------------------------------------------------------------- #
+# Lamp: timeouts, pile-up bij offline lamp, handmatig wint van auto
+# --------------------------------------------------------------------------- #
+def _fake_lamp_cls(connect_delay=0.0, fail=True, log=None):
+    class FakeLamp:
+        def __init__(self, user, pw, ip):
+            self.ip = ip
+            self.lamp = None
+
+        async def connect(self):
+            import asyncio
+
+            if log is not None:
+                log.append(("connect", self.ip))
+            await asyncio.sleep(connect_delay)
+            if fail:
+                raise OSError("lamp onbereikbaar")
+            self.lamp = object()
+
+        async def aan(self):
+            return "aan"
+
+    return FakeLamp
+
+
+def test_slimmelamp_connect_passes_timeout_from_config(monkeypatch):
+    import asyncio
+
+    import config
+    import devices.Lights as lights
+
+    config.set("devices.lamp_timeout_s", 4)
+    seen = {}
+
+    class FakeClient:
+        def __init__(self, email, pw, **kw):
+            seen.update(kw)
+
+        async def l530(self, ip):
+            return object()
+
+    monkeypatch.setattr(lights, "ApiClient", FakeClient)
+    asyncio.run(lights.SlimmeLamp("u", "p", "1.2.3.4").connect())
+    assert seen == {"timeout_s": 4} and isinstance(seen["timeout_s"], int)
+
+
+def test_slimmelamp_connect_falls_back_for_old_tapo_versions(monkeypatch):
+    import asyncio
+
+    import devices.Lights as lights
+
+    class OldClient:
+        def __init__(self, email, pw):        # geen timeout_s-parameter
+            pass
+
+        async def l530(self, ip):
+            return object()
+
+    monkeypatch.setattr(lights, "ApiClient", OldClient)
+    lamp = lights.SlimmeLamp("u", "p", "1.2.3.4")
+    asyncio.run(lamp.connect())
+    assert lamp.lamp is not None
+
+
+def test_offline_lamp_does_not_pile_up_waiting_threads(monkeypatch):
+    """Lokaal gereproduceerd met de echte app onder waitress: 2 offline lampen
+    + 2 open Devices-tabbladen zetten alle 16 workers vast (dashboard bevroor).
+    Nu doet alleen de eerste thread de connect; de wachtenden falen meteen."""
+    import devices.Lights as lights
+    from Dashboard.backend import services as S
+
+    calls = []
+    monkeypatch.setattr(lights, "SlimmeLamp", _fake_lamp_cls(connect_delay=0.3, fail=True, log=calls))
+
+    errors = []
+
+    def poll():
+        try:
+            S.lamp("192.0.2.9")
+        except Exception as exc:  # noqa: BLE001
+            errors.append(str(exc))
+
+    threads = [threading.Thread(target=poll) for _ in range(20)]
+    t0 = time.monotonic()
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(10)
+    elapsed = time.monotonic() - t0
+
+    assert len(errors) == 20                       # iedereen kreeg een nette fout
+    assert len(calls) == 1, f"{len(calls)} connect-pogingen; verwacht 1"
+    assert elapsed < 2.0, f"{elapsed:.1f}s -- threads wachtten op elkaars connect"
+
+
+def test_lamp_connect_is_retried_after_the_short_failure_window(monkeypatch):
+    import devices.Lights as lights
+    from Dashboard.backend import services as S
+
+    calls = []
+    clock = {"t": 100.0}
+    monkeypatch.setattr(S, "_mono", lambda: clock["t"])
+    monkeypatch.setattr(lights, "SlimmeLamp", _fake_lamp_cls(fail=True, log=calls))
+
+    with pytest.raises(OSError):
+        S.lamp("192.0.2.10")
+    clock["t"] += 1.0
+    with pytest.raises(RuntimeError, match="zojuist mislukt"):
+        S.lamp("192.0.2.10")                        # binnen 2s: geen nieuwe poging
+    assert len(calls) == 1
+
+    clock["t"] += 2.0                               # venster voorbij, lamp is terug
+    monkeypatch.setattr(lights, "SlimmeLamp", _fake_lamp_cls(fail=False, log=calls))
+    lamp = S.lamp("192.0.2.10")
+    assert lamp.lamp is not None and len(calls) == 2
+    assert S.lamp("192.0.2.10") is lamp             # daarna gecachet, geen nieuwe connect
+    assert len(calls) == 2
+
+
+def test_lamp_lock_wait_is_bounded(monkeypatch):
+    from Dashboard.backend import services as S
+
+    monkeypatch.setattr(S, "_LAMP_LOCK_WAIT_S", 0.2)
+    lock = S._named_lock(S._lamp_locks, "192.0.2.11")
+    lock.acquire()                                  # iemand anders is aan het verbinden
+    try:
+        t0 = time.monotonic()
+        with pytest.raises(RuntimeError, match="bezet"):
+            S.lamp("192.0.2.11")
+        assert time.monotonic() - t0 < 1.5
+    finally:
+        lock.release()
+
+
+def test_real_tapo_client_gives_up_within_timeout_on_unreachable_lamp():
+    """Echte tapo-bibliotheek tegen een niet-routeerbaar adres (TEST-NET-1):
+    zonder timeout duurde dit ~21s (gemeten), met timeout_s wordt het begrensd."""
+    import asyncio
+
+    import config
+    import devices.Lights as lights
+
+    config.set("devices.lamp_timeout_s", 2)
+    lamp = lights.SlimmeLamp("a@b.c", "pw", "192.0.2.1")
+    t0 = time.monotonic()
+    with pytest.raises(Exception):
+        asyncio.run(lamp.connect())
+    assert time.monotonic() - t0 < 8
+
+
+def test_manual_action_cancels_pending_auto_retry(monkeypatch):
+    """Auto-AAN mislukte (pending); gebruiker zet de lamp handmatig UIT. De
+    retry mag de lamp daarna niet alsnog AAN zetten."""
+    import config
+    from Dashboard.backend.presence import PresenceWorker
+    import Dashboard.backend.presence as presence_mod
+
+    config.set("presence.auto_light_enabled", True)
+    config.set("presence.auto_light_block_after", "")
+    w = PresenceWorker()
+    w._pending_light = True
+    w._light_retries = 1
+    sent = []
+
+    class Lamp:
+        async def aan(self):
+            sent.append("aan")
+
+    monkeypatch.setattr(presence_mod.S, "lamp_ip", lambda x: "192.0.2.5")
+    monkeypatch.setattr(presence_mod.S, "lamp", lambda ip: Lamp())
+
+    w.note_manual_action()
+    assert w._pending_light is None
+    w._retry_light()
+    assert sent == []
+
+
+def test_auto_light_skips_command_if_user_acts_while_connecting(monkeypatch):
+    import config
+    from Dashboard.backend.presence import PresenceWorker
+    import Dashboard.backend.presence as presence_mod
+
+    config.set("presence.auto_light_enabled", True)
+    config.set("presence.auto_light_block_after", "")
+    w = PresenceWorker()
+    sent = []
+
+    class Lamp:
+        async def aan(self):
+            sent.append("aan")
+
+    def slow_connect(ip):
+        w.note_manual_action()        # gebruiker grijpt in terwijl de lamp nog verbindt
+        return Lamp()
+
+    monkeypatch.setattr(presence_mod.S, "lamp_ip", lambda x: "192.0.2.5")
+    monkeypatch.setattr(presence_mod.S, "lamp", slow_connect)
+
+    assert w._auto_light(True) is True     # bewust niks doen is geen fout -> geen retry
+    assert sent == [], "auto-commando overschreef een handmatige actie"

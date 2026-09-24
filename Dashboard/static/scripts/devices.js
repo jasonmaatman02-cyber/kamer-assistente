@@ -49,6 +49,11 @@ function lampCard(lamp, i) {
 }
 
 async function loadState(card, i) {
+  // Geen overlappende polls per kaart: setInterval vuurt door ook als de
+  // vorige (bij een offline lamp trage) aanvraag nog loopt -- dat stapelde
+  // aanvragen op de server op.
+  if (card.dataset.loading) return;
+  card.dataset.loading = "1";
   const st = card.querySelector(".l-status");
   try {
     const r = await j(`/api/lamp/state?lamp=${i}`);
@@ -68,6 +73,8 @@ async function loadState(card, i) {
     if (s.hue != null) card.querySelector(".l-color").value = hsToHex(s.hue, s.saturation);
   } catch (e) {
     st.textContent = "onbereikbaar"; st.className = "l-status red";
+  } finally {
+    delete card.dataset.loading;
   }
 }
 
