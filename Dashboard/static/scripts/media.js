@@ -282,11 +282,21 @@ async function loadSpotifyDevices() {
     const div = document.createElement("div");
     div.className = "device-item";
     if (!dev.id) {
-      // Sonos/Cast: Spotify geeft geen id -> niet bestuurbaar via de Web-API
-      div.innerHTML = `${esc(dev.name)} (${esc(dev.type)}) — <span class="muted">speelt hier, niet stuurbaar vanaf 't dashboard</span>`;
+      if (dev.local_only) {
+        // Gevonden op het netwerk (mDNS) maar nog nooit gekoppeld aan het
+        // Spotify-account -- Kamer-AI's eigen speaker (raspotify), vóór de
+        // eerste koppeling via de officiële Spotify-app.
+        div.innerHTML = `${esc(dev.name)} (${esc(dev.type)}) — <span class="muted">gevonden op het netwerk, nog niet gekoppeld</span>`;
+        div.title = "Open Spotify op je telefoon of computer, kies deze speaker in de " +
+          "apparatenlijst (Connect-icoon) en speel iets af om te koppelen. Daarna is dit " +
+          "apparaat ook vanaf dit dashboard bruikbaar.";
+      } else {
+        // Sonos/Cast: Spotify geeft geen id -> niet bestuurbaar via de Web-API
+        div.innerHTML = `${esc(dev.name)} (${esc(dev.type)}) — <span class="muted">speelt hier, niet stuurbaar vanaf 't dashboard</span>`;
+        div.title = "Kies deze speaker één keer in de Spotify-app (Connect-icoon). " +
+          "Daarna verschijnt 'ie hier mét knop.";
+      }
       div.style.opacity = "0.6";
-      div.title = "Kies deze speaker één keer in de Spotify-app (Connect-icoon). " +
-        "Daarna verschijnt 'ie hier mét knop.";
       box.appendChild(div);
       return;
     }

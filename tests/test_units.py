@@ -536,6 +536,167 @@ def test_active_device_id_none_when_nothing_at_all(monkeypatch):
     assert services.active_device_id(FakeSp()) is None
 
 
+# --- Pi via mDNS zichtbaar in /api/devices vóór de eerste Spotify-koppeling #
+# Achtergrond: Spotify's Web API (sp.devices()) geeft een zeroconf-apparaat
+# (raspotify/librespot) pas terug NADAT iemand het één keer via de officiële
+# Spotify-app heeft geselecteerd en er iets op heeft afgespeeld. Live
+# bevestigd: avahi-browse zag de Pi prima als "Kamer-AI" op
+# _spotify-connect._tcp, terwijl sp.devices() 'm nog niet teruggaf (het
+# librespot-apparaat had "activeUser": "" in z'n eigen zeroconf-status --
+# nog nooit gekoppeld). Zonder een eigen mDNS-check leek de Pi vanuit het
+# dashboard niet te bestaan.
+def _fake_zeroconf_module(monkeypatch, zeroconf_cls):
+    """Hermetisch: vervang het hele 'zeroconf'-pakket door een nepmodule, zodat
+    deze tests niet afhangen van of (en hoe snel) het echte pakket importeert."""
+    import sys
+    import types
+
+    mod = types.ModuleType("zeroconf")
+    mod.Zeroconf = zeroconf_cls
+    monkeypatch.setitem(sys.modules, "zeroconf", mod)
+
+
+def test_discover_pi_spotify_device_finds_it_via_mdns(monkeypatch):
+    import config
+    from Dashboard.backend import services
+
+    config.set("spotify.pi_device_name", "Kamer-AI")
+
+    class FakeInfo:
+        server = "pi.local."
+        port = 46709
+        def parsed_addresses(self):
+            return ["192.168.2.34"]
+
+    class FakeZeroconf:
+        def get_service_info(self, type_, name, timeout=2000):
+            assert type_ == "_spotify-connect._tcp.local."
+            assert name == "Kamer-AI._spotify-connect._tcp.local."
+            return FakeInfo()
+        def close(self):
+            pass
+
+    _fake_zeroconf_module(monkeypatch, FakeZeroconf)
+
+    assert services._discover_pi_spotify_device() == {
+        "name": "Kamer-AI", "host": "192.168.2.34", "port": 46709,
+    }
+
+
+def test_discover_pi_spotify_device_none_when_not_found(monkeypatch):
+    from Dashboard.backend import services
+
+    class FakeZeroconf:
+        def get_service_info(self, type_, name, timeout=2000):
+            return None
+        def close(self):
+            pass
+
+    _fake_zeroconf_module(monkeypatch, FakeZeroconf)
+    assert services._discover_pi_spotify_device() is None
+
+
+def test_discover_pi_spotify_device_survives_lookup_errors(monkeypatch):
+    """Een mDNS-hikje (netwerk, avahi even weg) mag /api/devices nooit
+    laten crashen."""
+    from Dashboard.backend import services
+
+    class FakeZeroconf:
+        def get_service_info(self, type_, name, timeout=2000):
+            raise OSError("mDNS mislukt")
+        def close(self):
+            pass
+
+    _fake_zeroconf_module(monkeypatch, FakeZeroconf)
+    assert services._discover_pi_spotify_device() is None
+
+
+def test_discover_pi_spotify_device_none_when_zeroconf_not_installed(monkeypatch):
+    """zeroconf is een optionele extra: ontbreekt het pakket (bv. een Pi waar
+    requirements nog niet opnieuw is uitgevoerd), dan geen crash maar gewoon
+    geen lokale discovery."""
+    import sys
+
+    from Dashboard.backend import services
+
+    monkeypatch.setitem(sys.modules, "zeroconf", None)   # -> ImportError bij 'from zeroconf import ...'
+    assert services._discover_pi_spotify_device() is None
+
+
+def test_devices_shows_pi_as_local_only_when_not_yet_paired(client, monkeypatch):
+    from Dashboard.backend import services
+
+    class FakeSp:
+        def devices(self):
+            return {"devices": [{"id": "laptop-1", "name": "JASON_LAPTOP4", "type": "Computer", "is_active": False}]}
+        def current_playback(self):
+            return None
+
+    class FakeDJ:
+        sp = FakeSp()
+
+    monkeypatch.setitem(services._services, "spotify", FakeDJ())
+    monkeypatch.setattr(services, "pi_spotify_device",
+                         lambda fresh=False: {"name": "Kamer-AI", "host": "192.168.2.34", "port": 46709})
+
+    devs = client.get("/api/devices").get_json()["devices"]
+    assert devs[0]["name"] == "Kamer-AI" and devs[0]["id"] is None and devs[0]["local_only"] is True
+    assert any(d["name"] == "JASON_LAPTOP4" for d in devs)
+
+
+def test_devices_does_not_duplicate_pi_once_web_api_knows_about_it(client, monkeypatch):
+    """Zodra de Pi WEL via de Web API bekend is (na de eerste koppeling), mag
+    de mDNS-discovery 'm niet nogmaals als losse local_only-entry tonen --
+    en hoeft de (tragere) mDNS-lookup dan ook niet uitgevoerd te worden."""
+    from Dashboard.backend import services
+
+    class FakeSp:
+        def devices(self):
+            return {"devices": [{"id": "pi-real-1", "name": "Kamer-AI", "type": "Speaker", "is_active": True}]}
+        def current_playback(self):
+            return None
+
+    class FakeDJ:
+        sp = FakeSp()
+
+    monkeypatch.setitem(services._services, "spotify", FakeDJ())
+    calls = {"n": 0}
+    monkeypatch.setattr(services, "pi_spotify_device",
+                         lambda fresh=False: calls.update(n=calls["n"] + 1) or {"name": "Kamer-AI", "host": "x", "port": 1})
+
+    devs = client.get("/api/devices").get_json()["devices"]
+    kamer_ai = [d for d in devs if d["name"] == "Kamer-AI"]
+    assert len(kamer_ai) == 1
+    assert kamer_ai[0]["id"] == "pi-real-1"
+    assert calls["n"] == 0, "mDNS-lookup was niet nodig -- de Pi stond al in de Web API-lijst"
+
+
+def test_devices_avoids_503_when_web_api_empty_but_pi_found_locally(client, monkeypatch):
+    """De kern van de fix: dit gaf voorheen een 503 (Spotify Web API geeft
+    niks terug) -- precies het geval waarvoor de mDNS-discovery bedoeld is.
+    Moet nu een 200 zijn met de Pi als local_only-entry."""
+    from Dashboard.backend import services
+
+    class FakeSp:
+        def devices(self):
+            return {"devices": []}
+        def current_playback(self):
+            raise RuntimeError("geen actieve sessie")
+
+    class FakeDJ:
+        sp = FakeSp()
+
+    monkeypatch.setitem(services._services, "spotify", FakeDJ())
+    monkeypatch.setattr(services, "pi_spotify_device",
+                         lambda fresh=False: {"name": "Kamer-AI", "host": "x", "port": 1})
+
+    r = client.get("/api/devices")
+    assert r.status_code == 200
+    body = r.get_json()
+    assert body["success"] is True
+    assert body["devices"][0]["name"] == "Kamer-AI"
+
+
 def test_devices_shows_idless_sonos_as_playing(client, monkeypatch):
     from Dashboard.backend import services
 

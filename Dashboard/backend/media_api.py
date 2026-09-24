@@ -220,12 +220,31 @@ def devices():
     except Exception as exc:  # noqa: BLE001
         errors.append(str(exc))
 
-    if not devs and not playing and errors:
+    # De Pi is via Spotify's Web API pas zichtbaar NADAT iemand 'm één keer
+    # via de officiële Spotify-app heeft geselecteerd en er iets op heeft
+    # afgespeeld (zie services.active_device_id()). Daarvóór is-ie al wel
+    # gewoon op het netwerk te vinden via mDNS -- reken dat mee bij het
+    # bepalen of er "niks" is, anders krijgt precies het geval waar deze
+    # check voor bedoeld is (Web API geeft niks terug) de Pi nooit de kans
+    # om zich alsnog te melden.
+    pi_name = config.get("spotify.pi_device_name", "Kamer-AI")
+    pi_known = any(d.get("name") == pi_name for d in devs.values()) or bool(playing and playing["name"] == pi_name)
+    local_pi = None if pi_known else S.pi_spotify_device()
+
+    if not devs and not playing and not local_pi and errors:
         return jsonify({"success": False, "error": errors[0]}), 503
+
     out = [{"id": d["id"], "name": d.get("name", "?"), "type": d.get("type", "?"),
             "active": bool(d.get("is_active"))} for d in devs.values()]
     if playing:
         out.append(playing)
+    if local_pi:
+        # Vooraan: het is Kamer-AI's eigen luidspreker, zodat je meteen ziet
+        # dat-ie er is en (via de tooltip) wat je moet doen om 'm te koppelen,
+        # i.p.v. dat het dashboard doet alsof de Pi niet bestaat.
+        out.insert(0, {"id": None, "name": pi_name, "type": "Speaker",
+                        "active": False, "local_only": True})
+
     return jsonify({"success": True, "warning": errors[0] if errors else None, "devices": out})
 
 

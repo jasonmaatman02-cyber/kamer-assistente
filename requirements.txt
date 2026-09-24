@@ -14,6 +14,8 @@ speedtest-cli>=2.1,<3   # wifi-snelheidstest op de Overview
 # --- Smart devices / media ---
 tapo>=0.8,<1
 spotipy>=2.25,<3
+zeroconf>=0.130,<1      # vindt de Pi's eigen Spotify Connect-apparaat via mDNS voordat
+                        # het ooit via de Spotify-app gekoppeld is (zie /api/devices)
 python-vlc>=3,<4
 opencv-python>=4.9,<5
 python-dateutil>=2.9,<3

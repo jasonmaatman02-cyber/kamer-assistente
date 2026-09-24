@@ -340,6 +340,55 @@ def wake_device(sp, device_id):
         _degrade("wake_device", exc)
 
 
+def _discover_pi_spotify_device() -> dict | None:
+    """Eenmalige, korte mDNS-opzoeking naar de Pi's EIGEN Spotify Connect-
+    apparaat (spotify.pi_device_name), via dezelfde _spotify-connect._tcp
+    servicetype die raspotify/librespot al gebruikt.
+
+    Waarom dit nodig is: Spotify's Web API (sp.devices(), zie
+    active_device_id() hierboven) geeft een zeroconf-apparaat pas terug
+    NADAT iemand het één keer via de officiële Spotify-app heeft
+    geselecteerd en er iets op afgespeeld heeft -- daarvóór is het al wel
+    gewoon op het netwerk te vinden (bevestigd: live avahi-browse liet het
+    zien als "Kamer-AI" op _spotify-connect._tcp, ook toen sp.devices()
+    'm nog niet teruggaf). Zonder deze losse mDNS-check leek de Pi vanuit
+    het dashboard niet te bestaan, terwijl-ie allang op het netwerk draaide.
+
+    Nooit een hardcoded poort/adres: librespot kiest bij elke herstart een
+    nieuwe willekeurige zeroconf-poort, dus altijd vers via mDNS opzoeken."""
+    try:
+        from zeroconf import Zeroconf
+    except ImportError:  # niet geïnstalleerd -> deze functie is puur optioneel
+        return None
+    pi_name = config.get("spotify.pi_device_name", "Kamer-AI")
+    zc = Zeroconf()
+    try:
+        info = zc.get_service_info(
+            "_spotify-connect._tcp.local.",
+            f"{pi_name}._spotify-connect._tcp.local.",
+            timeout=2000,
+        )
+    except Exception as exc:  # noqa: BLE001 - een mDNS-hikje mag /api/devices nooit slopen
+        _degrade("discover_pi_spotify_device", exc)
+        return None
+    finally:
+        zc.close()
+    if not info:
+        return None
+    addrs = info.parsed_addresses()
+    return {"name": pi_name, "host": (addrs[0] if addrs else info.server), "port": info.port}
+
+
+def pi_spotify_device(fresh: bool = False) -> dict | None:
+    """Gecached (TTL) resultaat van _discover_pi_spotify_device() -- een
+    mDNS-opzoeking kost ~1-2s, en /api/devices wordt elke paar seconden
+    gepolld door media.js; zonder cache zou dat een trage, blokkerende
+    lookup op elke poll betekenen."""
+    if fresh:
+        _data_cache.pop("spotify:pi_device", None)
+    return _cached("spotify:pi_device", 60, _discover_pi_spotify_device)
+
+
 def start_playback(sp, **kwargs):
     """Speel af op het beste apparaat: het actieve, anders de Pi als bewuste
     standaard (active_device_id()), nooit een willekeurig ander apparaat.
