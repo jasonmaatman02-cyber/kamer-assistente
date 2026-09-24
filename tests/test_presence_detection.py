@@ -99,7 +99,7 @@ def test_failing_detector_does_not_turn_the_lamp_off(monkeypatch):
     counts = {"n": 1}
     w, clock = _worker(monkeypatch, counts)
     acted = []
-    monkeypatch.setattr(w, "_auto_light", lambda want_on: acted.append(want_on) or True)
+    monkeypatch.setattr(w, "_auto_light", lambda want_on, **kw: acted.append(want_on) or True)
     w._tick()
     assert acted == [True]                   # aan bij binnenkomst
     counts["n"] = None

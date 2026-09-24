@@ -106,6 +106,12 @@ class PresenceWorker:
         self._sensor_unknown = False
         self._sensor_unknown_warned = False
 
+        # Startbasislijn: None = nog geen geldige meting sinds de start van dit proces; True = de EERSTE
+        # geldige meting toonde al iemand en het is (nog) een ononderbroken reeks positieve metingen;
+        # False = geen basislijn meer nodig. Zie _transition(): een herstart van de service (deploy,
+        # watchdog, crash, reboot) terwijl er iemand in de kamer zit is GEEN nieuwe binnenkomst.
+        self._baseline: bool | None = None
+
         # AUTO/MANUAL, puur voor zichtbaarheid (/api/presence): de bestaande
         # edge-triggered actuatie (lamp alleen aanraken OP een overgang, zie
         # _transition) zorgde al dat een handmatige actie nooit meteen
@@ -307,6 +313,11 @@ class PresenceWorker:
         self.last_count = count
         now = time.time()
 
+        if self._baseline is None:
+            self._baseline = count > 0
+        elif self._baseline and count == 0:
+            self._baseline = False      # de reeks van 'al aanwezig bij de start' is doorbroken
+
         if count > 0:
             self._positive_streak += 1
             self._last_positive_at = now
@@ -344,7 +355,11 @@ class PresenceWorker:
         self._light_retries = 0
         self._mode = "AUTO"
         want_on = new_state == "OCCUPIED"
-        if not self._auto_light(want_on):
+        at_start = bool(self._baseline) and want_on
+        self._baseline = False
+        if at_start:
+            log("PEOPLE", "Kamer bezet bij (her)start van de service -- lamp alleen aan als 'ie uit staat")
+        if not self._auto_light(want_on, only_if_off=at_start):
             self._pending_light = want_on
 
     def note_manual_action(self) -> None:
@@ -366,12 +381,16 @@ class PresenceWorker:
     # ------------------------------------------------------------------ #
     # Lamp-automatisering
     # ------------------------------------------------------------------ #
-    def _auto_light(self, on: bool) -> bool:
+    def _auto_light(self, on: bool, only_if_off: bool = False) -> bool:
         """Probeer de lamp te zetten. Geeft True terug bij succes, of als er
         bewust niets gedaan is (automatiek uit / geen lamp / 21:30-regel --
         dat zijn geen fouten, dus daar hoeft niet op geretried te worden).
         False betekent een echte mislukking (netwerk/Tapo-fout) waarvoor
-        _retry_light() het later opnieuw mag proberen."""
+        _retry_light() het later opnieuw mag proberen.
+
+        ``only_if_off``: alleen voor AAN na een (her)start terwijl de kamer al bezet was -- staat de
+        lamp dan al aan, dan blijft 'ie ongemoeid (aan() zet anders de helderheid weer op 100% en
+        wist een gedimde/gekleurde stand van de gebruiker)."""
         if not config.get("presence.auto_light_enabled", False):
             return True
         if on and is_auto_light_blocked():
@@ -387,6 +406,9 @@ class PresenceWorker:
                 lamp = S.lamp(ip)
                 if self._manual_epoch != epoch:   # tijdens het verbinden handmatig ingegrepen
                     log("LIGHT", "Automatic light skipped: manual action took over")
+                    return True
+                if only_if_off and on and asyncio.run(lamp.status()).get("on"):
+                    log("LIGHT", "Automatic ON overgeslagen: lamp staat al aan (herstart tijdens aanwezigheid)")
                     return True
                 asyncio.run(lamp.aan() if on else lamp.uit())
             except Exception as exc:  # noqa: BLE001

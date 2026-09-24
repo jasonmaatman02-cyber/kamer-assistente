@@ -1054,10 +1054,18 @@ def test_presence_worker_hysteresis_and_grace(monkeypatch):
     monkeypatch.setattr(w, "_get_frame", lambda: object())   # niet None -> "er is beeld"
 
     lamp_calls = []
-    monkeypatch.setattr(w, "_auto_light", lambda on: (lamp_calls.append(on), True)[1])
+    monkeypatch.setattr(w, "_auto_light", lambda on, **kw: (lamp_calls.append(on), True)[1])
 
     clock = {"t": 1_000_000.0}
     monkeypatch.setattr("time.time", lambda: clock["t"])
+
+    # Een lege kamer bij de start (de basislijn): het scenario hieronder is een ECHTE binnenkomst.
+    # (Zit er al iemand bij de start van de service, dan is dat geen binnenkomst; zie
+    # tests/test_presence_baseline.py.)
+    monkeypatch.setattr(pd, "count_people", lambda frame, **kw: 0)
+    w._tick()
+    assert w.room_state == "EMPTY" and lamp_calls == []
+    clock["t"] += 3
 
     # 1e detectie: nog niet genoeg (consecutive_required=2) -> blijft EMPTY
     monkeypatch.setattr(pd, "count_people", lambda frame, **kw: 1)
@@ -1503,8 +1511,11 @@ def test_presence_session_timeout_reauth_bounded_no_endless_loop(monkeypatch):
 
     w = PresenceWorker()
     monkeypatch.setattr(w, "_get_frame", lambda: object())
-    monkeypatch.setattr("logic.people_detect.count_people", lambda frame, **kw: 1)
+    counts = {"n": 0}                                   # eerst een lege kamer (basislijn), dan komt er iemand binnen
+    monkeypatch.setattr("logic.people_detect.count_people", lambda frame, **kw: counts["n"])
     monkeypatch.setattr(presence_mod.S, "lamp_ip", lambda x: "192.168.1.50")
+    w._tick()
+    counts["n"] = 1
 
     class AlwaysStale:
         async def aan(self):

@@ -33,7 +33,7 @@ def _run(seed, monkeypatch, ticks=400):
     monkeypatch.setattr("logic.people_detect.count_people",
                         lambda frame, **kw: {"person": rnd.choice([1, 1, 2]), "empty": 0, "broken": None}.get(mode["m"], 0))
     cmds = []
-    monkeypatch.setattr(w, "_auto_light", lambda on: cmds.append((clock["t"], on)) or True)
+    monkeypatch.setattr(w, "_auto_light", lambda on, **kw: cmds.append((clock["t"], on)) or True)
     import Dashboard.backend.presence as P
     monkeypatch.setattr(P, "is_auto_light_blocked", lambda now=None: False)
 
