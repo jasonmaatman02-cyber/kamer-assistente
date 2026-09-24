@@ -227,6 +227,13 @@ Pi 4B (192.168.2.34), Debian 13, Python 3.13.5; was `9c30f40`, nu `ce1eec4`+ (`b
 - **setup-pi.sh op Debian 13 (trixie)**: `apt-get -s install` van de hele pakketlijst op de Pi: alles aanwezig, niets te installeren.
 - **Baseline nieuw proces** (14:59, 55 s na herstart): RSS 103 MB (groeit naar ~230 MB naarmate caches vullen), 22 Python-threads, 8 open fds, ~14% CPU, `detect_ms` 141.
 
+#### S2-25 Pi-verificaties (mDNS, tapo-timeout, stress) en een systeemvondst buiten de repo
+- **Echte mDNS-ontdekking op de Pi**: `services.pi_spotify_device(fresh=True)` -> `{'name': 'Kamer-AI', 'host': '127.0.0.1', 'port': 46709}` in 0,1 s (zeroconf 0.151.3, raspotify actief).
+- **tapo 0.9.0 op de Pi honoreert de lamp-timeout**: `ApiClient(tapo_username, tapo_password, timeout_s=None)`; `SlimmeLamp.connect()` naar een onbereikbaar TEST-NET-adres faalt na **6,0 s** met `Http(reqwest::Error { ... source: TimedOut })` (dev-machine draait tapo 0.8.8; zonder timeout zou dit ~21 s zijn). Echte lampen niet aangeraakt.
+- **Stress op de Pi (Python 3.13, geïsoleerde kopie, nepdiensten die 20 s hangen, 3 'tabs')**: spotify en ollama: 0 canary-timeouts, worst-case 0,1 s; de live service bleef onaangetast (`NRestarts=0`, health 200 in 2 ms).
+- **Vondst buiten de repo (niet gewijzigd)**: op de Pi crash-loopen twee overgebleven systemd-units van een oud project: `llama-server.service` (143.148 herstarts) en `room-assistant.service`; beide wijzen naar `/home/pi/room-assistant/...`, die map bestaat niet meer (`No such file or directory`, `Restart=on-failure`, `RestartSec=5`, `enabled`). Gevolg: elke 5 s twee mislukte `exec`'s en ~4800 journalregels per uur (journal 70 MB, SD-schrijfslijtage). Advies (Jason beslist): `sudo systemctl disable --now llama-server room-assistant` (en eventueel de unit-bestanden in `/etc/systemd/system/` verwijderen + `sudo systemctl daemon-reload`). Heeft niets met Kamer-AI te maken, maar kost onnodig CPU-wakeups en journal-ruimte.
+- **Kernel/USB**: `dmesg` toont alleen het laden van `uvcvideo` (15 sep); geen USB-resets/disconnects, geen under-voltage/throttling (`throttled=0x0`); camera = Microdia Defender G-Lens 2577 HD720p op `/dev/video0`.
+
 #### Statische analyse (uitgevoerd, geen verdere bevindingen)
 - ruff F: schoon na S2-2. bandit: 0 High, 1 Medium (`0.0.0.0` bind in `rundashboard.py`, bewust: LAN-dashboard achter optioneel wachtwoord), 21 Low (vaste-argv-subprocess, `try/except/pass`; beoordeeld, alleen tts-argv was echt).
 - vulture: `devices/Lights.py:65` ongebruikte parameters `stappen`/`vertraging` (`zet_helderheid`) -- API-compat, laten staan.
