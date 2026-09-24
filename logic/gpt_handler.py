@@ -28,9 +28,9 @@ def _get(name: str):
     if name in _cache:
         return _cache[name]
     if name == "radio":
-        from sound_system.radio import RadioPlayer
+        from sound_system.radio import shared_player
 
-        _cache[name] = RadioPlayer()
+        _cache[name] = shared_player()
     elif name == "spotify":
         from sound_system.muziek import SpotifyDJ
 

@@ -117,7 +117,7 @@ def test_morning_routine_returns_failed_steps(monkeypatch):
         def play(self, name):
             raise RuntimeError("geen internet")
 
-    monkeypatch.setattr(R, "RadioPlayer", BoomRadio)
+    monkeypatch.setattr(R, "_radio", lambda: BoomRadio())
     config.set("features.radio", True)
     failures = R.morning_routine()
     assert len(failures) == 1 and failures[0].startswith("Radio:") and "geen internet" in failures[0]
@@ -126,7 +126,7 @@ def test_morning_routine_returns_failed_steps(monkeypatch):
         def play(self, name):
             return "ok"
 
-    monkeypatch.setattr(R, "RadioPlayer", OkRadio)
+    monkeypatch.setattr(R, "_radio", lambda: OkRadio())
     assert R.morning_routine() == []
 
 
@@ -219,7 +219,7 @@ def test_greeting_falls_back_to_a_fixed_line_instead_of_speaking_the_llm_error(m
         def play(self, name):
             return "ok"
 
-    monkeypatch.setattr(R, "RadioPlayer", OkRadio)
+    monkeypatch.setattr(R, "_radio", lambda: OkRadio())
     config.set("features.radio", True)
     failures = R.morning_routine()
 
@@ -262,7 +262,7 @@ def test_a_hanging_llm_does_not_delay_the_rest_of_the_morning_routine(monkeypatc
             order.append("radio")
             return "ok"
 
-    monkeypatch.setattr(R, "RadioPlayer", Radio)
+    monkeypatch.setattr(R, "_radio", lambda: Radio())
     config.set("features.radio", True)
     t0 = time.monotonic()
     failures = R.morning_routine()
@@ -321,3 +321,47 @@ def test_custom_say_step_reports_unplayable_speech(client, monkeypatch):
     assert r.status_code == 502 and "spraak kon niet" in r.get_json()["error"]
     monkeypatch.setattr(T, "speak", lambda text: True)
     assert client.post("/api/routines/run", json={"id": "zeg"}).status_code == 200
+
+
+def test_a_failed_radio_start_is_reported_by_the_morning_routine(monkeypatch):
+    """RadioPlayer.play() meldt een mislukte start als TEKST (last_error), niet als exceptie: de ochtendroutine
+    telde dat voorheen als geslaagd terwijl er geen radio aanging."""
+    import scheduler.routines as R
+
+    monkeypatch.setattr(R, "speak", lambda text: True)
+    from ai import llm
+    monkeypatch.setattr(llm, "complete", lambda p, **kw: "hoi")
+
+    class DeafRadio:
+        last_error = "Radio kon niet starten (check URL of internet)."
+
+        def play(self, name):
+            return self.last_error
+
+    monkeypatch.setattr(R, "_radio", lambda: DeafRadio())
+    config.set("features.radio", True)
+    failures = R.morning_routine()
+    assert len(failures) == 1 and failures[0].startswith("Radio:") and "niet starten" in failures[0]
+
+
+def test_custom_routine_radio_step_reports_failures(monkeypatch):
+    from Dashboard.backend import routines_api as api
+    from Dashboard.backend import services as S
+
+    class Radio:
+        last_error = None
+
+        def __init__(self, err=None):
+            self.last_error = err
+
+        def play(self, name):
+            return "x"
+
+    monkeypatch.setattr(S, "svc", lambda name: Radio("Station 'x' niet gevonden"))
+    with pytest.raises(RuntimeError, match="niet gevonden"):
+        api._run_step({"action": "radio", "station": "x"})
+    monkeypatch.setattr(S, "svc", lambda name: None)
+    with pytest.raises(RuntimeError, match="radio"):
+        api._run_step({"action": "radio", "station": "radio538"})
+    monkeypatch.setattr(S, "svc", lambda name: Radio())
+    api._run_step({"action": "radio"})                 # geen station -> standaard, en geslaagd

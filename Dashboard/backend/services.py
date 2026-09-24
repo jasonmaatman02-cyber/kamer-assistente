@@ -53,8 +53,8 @@ def _build(name: str):
         from sound_system.muziek import SpotifyDJ
         return SpotifyDJ()
     if name == "radio":
-        from sound_system.radio import RadioPlayer
-        return RadioPlayer()
+        from sound_system.radio import shared_player
+        return shared_player()
     if name == "weer":
         from weer.weer import WeerAPI
         return WeerAPI()

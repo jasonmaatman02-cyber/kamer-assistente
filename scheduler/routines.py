@@ -7,7 +7,7 @@ from logic.logger import log
 from logic.notes import get_notes
 from voice.tts_output import speak
 from voice.Whisper_short import shortwhisper
-from sound_system.radio import RadioPlayer
+from sound_system.radio import shared_player
 from devices.Lights import SlimmeLamp, describe_lamp_error
 
 
@@ -71,6 +71,20 @@ def _for_each_lamp(coro_name: str, failures: list | None = None):
                 failures.append(describe_lamp_error(exc, getattr(lamp, 'ip', None)))
 
 
+def _radio():
+    """De ene RadioPlayer van het proces (dezelfde als dashboard en AI-tools), zodat wat de wekker start
+    ook met de Stop-knop/"radio uit" te stoppen is."""
+    return shared_player()
+
+
+def _start_radio(station: str = "radio538"):
+    r = _radio()
+    msg = r.play(station)
+    if getattr(r, "last_error", None):          # play() meldt een mislukte start als tekst, niet als exceptie
+        raise RuntimeError(r.last_error)
+    return msg
+
+
 def _step(what: str, fn, failures: list | None = None) -> None:
     """Eén routine-stap draaien; een fout mag de rest van de routine niet
     stoppen (spec: 'Tapo werkt niet' mag niet 'hele routine stopt' betekenen).
@@ -96,7 +110,7 @@ def morning_routine() -> list[str]:
     ), failures)
 
     if config.get("features.radio", True):
-        _step("Radio", lambda: RadioPlayer().play("radio538"), failures)
+        _step("Radio", _start_radio, failures)
 
     def _notes():
         notes = get_notes("default")

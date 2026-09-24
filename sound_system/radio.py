@@ -1,9 +1,34 @@
-import vlc
+import threading
 import time
+
+import vlc
+
 from logic.logger import log
+
+_shared = None
+_shared_lock = threading.Lock()
+
+
+def shared_player() -> "RadioPlayer":
+    """DE RadioPlayer van dit proces. Het dashboard (services.svc("radio")), de AI-tools (gpt_handler) en de
+    wekker-/ochtendroutine gebruiken allemaal deze ene instantie. Voorheen maakte elk hun EIGEN
+    ``RadioPlayer()`` (de ochtendroutine zelfs bij elke run een nieuwe, die nergens werd bewaard): een
+    radio die via de wekker of de chat startte kon dan niet met de Stop-knop van het dashboard worden
+    gestopt ("Radio speelde niet"), twee streams konden tegelijk spelen, en elke ochtend bleef er een
+    VLC-instantie (threads, geheugen) achter."""
+    global _shared
+    with _shared_lock:
+        if _shared is None:
+            _shared = RadioPlayer()
+        return _shared
 
 
 class RadioPlayer:
+    # Eén bewerking tegelijk (klasse-breed: er hoort maar één speler te zijn). play() duurt tot ~4,5 s; twee
+    # gelijktijdige aanroepen (wekker + dashboard-klik) mengden anders stop()/set_media()/play().
+    _lock = threading.RLock()
+    last_error = None
+
     def __init__(self):
         # --quiet + --no-plugins-cache onderdrukt de VLC-ruis op stderr.
         self.instance = vlc.Instance("--quiet", "--no-plugins-cache", "--intf", "dummy")
@@ -26,6 +51,10 @@ class RadioPlayer:
         }
 
     def play(self, station_name):
+        with self._lock:
+            return self._play_locked(station_name)
+
+    def _play_locked(self, station_name):
         # last_error: None = gelukt. Laat de API (media_api.radio_play) een mislukte
         # start als fout melden i.p.v. als "success" (de tekst-uitkomst blijft
         # ongewijzigd voor de spraak/AI-aanroepers).
@@ -82,25 +111,28 @@ class RadioPlayer:
         return self.player.get_state() == vlc.State.Playing
 
     def stop(self):
-        if self.player.is_playing():
-            self.player.stop()
-            log("Radio", "Radio gestopt")
-            return "Radio gestopt"
-        return "Radio speelde niet"
+        with self._lock:
+            if self.player.is_playing():
+                self.player.stop()
+                log("Radio", "Radio gestopt")
+                return "Radio gestopt"
+            return "Radio speelde niet"
 
     def pause(self):
-        if self.player.is_playing():
-            self.player.pause()
-            log("Radio", "Radio gepauzeerd")
-            return "Radio gepauzeerd"
-        return "Radio speelde niet"
+        with self._lock:
+            if self.player.is_playing():
+                self.player.pause()
+                log("Radio", "Radio gepauzeerd")
+                return "Radio gepauzeerd"
+            return "Radio speelde niet"
 
     def resume(self):
-        if not self.player.is_playing():
-            self.player.play()
-            log("Radio", "Radio verder afgespeeld")
-            return "Radio verder afgespeeld"
-        return "Radio was al bezig"
+        with self._lock:
+            if not self.player.is_playing():
+                self.player.play()
+                log("Radio", "Radio verder afgespeeld")
+                return "Radio verder afgespeeld"
+            return "Radio was al bezig"
     
     def set_volume(self, volume: int):
         """Stel volume van de radio in (0-100)"""

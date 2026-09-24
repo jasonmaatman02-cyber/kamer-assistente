@@ -90,8 +90,11 @@ def _run_step(step):
         asyncio.run(coro())
     elif kind == "radio":
         r = S.svc("radio")
-        if r:
-            r.play(step.get("station", "radio538"))
+        if not r:
+            raise RuntimeError(S.errors().get("radio") or "radio niet beschikbaar")   # was: stilzwijgend "gelukt"
+        r.play(step.get("station") or "radio538")
+        if getattr(r, "last_error", None):
+            raise RuntimeError(r.last_error)
     elif kind == "spotify":
         if step.get("playlist_id"):
             # sp_dj() gooit een duidelijke fout als Spotify niet is ingesteld (voorheen
