@@ -312,3 +312,50 @@ def test_settings_saved_as_the_pi_has_them_are_accepted(client):
     assert r.status_code == 200, r.get_json()
     assert client.post("/api/settings", json={"presence": {"lamp": 1}}).status_code == 200
     assert client.post("/api/settings", json={"presence": {"lamp": True}}).status_code == 400
+
+
+@pytest.mark.parametrize("url,body", [
+    ("/api/seek", {"position_ms": "x"}),
+    ("/api/seek", {"position_ms": [1]}),
+    ("/api/set_volume", {"volume": "loud"}),
+    ("/api/set_volume", {"volume": [50]}),
+])
+def test_non_numeric_seek_and_volume_are_a_400_not_a_500(client, url, body):
+    r = client.post(url, json=body)
+    assert r.status_code == 400 and r.get_json()["success"] is False
+
+
+def test_seek_and_volume_are_clamped(client, monkeypatch):
+    from Dashboard.backend import services as S
+
+    seen = {}
+
+    class SP:
+        def seek_track(self, pos):
+            seen["seek"] = pos
+
+    class DJ:
+        sp = SP()
+        last_error = None
+
+        def current_track(self):
+            return {"type": "spotify"}
+
+        def set_volume(self, v):
+            seen["vol"] = v
+            return True
+
+    monkeypatch.setattr(S, "sp_dj", lambda: DJ())
+    monkeypatch.setattr(S, "svc", lambda name: DJ() if name == "spotify" else None)
+    assert client.post("/api/seek", json={"position_ms": -500}).status_code == 200
+    assert client.post("/api/set_volume", json={"volume": 250}).get_json()["success"] is True
+    assert seen == {"seek": 0, "vol": 100}
+
+
+@pytest.mark.parametrize("url", ["/api/radio_stop", "/api/radio_pause", "/api/radio_resume"])
+def test_radio_controls_without_a_radio_service_are_not_reported_as_success(client, monkeypatch, url):
+    from Dashboard.backend import services as S
+
+    monkeypatch.setattr(S, "svc", lambda name: None)
+    r = client.post(url)
+    assert r.status_code == 503 and r.get_json()["success"] is False

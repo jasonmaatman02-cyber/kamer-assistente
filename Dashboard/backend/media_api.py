@@ -204,7 +204,11 @@ def seek():
     pos = json_body().get("position_ms")
     if pos is None:
         return jsonify({"success": False, "error": "Geen positie"}), 400
-    return _simple(lambda: S.sp_dj().sp.seek_track(int(pos)))
+    try:
+        pos = max(0, int(pos))
+    except (TypeError, ValueError, OverflowError):
+        return jsonify({"success": False, "error": "positie moet een getal zijn (ms)"}), 400
+    return _simple(lambda: S.sp_dj().sp.seek_track(pos))
 
 
 @media_bp.route("/api/devices")
@@ -250,7 +254,9 @@ def radio_play():
 @media_bp.route("/api/radio_stop", methods=["POST"])
 def radio_stop():
     r = S.svc("radio")
-    msg = r.stop() if r else "radio niet beschikbaar"
+    if not r:
+        return jsonify({"success": False, "error": "radio niet beschikbaar"}), 503
+    msg = r.stop()
     S.invalidate("now_playing")
     return jsonify({"success": True, "message": msg})
 
@@ -258,7 +264,9 @@ def radio_stop():
 @media_bp.route("/api/radio_pause", methods=["POST"])
 def radio_pause():
     r = S.svc("radio")
-    msg = r.pause() if r else "-"
+    if not r:
+        return jsonify({"success": False, "error": "radio niet beschikbaar"}), 503
+    msg = r.pause()
     S.invalidate("now_playing")
     return jsonify({"success": True, "message": msg})
 
@@ -266,7 +274,9 @@ def radio_pause():
 @media_bp.route("/api/radio_resume", methods=["POST"])
 def radio_resume():
     r = S.svc("radio")
-    msg = r.resume() if r else "-"
+    if not r:
+        return jsonify({"success": False, "error": "radio niet beschikbaar"}), 503
+    msg = r.resume()
     S.invalidate("now_playing")
     return jsonify({"success": True, "message": msg})
 
@@ -284,6 +294,10 @@ def set_volume():
     volume = json_body().get("volume")
     if volume is None:
         return jsonify({"success": False, "error": "Geen volume"}), 400
+    try:
+        volume = max(0, min(100, int(volume)))
+    except (TypeError, ValueError, OverflowError):
+        return jsonify({"success": False, "error": "volume moet een getal zijn (0-100)"}), 400
     sp, r = S.svc("spotify"), S.svc("radio")
     try:
         if sp and sp.current_track().get("type") == "spotify":
