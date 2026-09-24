@@ -171,6 +171,8 @@ def test_spotify_oauth_has_a_timeout(monkeypatch):
     monkeypatch.setattr(config, "secret", lambda name, default="": "dummy")
     dj = SpotifyDJ()
     assert dj.sp.auth_manager.requests_timeout == 10
+    assert dj.sp.retries == 1                      # begrensd: hooguit ~2 x 10 s per aanroep bij een dood netwerk
+    assert dj.sp.requests_timeout == 10
 
 
 # --- chat streaming --------------------------------------------------- #

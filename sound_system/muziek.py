@@ -36,8 +36,13 @@ class SpotifyDJ:
         # een hangende Spotify-auth-server een waitress-workerthread voor
         # altijd bezet houden (elke route die Spotify aanroept ververst het
         # token via dit pad zodra het verlopen is).
+        #
+        # retries=1 (default 3): bij een netwerk dat pakketten opslokt duurde een Spotify-aanroep
+        # 4 x 10 s = ~40 s, en de knoppen (pauze/volgende/volume) houden daarvoor een waitress-worker
+        # vast; nu hooguit ~20 s. 429-rate-limits (status_retries) blijven op de default.
         self.sp = spotipy.Spotify(
             requests_timeout=10,
+            retries=1,
             auth_manager=SpotifyOAuth(
                 client_id=config.secret("SPOTIFY_CLIENT_ID"),
                 client_secret=config.secret("SPOTIFY_CLIENT_SECRET"),

@@ -68,11 +68,12 @@ def svc(name: str):
     """Return a shared service instance, or ``None`` if it can't be created.
     Per service een eigen bouw-lock: gelijktijdige requests voor verschillende
     diensten (bv. de parallelle /api/overview-probes) bouwen wél tegelijk."""
-    if name in _services:            # snelle weg, geen lock nodig
+    if name in _services and not _build_retry_due(name):   # snelle weg, geen lock nodig
         return _services[name]
     with _named_lock(_build_locks, name):
-        if name in _services:
+        if name in _services and not _build_retry_due(name):
             return _services[name]
+        _services.pop(name, None)
         try:
             built = _build(name)
         except KeyError:
@@ -81,14 +82,29 @@ def svc(name: str):
             first_time = _errors.get(name) != str(exc)
             _errors[name] = str(exc)
             _services[name] = None
-            print(f"[dashboard] service '{name}' niet beschikbaar: {exc}")
-            if first_time:  # niet elke poll opnieuw in het logboek spammen
+            _build_failed_at[name] = _mono()
+            if first_time:  # niet elke poging (1x/min) opnieuw in journal en logboek spammen
+                print(f"[dashboard] service '{name}' niet beschikbaar: {exc}")
                 log("Service", f"{name} niet beschikbaar: {exc}")
             return None
         _services[name] = built
         _errors.pop(name, None)
+        _build_failed_at.pop(name, None)
         return built
 
+
+_SERVICE_RETRY_S = 60.0
+_build_failed_at: dict = {}       # name -> monotonic-tijd van de laatste mislukte bouwpoging
+
+
+def _build_retry_due(name: str) -> bool:
+    """Een MISLUKTE bouwpoging (``_services[name] is None``) werd voorheen voor altijd onthouden: een
+    voorbijgaande fout (VLC/geluid nog niet klaar bij het opstarten, ...) hield bv. de radio kapot tot een
+    herstart of een Settings-opslag. Nu wordt na ``_SERVICE_RETRY_S`` opnieuw geprobeerd."""
+    if _services.get(name, 0) is not None:
+        return False
+    failed = _build_failed_at.get(name)
+    return failed is not None and _mono() - failed >= _SERVICE_RETRY_S
 
 def errors() -> dict:
     return _errors
@@ -104,6 +120,7 @@ def reset_services():
         _lamp_conns.clear()
         _lamp_locks.clear()
         _lamp_fail_at.clear()
+        _build_failed_at.clear()
         _build_locks.clear()
         _data_cache_locks.clear()
     try:

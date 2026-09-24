@@ -252,3 +252,77 @@ def test_weerapi_city_caches_are_bounded(monkeypatch):
         api.fetch_weather(f"stad{i}")
     assert len(api._cache) <= W._MAX_CACHED_CITIES
     assert f"open-meteo:stad{W._MAX_CACHED_CITIES * 3 - 1}" in api._cache
+
+
+# --------------------------------------------------------------------------- #
+# Een mislukte service-bouw wordt na een minuut opnieuw geprobeerd
+# --------------------------------------------------------------------------- #
+def test_failed_service_build_is_retried_after_a_minute(monkeypatch):
+    from Dashboard.backend import services as S
+
+    S._services.clear()
+    S._errors.clear()
+    S._build_failed_at.clear()
+    clock = {"t": 1000.0}
+    monkeypatch.setattr(S, "_mono", lambda: clock["t"])
+    attempts = []
+
+    def flaky(name):
+        attempts.append(name)
+        if len(attempts) < 3:
+            raise RuntimeError("audio nog niet klaar")
+        return object()
+
+    monkeypatch.setattr(S, "_build", flaky)
+    assert S.svc("radio") is None and len(attempts) == 1
+    assert S.svc("radio") is None and len(attempts) == 1              # binnen de minuut: geen nieuwe poging
+    clock["t"] += 59
+    assert S.svc("radio") is None and len(attempts) == 1
+    clock["t"] += 2                                                    # > 60 s
+    assert S.svc("radio") is None and len(attempts) == 2               # 2e poging faalt weer
+    assert "radio" in S._errors
+    clock["t"] += 61
+    obj = S.svc("radio")
+    assert obj is not None and len(attempts) == 3                      # 3e lukt: hersteld zonder herstart
+    assert "radio" not in S._errors and "radio" not in S._build_failed_at
+    assert S.svc("radio") is obj and len(attempts) == 3                # gelukt: geen verdere pogingen
+
+
+def test_a_working_service_is_never_rebuilt(monkeypatch):
+    from Dashboard.backend import services as S
+
+    S._services.clear()
+    S._build_failed_at.clear()
+    built = []
+    monkeypatch.setattr(S, "_build", lambda name: built.append(name) or object())
+    a = S.svc("weer")
+    for _ in range(50):
+        assert S.svc("weer") is a
+    assert built == ["weer"]
+
+
+def test_reset_services_clears_the_failure_memory():
+    from Dashboard.backend import services as S
+
+    S._build_failed_at["x"] = 1.0
+    S.reset_services()
+    assert S._build_failed_at == {}
+
+
+def test_repeated_identical_build_failures_are_logged_once(monkeypatch, capsys):
+    from Dashboard.backend import services as S
+
+    S._services.clear()
+    S._errors.clear()
+    S._build_failed_at.clear()
+    clock = {"t": 0.0}
+    monkeypatch.setattr(S, "_mono", lambda: clock["t"])
+
+    def broken(name):
+        raise RuntimeError("Spotify is nog niet ingesteld")
+
+    monkeypatch.setattr(S, "_build", broken)
+    for _ in range(5):
+        S.svc("spotify")
+        clock["t"] += 61
+    assert capsys.readouterr().out.count("niet beschikbaar") == 1
