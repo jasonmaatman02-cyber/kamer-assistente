@@ -93,6 +93,29 @@ bij [console.picovoice.ai](https://console.picovoice.ai/), zet die als
 "hey kamer" `.ppn` neer als `voice/hey_kamer.ppn`. `assistant.wake_backend`
 staat op `auto` en schakelt dan vanzelf over; `whisper`/`porcupine` forceren.
 
+### Stabiliteit en tuning (Pi)
+
+Instellingen die vooral bij storingen of traagheid van belang zijn (Settings-tab of
+`settings.json`; alle hebben een veilige default):
+
+| Instelling | Default | Betekenis |
+|---|---|---|
+| `devices.lamp_timeout_s` | 6 | Timeout per Tapo-aanroep. Een onbereikbare lamp kost anders ~21 s per poging. |
+| `ai.ollama_timeout_s` | 330 | Leestimeout naar Ollama (eerste bericht na een koude start kan minuten duren). |
+| `presence.interval_s` / `empty_grace_s` / `consecutive_required` | 3 / 20 / 2 | Meetinterval, wachttijd vóór "leeg", aantal opeenvolgende positieve metingen. |
+| `presence.detect_scale` | 1.0 | Verkleint het frame vóór de (zware) HOG-detector; `0.6` is ~10× goedkoper maar moet eerst op je eigen beeld getoetst worden. Meet met `/api/presence` → `detect_ms`. |
+| `camera.max_viewers` | 3 | Maximaal aantal gelijktijdige live-camerabeelden (elk houdt een server-thread vast). |
+
+Diagnose: `curl http://<pi>:5000/api/health` (threads, camera `frame_age_s`, Ollama,
+alarm, commit die draait vs. op schijf), `curl .../api/presence` en
+`journalctl -u kamer-dashboard -f`. Een kapotte `settings.json` wordt niet
+overschreven maar bewaard als `settings.json.corrupt-<tijd>`.
+
+Zonder Pi ontwikkelen/testen: `python tools/dev_server.py` (geïsoleerde config, offline
+lampen), `tools/stress_dashboard.py` (blijft het dashboard responsief als een externe
+dienst hangt?) en `tools/soak_dashboard.py` (threads/geheugen/handles over lange tijd).
+Het logboek van de stabilisatiesessies staat in `docs/debug-session.md`.
+
 ### Inloggegevens via de Settings-tab
 
 API-keys en wachtwoorden (OpenAI, Tapo, Gmail, Apple, Spotify, …) vul je in
