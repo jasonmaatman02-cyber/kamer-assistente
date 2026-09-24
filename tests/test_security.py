@@ -148,3 +148,18 @@ def test_redact_leaves_ordinary_text_alone():
 
     assert _redact("stad 'x' niet gevonden") == "stad 'x' niet gevonden"
     assert _redact("https://a/b?q=Arnhem&key=abc123&units=metric") == "https://a/b?q=Arnhem&key=***&units=metric"
+
+
+def test_calendar_events_api_follows_the_calendar_page_password(client, monkeypatch):
+    """De Kalender-pagina zat wel achter het wachtwoord, maar /api/calendar/events (alle
+    afspraken van elk datumbereik) stond open."""
+    monkeypatch.setenv("DASHBOARD_PASSWORD", "geheim")
+    r = client.get("/api/calendar/events")
+    assert r.status_code == 401 and r.get_json()["login_required"] is True
+
+    assert client.post("/api/login", json={"password": "geheim"}).status_code == 200
+    assert client.get("/api/calendar/events").status_code == 200
+
+
+def test_calendar_events_api_is_open_when_no_password_is_set(client):
+    assert client.get("/api/calendar/events").status_code == 200
