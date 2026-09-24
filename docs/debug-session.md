@@ -246,6 +246,13 @@ Pi 4B (192.168.2.34), Debian 13, Python 3.13.5; was `9c30f40`, nu `ce1eec4`+ (`b
 - `notifications.js`/`environment.js` pollen niet meer voor een verborgen tabblad (de overige pagina's deden dat al).
 - **Pi-status na alle deploys**: service `active`, `NRestarts=0`, `WatchdogUSec=3min`, systeem 96% idle (dashboard ~11% van een core, load 0,33, 50 C), agenda `ok`, health 200 in 2 ms.
 
+#### S2-27 (P2, Pi-specifiek) Spraak langer dan 20 s werd afgekapt en opnieuw afgespeeld
+- **Gevonden door de Pi te inspecteren**: op de Pi ontbreekt `pygame` (dashboard-only requirements) en `piper-tts`. Elke uitspraak gaat dus via espeak-ng (terugval) + de **systeemspeler** (`aplay`), en `_play_system()` gaf `aplay` een vaste timeout van **20 s**. Een tekst van ~60 woorden geeft ~25 s audio (gemeten: 1,09 MB wav): `aplay` werd na 20 s afgekapt en `ffplay` speelde het daarna **opnieuw van voren af** (afgekapt + dubbel). Relevant voor de ochtend-notities en lange antwoorden. Mijn eerdere `_PLAY_MAX_S`-fix (S2-1) gold alleen voor het pygame-pad, dat op de Pi nooit draait.
+- **Fix**: `_system_play_timeout()` = lengte van de wav + 10 s (min 20 s, max 180 s; mp3 = 120 s); `_speak_espeak()` (backend `espeak`, blokkerend) vaste 15 s -> `10 s + 0,12 s/teken`. Zonder pygame gaat het stil naar de systeemspeler (voorheen bij elke uitspraak "afspelen mislukt (pygame)" in het journal) en de backend-foutmelding ("piper faalde") komt hooguit 1x per 10 min.
+- **Op de Pi geverifieerd (zonder geluid)**: na deploy geeft een korte zin timeout 20,0 s en de ~60-woorden-tekst **34,8 s** (voorheen 20 s); 4 opeenvolgende `synthesize()`-aanroepen schreven de piper-melding 1x. Afspelen zelf niet uitgevoerd (geen geluid/hardware-actie zonder toestemming).
+- **Bestanden**: `ai/tts.py`, `tests/test_tts.py` (+6).
+- **Opmerking voor Jason**: de Pi draait dus op espeak-ng (robotstem). Piper (natuurlijker) vereist `pip install piper-tts` + de stem in `models/`; niet gedaan omdat het een grote afhankelijkheid is en de stem hardware-/geluidstests vraagt.
+
 #### Statische analyse (uitgevoerd, geen verdere bevindingen)
 - ruff F: schoon na S2-2. bandit: 0 High, 1 Medium (`0.0.0.0` bind in `rundashboard.py`, bewust: LAN-dashboard achter optioneel wachtwoord), 21 Low (vaste-argv-subprocess, `try/except/pass`; beoordeeld, alleen tts-argv was echt).
 - vulture: `devices/Lights.py:65` ongebruikte parameters `stappen`/`vertraging` (`zet_helderheid`) -- API-compat, laten staan.

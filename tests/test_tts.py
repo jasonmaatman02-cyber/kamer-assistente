@@ -305,3 +305,20 @@ def test_repeated_backend_failure_is_printed_once_not_per_utterance(monkeypatch,
         import os
         os.remove(path)
     assert capsys.readouterr().out.count("faalde") == 1
+
+
+def test_direct_espeak_timeout_scales_with_the_text(monkeypatch):
+    import ai.tts as tts
+
+    assert tts._espeak_speak_timeout("hoi") == 15.0
+    assert tts._espeak_speak_timeout("x" * 500) == 70.0
+    assert tts._espeak_speak_timeout("x" * 100000) == float(tts._PLAY_MAX_S)
+    seen = {}
+
+    def fake_run(cmd, **kw):
+        seen.update(kw)
+        return subprocess.CompletedProcess(cmd, 0)
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    tts._speak_espeak("y" * 500)
+    assert seen["timeout"] == 70.0

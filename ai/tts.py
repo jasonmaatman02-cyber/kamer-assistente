@@ -115,9 +115,16 @@ def _synth_espeak(text: str, out_path: str) -> str:
     return out_path
 
 
+def _espeak_speak_timeout(text: str) -> float:
+    """espeak-ng spreekt hier rechtstreeks (blokkerend): ~15 tekens/s + marge. Vast 15 s kapte
+    langere spraak halverwege af."""
+    return min(float(_PLAY_MAX_S), max(15.0, 10.0 + len(text) * 0.12))
+
+
 def _speak_espeak(text: str) -> None:
     lang = config.get("tts.language", "nl")
-    subprocess.run(["espeak-ng", "-v", lang, "--", text], check=True, capture_output=True, timeout=15)
+    subprocess.run(["espeak-ng", "-v", lang, "--", text], check=True, capture_output=True,
+                   timeout=_espeak_speak_timeout(text))
 
 
 # --------------------------------------------------------------------------- #
