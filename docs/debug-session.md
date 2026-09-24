@@ -55,6 +55,14 @@ Reproductie lokaal met een gescripte nep-`cv2` (`tests/test_camera.py`, 12 tests
 - **Bestanden**: `Dashboard/backend/services.py`, `media_api.py`, `sound_system/muziek.py`, `Dashboard/static/scripts/home.js`, `media.js`, `tests/test_swr.py` (8 nieuw), `tools/stress_dashboard.py`.
 - **Resterend**: chat/LLM-aanvragen houden nog een worker vast per lopend verzoek (apart item S2-6).
 
+#### S2-6 (P1) AI-verzoeken kunnen het hele dashboard vastzetten; Ollama zonder timeout; OpenAI-key wijzigt niet
+**Reproductie**: `python tools/stress_dashboard.py ollama --hang 30 --tabs 18` (trage LLM, 18 chat-zenders): canary-timeouts **5/8**, dashboard bevroren.
+- **Oorzaak**: elke chat/spraak-beurt hield een waitress-worker vast voor de hele LLM-aanroep (op een Pi minuten), zonder globale limiet; wachten op de per-sessie-lock was onbegrensd (opnieuw versturen na een browser-timeout terwijl de server nog bezig is); `ollama.Client` had `timeout=None` (een vastgelopen Ollama = worker voor altijd vast); de gecachte OpenAI-client gebruikte na een key-wijziging in Settings nog de oude key (Settings meldt "toegepast") en had de SDK-default van 10 min x 2 retries.
+- **Fix**: `_llm_slots` (max 2 gelijktijdige beurten) + `_begin_turn()` met 0.5s-wachttijden en nette NL-melding ("nog bezig met je vorige vraag" / "druk bezig"); lock+slot altijd vrijgegeven (ook bij LLM-fout en bij afgebroken stream); `ai.ollama_timeout_s` (default 330s, dekt de gemeten koude start ~225s, net boven chat.js/waitress 300s); OpenAI-client wordt herbouwd bij een andere key, timeout 60s, 1 retry.
+- **Resultaat**: 0/36 canary-timeouts, mediaan 0.03s onder dezelfde flood.
+- **Bestanden**: `logic/gpt_handler.py`, `ai/llm.py`, `config/settings.py`, `tests/test_llm.py` (+7 tests).
+- **Resterend / niet testbaar zonder Pi**: echte Ollama-koude-start; of 330s ook bij trage generatie van lange antwoorden volstaat (per chunk bij streaming).
+
 #### Statische analyse (uitgevoerd, geen verdere bevindingen)
 - ruff F: schoon na S2-2. bandit: 0 High, 1 Medium (`0.0.0.0` bind in `rundashboard.py`, bewust: LAN-dashboard achter optioneel wachtwoord), 21 Low (vaste-argv-subprocess, `try/except/pass`; beoordeeld, alleen tts-argv was echt).
 - vulture: `devices/Lights.py:65` ongebruikte parameters `stappen`/`vertraging` (`zet_helderheid`) -- API-compat, laten staan.

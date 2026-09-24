@@ -36,6 +36,8 @@ DEFAULTS: dict = {
         "openai_model": "gpt-4o-mini",
         "temperature": 0.6,
         "max_history": 20,
+        # leestimeout (s) naar Ollama; dekt de gemeten koude start (~225s) met marge
+        "ollama_timeout_s": 330,
     },
     "tts": {
         "backend": "piper",             # piper | espeak | openai | none

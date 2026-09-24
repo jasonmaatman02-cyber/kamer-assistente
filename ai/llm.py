@@ -18,6 +18,7 @@ import re
 import config
 
 _openai_client = None
+_openai_key = None
 
 
 def _salvage_tool_calls(content: str):
@@ -68,10 +69,28 @@ def _empty():
 # --------------------------------------------------------------------------- #
 # Ollama
 # --------------------------------------------------------------------------- #
+def _ollama_timeout():
+    """Leestimeout voor Ollama (``ai.ollama_timeout_s``, default 330s).
+
+    Was ``None`` (oneindig): een vastgelopen Ollama (accepteert de verbinding,
+    antwoordt nooit) hield een waitress-worker en, met de nieuwe concurrency-
+    limiet, een AI-slot voor altijd vast. 330s dekt de gemeten koude start van
+    een Pi 4B (~225s eerste bericht, prompt-processing) met marge en ligt net
+    boven chat.js/waitress (300s): de browser geeft dan eerst op, de server
+    ruimt daarna zelf op. Bij streaming geldt dit per chunk."""
+    read = max(30.0, float(config.get("ai.ollama_timeout_s", 330) or 330))
+    try:
+        import httpx
+
+        return httpx.Timeout(read, connect=5.0)
+    except Exception:  # noqa: BLE001 - httpx hoort er te zijn (ollama hangt ervan af)
+        return read
+
+
 def _chat_ollama(messages, tools):
     import ollama
 
-    client = ollama.Client(host=config.get("ai.ollama_url"))
+    client = ollama.Client(host=config.get("ai.ollama_url"), timeout=_ollama_timeout())
     resp = client.chat(
         model=config.get("ai.ollama_model"),
         messages=messages,
@@ -106,11 +125,18 @@ def _chat_ollama(messages, tools):
 # OpenAI
 # --------------------------------------------------------------------------- #
 def _get_openai():
-    global _openai_client
-    if _openai_client is None:
+    """OpenAI-client, opnieuw opgebouwd zodra de API-key in Settings verandert
+    (Settings meldt "opgeslagen en toegepast", maar de gecachte client bleef tot
+    een herstart de OUDE key gebruiken). Eindige timeout + 1 retry: de SDK-
+    default is 10 minuten x 2 retries, lang genoeg om een worker een halfuur
+    vast te zetten."""
+    global _openai_client, _openai_key
+    key = config.secret("OPENAI_API_KEY")
+    if _openai_client is None or key != _openai_key:
         from openai import OpenAI
 
-        _openai_client = OpenAI(api_key=config.secret("OPENAI_API_KEY"))
+        _openai_client = OpenAI(api_key=key, timeout=60.0, max_retries=1)
+        _openai_key = key
     return _openai_client
 
 
@@ -197,7 +223,7 @@ def chat_stream(messages, tools=None):
     try:
         import ollama
 
-        client = ollama.Client(host=config.get("ai.ollama_url"))
+        client = ollama.Client(host=config.get("ai.ollama_url"), timeout=_ollama_timeout())
         stream = client.chat(
             model=config.get("ai.ollama_model"),
             messages=messages,

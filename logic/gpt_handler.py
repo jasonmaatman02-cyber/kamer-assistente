@@ -357,6 +357,35 @@ def _trim(hist: list) -> None:
 
 _MAX_TOOLS_PER_TURN = 4
 
+# Begrenzing van gelijktijdige AI-beurten. Elke beurt (chat, spraak, /api/
+# send_message) houdt een waitress-worker vast voor de hele -- op een Pi 4B
+# soms minutenlange -- LLM-aanroep, en Ollama verwerkt er toch maar één tegelijk.
+# Zonder limiet zette een reeks chat-verzoeken (meerdere tabs, of opnieuw
+# versturen na een browser-timeout terwijl de server nog bezig is) alle 16
+# workers vast en bevroor het hele dashboard (lokaal gereproduceerd:
+# tools/stress_dashboard.py ollama --tabs 18 -> 5/8 canary-timeouts).
+_llm_slots = threading.BoundedSemaphore(2)
+_SESSION_WAIT_S = 0.5
+_SLOT_WAIT_S = 0.5
+_BUSY_SESSION = "Ik ben nog bezig met je vorige vraag -- even geduld."
+_BUSY_GLOBAL = "De assistent is nu druk bezig met andere verzoeken. Probeer het over een minuutje opnieuw."
+
+
+def _begin_turn(s):
+    """(release, None) als deze beurt mag draaien, anders (None, melding).
+    Wacht nooit langer dan een paar seconden op de sessie-lock of een slot."""
+    if not s["lock"].acquire(timeout=_SESSION_WAIT_S):
+        return None, _BUSY_SESSION
+    if not _llm_slots.acquire(timeout=_SLOT_WAIT_S):
+        s["lock"].release()
+        return None, _BUSY_GLOBAL
+
+    def release():
+        _llm_slots.release()
+        s["lock"].release()
+
+    return release, None
+
 
 def _dispatch(call) -> str:
     """Eén tool draaien; een fout wordt een nette string i.p.v. een traceback."""
@@ -400,7 +429,10 @@ def _phrase_prompt(results: list[tuple[str, str]]) -> dict:
 
 def verwerk_input(text: str, session: str = "voice") -> str:
     s = _session(session)
-    with s["lock"]:
+    release, busy = _begin_turn(s)
+    if busy:
+        return busy
+    try:
         hist = s["history"]
         try:
             hist.append({"role": "user", "content": text})
@@ -425,6 +457,8 @@ def verwerk_input(text: str, session: str = "voice") -> str:
         except Exception as exc:  # noqa: BLE001
             log("ERROR", f"Fout bij verwerken input: {exc}")
             return f"Fout bij verwerken input: {exc}"
+    finally:
+        release()
 
 
 def verwerk_input_stream(text: str, session: str = "voice"):
@@ -432,7 +466,11 @@ def verwerk_input_stream(text: str, session: str = "voice"):
     meer functies, dan worden die uitgevoerd en volgt één natuurlijke afronding
     (ook gestreamd). Anders komt het antwoord meteen token voor token."""
     s = _session(session)
-    with s["lock"]:
+    release, busy = _begin_turn(s)
+    if busy:
+        yield busy
+        return
+    try:
         hist = s["history"]
         hist.append({"role": "user", "content": text})
         _trim(hist)
@@ -473,3 +511,5 @@ def verwerk_input_stream(text: str, session: str = "voice"):
             return
         if answer:
             hist.append({"role": "assistant", "content": answer})
+    finally:
+        release()
