@@ -38,6 +38,10 @@ from Dashboard.backend import services as S
 from logic.logger import log
 
 _DEFAULT_BLOCK_AFTER = "21:30"
+# Zo lang mag één worker-ronde duren voordat de watchdog 'm als vastgelopen telt. Een normale ronde
+# is milliseconden tot seconden; het slechtste geval (lamp-lock 15 s + verbinden + commando's, elk
+# met timeout) blijft ruim onder dit getal.
+_PRESENCE_STUCK_MIN_S = 300.0
 # Zoveel keer een mislukte automatische lampactie herproberen (op de eerstvolgende
 # presence-ticks, dus met de bestaande interval_s -- geen extra loop) voordat we
 # opgeven tot de volgende EMPTY<->OCCUPIED-overgang.
@@ -83,6 +87,7 @@ class PresenceWorker:
 
     def __init__(self):
         self._thread: threading.Thread | None = None
+        self._beat = time.monotonic()          # laatste teken van leven van de worker-lus (zie liveness())
         self._lock = threading.Lock()
         self._stop = threading.Event()
 
@@ -166,8 +171,31 @@ class PresenceWorker:
 
     def _loop(self):
         while not self._stop.is_set():
-            self._stop.wait(self._run_once())
+            self._beat = time.monotonic()
+            wait = self._run_once()
+            self._beat = time.monotonic()
+            self._stop.wait(wait)
         self._release_camera()
+
+    def liveness(self, now: float | None = None) -> tuple[bool, str]:
+        """(gezond, uitleg) voor de systemd-watchdog. De worker mag nooit doodgaan, maar een
+        detectie/lamp-aanroep die HANGT (native cv2-call, een netwerkcall zonder timeout)
+        laat de automatisering stilzwijgend stilstaan terwijl het dashboard prima antwoordt --
+        precies wat een HTTP-check niet ziet. Draait de thread niet meer, dan starten we 'm
+        opnieuw (zelfherstel); hangt hij, dan kan dat alleen door een herstart van de service."""
+        if not config.get("presence.enabled", False):
+            return True, "presence uit"
+        if self._thread is None or not self._thread.is_alive():
+            log("PEOPLE", "Presence-thread draaide niet meer -- opnieuw gestart")
+            self.start()
+            self._beat = time.monotonic()
+            return True, "thread herstart"
+        interval = max(0.5, float(config.get("presence.interval_s", 3.0) or 3.0))
+        limit = max(_PRESENCE_STUCK_MIN_S, 20 * interval)
+        age = (now if now is not None else time.monotonic()) - self._beat
+        if age > limit:
+            return False, f"presence-lus reageert al {int(age)}s niet (grens {int(limit)}s)"
+        return True, f"laatste ronde {int(age)}s geleden"
 
     # ------------------------------------------------------------------ #
     # Eén meetronde

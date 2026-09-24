@@ -401,11 +401,32 @@ _MAX_TOOLS_PER_TURN = 4
 # versturen na een browser-timeout terwijl de server nog bezig is) alle 16
 # workers vast en bevroor het hele dashboard (lokaal gereproduceerd:
 # tools/stress_dashboard.py ollama --tabs 18 -> 5/8 canary-timeouts).
-_llm_slots = threading.BoundedSemaphore(2)
+_LLM_SLOT_COUNT = 2
+_llm_slots = threading.BoundedSemaphore(_LLM_SLOT_COUNT)
+_slots_full_since: float | None = None
+_SLOTS_STUCK_S = 1500.0       # alle slots zo lang bezet = een slot is nooit teruggegeven (lek)
 _SESSION_WAIT_S = 0.5
 _SLOT_WAIT_S = 0.5
 _BUSY_SESSION = "Ik ben nog bezig met je vorige vraag -- even geduld."
 _BUSY_GLOBAL = "De assistent is nu druk bezig met andere verzoeken. Probeer het over een minuutje opnieuw."
+
+
+def liveness(now: float | None = None) -> tuple[bool, str]:
+    """(gezond, uitleg) voor de watchdog. Elke beurt geeft zijn slot in een ``finally`` terug, dus
+    alle slots langdurig bezet betekent een lek: daarna zegt de assistent voor altijd "druk bezig".
+    Een echte beurt duurt hooguit de LLM-timeout (330 s) plus tools, ver onder de grens."""
+    global _slots_full_since
+    t = now if now is not None else time.monotonic()
+    free = getattr(_llm_slots, "_value", _LLM_SLOT_COUNT)
+    if free > 0:
+        _slots_full_since = None
+        return True, f"{free}/{_LLM_SLOT_COUNT} AI-slots vrij"
+    if _slots_full_since is None:
+        _slots_full_since = t
+    age = t - _slots_full_since
+    if age > _SLOTS_STUCK_S:
+        return False, f"alle AI-slots al {int(age)}s bezet (grens {int(_SLOTS_STUCK_S)}s)"
+    return True, f"alle AI-slots bezet sinds {int(age)}s"
 
 
 def _begin_turn(s):

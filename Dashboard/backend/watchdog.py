@@ -6,9 +6,11 @@ zo voor altijd kapot -- precies de klasse fouten die eerder het hele dashboard b
 
 Werking: ``deploy/kamer-dashboard.service`` zet ``WatchdogSec`` (systemd exporteert dan
 ``WATCHDOG_USEC`` + ``NOTIFY_SOCKET``). Deze thread vraagt periodiek zijn EIGEN
-``/api/config`` op (geen externe afhankelijkheden, dus snel) en stuurt alleen bij een antwoord
-``WATCHDOG=1`` naar systemd. Blijft dat uit langer dan ``WatchdogSec``, dan doodt en herstart
-systemd de service. Draait het buiten systemd (of zonder WatchdogSec), dan doet dit niets.
+``/api/config`` op (geen externe afhankelijkheden, dus snel), controleert daarnaast een paar
+interne liveness-checks (presence-lus, TTS-lock, AI-slots: zie ``internal_failures``) en stuurt
+alleen als alles in orde is ``WATCHDOG=1`` naar systemd. Blijft dat uit langer dan
+``WatchdogSec``, dan doodt en herstart systemd de service. Draait het buiten systemd (of
+zonder WatchdogSec), dan doet dit niets.
 
 Bewust ruim: de probe krijgt 20 s, de eerste 60 s na de start worden altijd doorgemeld (imports op
 een Pi), en de unit gebruikt 180 s -- een Pi die even zwaar belast is (Ollama) mag geen valse
@@ -62,6 +64,33 @@ def watchdog_interval(environ=None) -> float | None:
     return max(1.0, usec / 1_000_000 / 3)
 
 
+def internal_failures(checks=None) -> list[str]:
+    """Meldingen van interne liveness-checks die NIET gezond zijn (leeg = alles in orde).
+    ``/api/config`` antwoordt ook als de presence-lus, de TTS-lock of de AI-slots vastzitten; deze
+    checks vangen die gedeeltelijke vriezers wel. Een falende check zelf telt niet als vastloper."""
+    if checks is None:
+        checks = _default_checks()
+    failures = []
+    for name, fn in checks:
+        try:
+            ok, detail = fn()
+        except Exception as exc:  # noqa: BLE001 - een kapotte check mag nooit een herstart uitlokken
+            print(f"[watchdog] check '{name}' zelf mislukt: {exc!r}")
+            continue
+        if not ok:
+            failures.append(f"{name}: {detail}")
+    return failures
+
+
+def _default_checks():
+    """Lazy imports: dit bestand mag zonder de rest van de app importeerbaar blijven."""
+    from ai import tts
+    from Dashboard.backend.presence import worker
+    from logic import gpt_handler
+
+    return [("presence", worker.liveness), ("tts", tts.liveness), ("ai", gpt_handler.liveness)]
+
+
 def http_probe(port: int) -> bool:
     """True als het dashboard binnen de timeout antwoordt (zonder externe afhankelijkheden)."""
     try:
@@ -81,12 +110,12 @@ def run(interval: float, probe, notify, stop: threading.Event | None = None,
     while not stop.is_set():
         if clock() - started < startup_grace or probe():
             if failures:
-                print(f"[watchdog] dashboard antwoordt weer na {failures} mislukte poging(en)")
+                print(f"[watchdog] gezondheidscontrole weer in orde na {failures} mislukte poging(en)")
             failures = 0
             notify("WATCHDOG=1")
         else:
             failures += 1
-            print(f"[watchdog] dashboard antwoordt niet ({failures}x) -- systemd herstart de service "
+            print(f"[watchdog] gezondheidscontrole mislukt ({failures}x) -- systemd herstart de service "
                   "als dit blijft duren")
         stop.wait(interval)
 
@@ -96,8 +125,17 @@ def start(port: int) -> threading.Thread | None:
     interval = watchdog_interval()
     if interval is None:
         return None
-    thread = threading.Thread(
-        target=run, args=(interval, lambda: http_probe(port), sd_notify), name="watchdog", daemon=True)
+
+    def probe() -> bool:
+        if not http_probe(port):
+            return False
+        failures = internal_failures()
+        if failures:
+            print(f"[watchdog] interne storing: {'; '.join(failures)}")
+            return False
+        return True
+
+    thread = threading.Thread(target=run, args=(interval, probe, sd_notify), name="watchdog", daemon=True)
     thread.start()
     print(f"[watchdog] actief (elke {interval:.0f}s)")
     return thread

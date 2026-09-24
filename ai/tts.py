@@ -36,6 +36,20 @@ _mixer_ready = None
 # gelijktijdige dashboard-requests) elkaars afspelen onderuit. Zelfde lock
 # beschermt het (eenmalige, ~60MB) laden van de Piper-stem tegen dubbel laden.
 _speak_lock = threading.Lock()
+_speaking_since: float | None = None      # monotonic-tijd waarop de huidige speak()-beurt begon (voor liveness())
+_SPEAK_STUCK_S = 300.0                    # > _PLAY_MAX_S (180) + synthese; langer = de lock hangt
+
+
+def liveness(now: float | None = None) -> tuple[bool, str]:
+    """(gezond, uitleg) voor de watchdog: een speak() die niet meer terugkomt houdt _speak_lock
+    vast, waarna ALLE latere spraak (wekker, routines, spraakassistent) voor altijd wacht."""
+    since = _speaking_since
+    if since is None:
+        return True, "stil"
+    age = (now if now is not None else time.monotonic()) - since
+    if age > _SPEAK_STUCK_S:
+        return False, f"speak() duurt al {int(age)}s (grens {int(_SPEAK_STUCK_S)}s)"
+    return True, f"spreekt sinds {int(age)}s"
 _piper_lock = threading.Lock()
 _PLAY_MAX_S = 180   # harde bovengrens voor één afspeelbeurt (zie _play)
 
@@ -268,22 +282,31 @@ def speak(text: str) -> None:
     if backend == "none":
         print(f"[tts:none] {text}")
         return
+    global _speaking_since
     with _speak_lock:
-        if backend == "espeak":
+        _speaking_since = time.monotonic()
+        try:
+            _speak_locked(text, backend)
+        finally:
+            _speaking_since = None
+
+
+def _speak_locked(text: str, backend: str) -> None:
+    if backend == "espeak":
+        try:
+            _speak_espeak(text)
+        except Exception as exc:  # noqa: BLE001
+            print(f"[tts] espeak faalde: {exc}")
+        return
+    path = synthesize(text)
+    if path:
+        try:
+            _play(path)
+        finally:
             try:
-                _speak_espeak(text)
-            except Exception as exc:  # noqa: BLE001
-                print(f"[tts] espeak faalde: {exc}")
-            return
-        path = synthesize(text)
-        if path:
-            try:
-                _play(path)
-            finally:
-                try:
-                    os.remove(path)
-                except OSError:
-                    pass
+                os.remove(path)
+            except OSError:
+                pass
 
 
 # Backwards-compat: old code did ``from voice.tts_output import TextToSpeech``.

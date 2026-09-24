@@ -265,6 +265,22 @@ def _ollama_probe() -> bool:
         return False
 
 
+def _liveness_report() -> dict:
+    from Dashboard.backend import watchdog
+
+    out = {}
+    try:
+        for name, fn in watchdog._default_checks():
+            try:
+                ok, detail = fn()
+            except Exception as exc:  # noqa: BLE001
+                ok, detail = True, f"check faalde zelf: {exc!r}"
+            out[name] = {"ok": bool(ok), "detail": detail}
+    except Exception as exc:  # noqa: BLE001 - health mag nooit stuk gaan door een import
+        out["error"] = {"ok": True, "detail": repr(exc)}
+    return out
+
+
 @system_bp.route("/api/health")
 def health():
     from Dashboard.backend import routines_api
@@ -295,6 +311,7 @@ def health():
         "ollama_reachable": _ollama_reachable(),
         "mail_ready": mail_ready(),
         "password_set": password_set(),
+        "liveness": _liveness_report(),      # dezelfde checks als de systemd-watchdog (zie watchdog.py)
         "thread_count": threading.active_count(),
         # alleen de 'eigen' threads; waitress/idle-ruis weggelaten
         "threads": sorted(
