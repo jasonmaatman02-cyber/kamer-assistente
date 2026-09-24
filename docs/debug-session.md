@@ -48,6 +48,28 @@ Formaat per item: **ID | subsystem | probleem | oorzaak | oplossing | tests | re
 - **Tests**: 8 nieuwe in `tests/test_agenda.py` (o.a. de echte Pi-payload als regressietest, tijdzones +2/-5/UTC, kapotte items, `items: null`, retries, verzwegen fout).
 - **Resultaat (Pi, live na deploy 71b3de7)**: `/api/calendar_today` -> 15:00 / 20:00 / 20:30 / 23:00 (was 13:00 / 18:00 / 18:30 / 21:00); gisteren/vandaag/morgen via de echte API met de nieuwe lokale grenzen zonder fouten; `service_status agenda ok`. **Resterend risico**: DTSTART met een andere TZID bij iCloud wordt nog steeds als zwevende tijd doorgegeven (geen TZID-conversie, alleen relevant buiten Nederland).
 
+### S3-6 | security | (P1/P2) het OPEN `GET /api/secrets` gaf 5 tekens van elk wachtwoord en alle key-hints aan iedereen op het LAN
+- **Probleem**: op de live Pi (`curl http://localhost:5000/api/secrets`, zonder login) kwam per ingesteld geheim `hint = eerste 3 + … + laatste 2 tekens`: het dashboard-wachtwoord, het Tapo-account-wachtwoord, het Gmail-app-wachtwoord, de Apple-app-wachtwoorden, Google/Spotify client secrets en de API-keys. Daarnaast volledig: e-mailadressen (`TAPO_USER`, `EMAIL_ADDRESS`, `RECEIVER`, `APPLE_ID_*`) en OAuth client-id's. Iedereen op het (wifi-)LAN kon dit lezen; 5 bekende tekens verkleinen een brute-force enorm.
+- **Oorzaak**: `_mask()` toonde begin/eind van de waarde (bedoeld als herkenningshulp in de Settings-UI) en de status-API is niet achter het wachtwoord gezet toen de Settings-pagina dat wel werd.
+- **Oplossing**: `_mask()` geeft nu altijd `••••••` (geen enkel teken van de waarde; lengte-onafhankelijk), en `GET /api/secrets` valt onder `@require_password` (zoals de Settings-pagina zelf). Schrijven bleef al achter de OTP-code + wachtwoord.
+- **Tests**: `test_secret_hints_never_contain_any_character_of_the_secret`, `test_secrets_status_api_requires_the_password_when_one_is_set`, open zonder wachtwoord; de token-sweep-test (`test_routes`) wijst nu naar een endpoint dat `unlocked()` aanroept.
+- **Resultaat (Pi, na deploy 7093b28)**: `GET /api/secrets` zonder login -> `401 {"login_required": true}`. **Resterend risico / aanbeveling voor Jason**: deze hints zijn tot vandaag door iedereen op het LAN op te vragen geweest; overweeg (minimaal) het dashboard-wachtwoord en de Tapo-/mail-/Apple-app-wachtwoorden te wisselen. `GET /api/settings`, `/api/health`, `/api/notifications` en `/api/notes` blijven open (bevatten geen geheimen, wel bv. lamp-IP's, een e-mailadres in foutmeldingen en notities) -- bewust: onderdeel van het LAN-model.
+
+### S3-7 | services | een mislukte service-bouw werd voor altijd onthouden; spotipy-retries te ruim
+- **Probleem**: `svc()` cachete een mislukte bouw als `None` zonder verloop. Een voorbijgaande fout (VLC/geluid nog niet klaar bij het opstarten, ...) hield bv. de radio kapot tot een herstart of Settings-opslag (`reset_services`). Spotify-aanroepen konden bij een netwerk dat pakketten opslokt 4 x 10 s = ~40 s een waitress-worker vasthouden (spotipy `retries=3`).
+- **Oplossing**: na `_SERVICE_RETRY_S` = 60 s wordt opnieuw gebouwd (alleen als de vorige poging mislukte; een werkende service wordt nooit opnieuw gebouwd); dezelfde foutmelding wordt hooguit 1x gelogd; `reset_services()` wist het geheugen; spotipy `retries=1` (~20 s worst-case, 429-`status_retries` ongewijzigd).
+- **Tests**: `tests/test_swr.py` +4 (retry-schema 59 s/61 s/61 s met nep-klok, werkende service nooit herbouwd, reset, log-once), `test_units` (spotipy-retries). **Resultaat**: alle 4 diensten `ok` op de Pi na deploy 6a8a32d. **Resterend risico**: een dienst met een permanente configfout (Spotify zonder keys) wordt elke minuut opnieuw geprobeerd (goedkoop, geen netwerk).
+
+### S3-8 | frontend | de home-pagina toonde bij een uitgevallen backend gewoon de laatste waarden
+- **Probleem**: bij een onbereikbare server faalde `refreshAll()` stil (`console.error`); de pagina bleef verouderde CPU/geheugen/status tonen alsof alles in orde was ("Connected").
+- **Oplossing**: na 2 mislukte overview-polls toont de statusbadge "Server niet bereikbaar" (rood) en worden de systeemwaarden gedempt (`.stale`); herstel zet dat bij de eerstvolgende geslaagde poll terug. `notifications.js`/`environment.js` pollen niet voor verborgen tabbladen.
+- **Getest**: in de browser (dev-server gestopt tijdens een open pagina): na ~13 s `Server niet bereikbaar | stale=true`, geen onafgehandelde fouten. **Resterend risico**: alleen de home-pagina heeft de badge; overige pagina's tonen eigen foutstatussen (devices "onbereikbaar", media-meldingen).
+
+### S3-9 | voice/TTS | spraak "slaagde" stil zonder geluid als er geen speler/geluidskaart was
+- **Probleem**: `speak()`/`_play()`/`_play_system()` gaven niets terug; ontbrak `aplay`/`ffplay` of de geluidskaart, dan telde de wekker-groet, de notitie-stap en een `say`-stap als geslaagd.
+- **Oplossing**: `_play_system`/`_play`/`speak` geven een bool (False = synthese of afspelen mislukte; lege tekst en backend `none` = True); de foutmelding komt hooguit 1x per 10 min in het journal; routine-groet, notities en `say`-stappen melden een onhoorbare stap als mislukt (`warnings`/502).
+- **Tests**: `test_tts.py` (+2: `_play_system`-uitkomst, `speak`-uitkomstmatrix) en `test_routine_results.py` (+3). **Op de Pi (geen geluid mogelijk gemaakt: lege `PATH`)**: synthese faalt netjes (`None`), `_play_system` -> `False` met de melding 1x. **Resterend risico**: het echte hoorbare pad (aplay + geluidskaart `bcm2835 Headphones`) is niet uitgevoerd (geen toestemming voor hoorbare tests).
+
 ## Sessie 2 (2026-09-24, Pi tijdelijk onbereikbaar -> alles lokaal getest)
 
 Omgeving: Windows 11 dev-machine, Python 3.12. Geen SSH/deploy mogelijk;
