@@ -378,9 +378,10 @@ def set_secret(name: str, value: str) -> None:
 
 
 def _mask(value: str) -> str:
-    if len(value) <= 6:
-        return "••••"
-    return f"{value[:3]}…{value[-2:]}"
+    """Vaste maskering zonder ENIG teken van de waarde. Voorheen: eerste 3 + laatste 2 tekens; via het
+    (open) GET /api/secrets las iedereen op het LAN zo 5 tekens van het dashboard-wachtwoord, de
+    Tapo-/mail-/Apple-wachtwoorden en API-keys af (gemeten op de live Pi)."""
+    return "••••••"
 
 
 def secret_status() -> dict:

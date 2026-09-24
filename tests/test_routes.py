@@ -302,7 +302,8 @@ def test_stale_login_and_unlock_tokens_get_swept(client, monkeypatch):
     client.get("/settings")
     assert auth._pw_sessions == {}
 
-    client.get("/api/secrets")
+    # (/api/secrets zit sinds S3 zelf achter het wachtwoord; de OTP-gate roept unlocked() aan)
+    client.get("/api/spotify/auth-url")
     assert auth._unlock_sessions == {}
 
 

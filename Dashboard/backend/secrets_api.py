@@ -6,7 +6,7 @@ from flask import Blueprint, jsonify
 
 import config
 from Dashboard.backend import services as S
-from Dashboard.backend.auth import mail_ready, unlocked
+from Dashboard.backend.auth import mail_ready, require_password, unlocked
 from Dashboard.backend.util import json_body
 
 secrets_bp = Blueprint("secrets", __name__)
@@ -27,6 +27,7 @@ def _validate(key: str, value: str) -> str | None:
 
 
 @secrets_bp.route("/api/secrets", methods=["GET"])
+@require_password        # de Settings-pagina zit achter het wachtwoord; de status-API (o.a. e-mailadressen) hoort dat ook
 def get_secrets():
     return jsonify({
         "secrets": config.secret_status(),

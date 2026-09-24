@@ -175,3 +175,38 @@ def test_routine_size_limits(client):
         assert client.post("/api/routines", json={**ok, "id": f"x{i}"}).status_code == 200
     assert client.post("/api/routines", json={**ok, "id": "een-te-veel"}).status_code == 400
     assert client.post("/api/routines", json={**ok, "id": "r1", "name": "vervangen"}).status_code == 200   # bestaande updaten mag
+
+
+def test_secret_hints_never_contain_any_character_of_the_secret():
+    """Gemeten op de live Pi: het open GET /api/secrets gaf 'eerste 3 + laatste 2 tekens' van het dashboard-
+    wachtwoord en alle andere wachtwoorden/keys aan iedereen op het LAN."""
+    import config
+    from config.settings import _mask
+
+    assert _mask("") == _mask("a") == _mask("abcdefghijklmnop") == "••••••"
+    config.set_secret("OPENAI_API_KEY", "sk-abcdef123456xyz")
+    config.set_secret("DASHBOARD_PASSWORD", "Geheim!2026")
+    st = config.secret_status()
+    for key, secret in (("OPENAI_API_KEY", "sk-abcdef123456xyz"), ("DASHBOARD_PASSWORD", "Geheim!2026")):
+        hint = st[key]["hint"]
+        assert st[key]["set"] is True
+        assert not any(chunk in hint for chunk in (secret[:3], secret[-2:], secret[:2], secret[-1:]))
+
+
+def test_secrets_status_api_requires_the_password_when_one_is_set(client, monkeypatch):
+    monkeypatch.setenv("DASHBOARD_PASSWORD", "geheim")
+    monkeypatch.setenv("EMAIL_ADDRESS", "iemand@example.com")
+    r = client.get("/api/secrets")
+    assert r.status_code == 401 and r.get_json()["login_required"] is True
+    assert "iemand@example.com" not in r.get_data(as_text=True)
+    assert client.post("/api/login", json={"password": "geheim"}).status_code == 200
+    ok = client.get("/api/secrets")
+    assert ok.status_code == 200
+    body = ok.get_json()["secrets"]
+    assert body["EMAIL_ADDRESS"]["hint"] == "iemand@example.com"
+    assert "geheim" not in ok.get_data(as_text=True).replace("geheimen", "")
+    assert body["DASHBOARD_PASSWORD"]["hint"] == "••••••"
+
+
+def test_secrets_status_is_open_when_no_password_is_set(client):
+    assert client.get("/api/secrets").status_code == 200
