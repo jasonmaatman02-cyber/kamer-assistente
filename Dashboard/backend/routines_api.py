@@ -1,14 +1,16 @@
 """Routines, notes and the manual dashboard alarm."""
 import asyncio
+import re
 import threading
 
-from flask import Blueprint, jsonify, request
+from flask import Blueprint, jsonify
 
 import config
 from Dashboard.backend import services as S
 from Dashboard.backend.auth import require_password
 from logic.logger import log
 from scheduler.alarm_manager import alarm as _alarm
+from Dashboard.backend.util import json_body
 
 routines_bp = Blueprint("routines", __name__)
 
@@ -18,6 +20,7 @@ routines_bp = Blueprint("routines", __name__)
 # wijziging de andere stilzwijgend overschrijven (zelfde patroon als de
 # eerder gevonden race in logic/notes.py).
 _routines_lock = threading.Lock()
+_RID_RE = re.compile(r"[A-Za-z0-9_-]{1,64}")
 
 _BUILTIN = [
     {"id": "morning", "name": "Ochtend-routine", "desc": "Lampen aan, radio, notities voorlezen", "builtin": True},
@@ -36,11 +39,14 @@ def routines_list():
 @routines_bp.route("/api/routines", methods=["POST"])
 @require_password
 def routines_save():
-    data = request.get_json(silent=True) or {}
+    data = json_body()
     rid = str(data.get("id", "")).strip()
     name = str(data.get("name", "")).strip()
     if not rid or not name:
         return jsonify({"success": False, "error": "id en naam vereist"}), 400
+    if not _RID_RE.fullmatch(rid):
+        # de id zit in een URL-pad (DELETE /api/routines/<rid>) en in HTML-attributen
+        return jsonify({"success": False, "error": "id: alleen letters, cijfers, - en _ (max 64)"}), 400
     if rid in {r["id"] for r in _BUILTIN}:
         return jsonify({"success": False, "error": "ingebouwde routine-id"}), 400
     steps = data.get("steps") or []
@@ -156,7 +162,7 @@ def _run_routine_unguarded(rid):
 @routines_bp.route("/api/routines/run", methods=["POST"])
 @require_password
 def routines_run():
-    rid = (request.get_json(silent=True) or {}).get("id")
+    rid = json_body().get("id")
     try:
         _run_routine(rid)
         return jsonify({"success": True})
@@ -220,7 +226,7 @@ def alarm_get():
 @routines_bp.route("/api/alarm", methods=["POST"])
 @require_password
 def alarm_set():
-    data = request.get_json(silent=True) or {}
+    data = json_body()
     time_str = str(data.get("time", "")).strip()
     routine = str(data.get("routine", "morning")).strip() or "morning"
     if routine not in _ALL_IDS and routine not in {r.get("id") for r in (config.get("routines", []) or [])}:
@@ -259,7 +265,8 @@ def notes_get():
 def notes_add():
     from logic.notes import add_note
 
-    text = (request.get_json(silent=True) or {}).get("note", "").strip()
+    raw = json_body().get("note", "")
+    text = raw.strip() if isinstance(raw, str) else ""      # {"note": 5} gaf een AttributeError
     if not text:
         return jsonify({"success": False, "error": "lege notitie"}), 400
     add_note(text)

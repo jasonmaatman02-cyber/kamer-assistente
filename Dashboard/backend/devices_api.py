@@ -1,10 +1,12 @@
 """Lamps + thermostat."""
 import asyncio
+import re
 
 from flask import Blueprint, jsonify, request
 
 import config
 from Dashboard.backend import services as S
+from Dashboard.backend.util import json_body
 
 devices_bp = Blueprint("devices", __name__)
 
@@ -24,9 +26,16 @@ def _note_manual_lamp_action(ip: str) -> None:
         pass
 
 
+def _bad_request(message: str):
+    return jsonify({"status": "error", "message": message}), 400
+
+
+_HEX_RE = re.compile(r"#[0-9a-fA-F]{6}")
+
+
 def _lamp_action(coro_factory, lamp_ref=None):
     if lamp_ref is None:
-        lamp_ref = (request.get_json(silent=True) or {}).get("lamp", 0)
+        lamp_ref = json_body().get("lamp", 0)
     ip = S.lamp_ip(lamp_ref)
     if not ip:
         return jsonify({"status": "error", "message": "geen lamp geconfigureerd"}), 400
@@ -51,19 +60,34 @@ def lamp_off():
 
 @devices_bp.route("/api/lamp/brightness", methods=["PUT"])
 def lamp_brightness():
-    b = int((request.get_json(silent=True) or {}).get("brightness", 100))
+    # Ongeldige invoer is een 400, geen 500 + verbroken lampverbinding (de fout
+    # kwam voorheen uit int() -> HTML-500; en een lamp-fout gooit de verbinding weg).
+    try:
+        b = int(json_body().get("brightness", 100))
+    except (TypeError, ValueError):
+        return _bad_request("helderheid moet een getal zijn (1-100)")
+    b = max(1, min(100, b))          # de Tapo weigert 0 en >100
     return _lamp_action(lambda l: l.zet_helderheid(b))
 
 
 @devices_bp.route("/api/lamp/color", methods=["PUT"])
 def lamp_color():
-    c = (request.get_json(silent=True) or {}).get("color")
+    from devices.Lights import kleuren
+
+    c = json_body().get("color")
+    if not isinstance(c, str) or not (_HEX_RE.fullmatch(c) or c.lower() in kleuren):
+        return _bad_request("kleur ontbreekt of is ongeldig (#rrggbb of een kleurnaam)")
+    c = c if c.startswith("#") else c.lower()
     return _lamp_action(lambda l: l.zet_kleur(c))
 
 
 @devices_bp.route("/api/lamp/colortemp", methods=["PUT"])
 def lamp_colortemp():
-    t = int((request.get_json(silent=True) or {}).get("color_temp", 4000))
+    try:
+        t = int(json_body().get("color_temp", 4000))
+    except (TypeError, ValueError):
+        return _bad_request("kleurtemperatuur moet een getal zijn (2500-6500)")
+    t = max(2500, min(6500, t))      # bereik van de L530 (zelfde als de slider)
     return _lamp_action(lambda l: l.zet_kleur_temp(t))
 
 
@@ -102,11 +126,11 @@ def thermostat():
 
     tc = ThermostatController()
     if request.method == "POST":
-        target = (request.get_json(silent=True) or {}).get("target")
+        target = json_body().get("target")
         if target is None:
             return jsonify({"success": False, "error": "geen target"}), 400
         try:
             tc.set_temperature(target)
-        except (TypeError, ValueError):
+        except (TypeError, ValueError, OverflowError):     # OverflowError: {"target": Infinity}
             return jsonify({"success": False, "error": "ongeldige waarde"}), 400
     return jsonify(tc.state())

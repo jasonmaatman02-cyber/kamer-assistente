@@ -1,3 +1,7 @@
+import json
+
+import pytest
+
 import config
 
 
@@ -69,3 +73,52 @@ def test_secret_status_masks(monkeypatch):
     assert st["OPENAI_API_KEY"]["set"] is True
     assert "verysecret" not in st["OPENAI_API_KEY"]["hint"]
     assert st["EMAIL_ADDRESS"]["hint"] == "me@example.com"  # publiek -> volledig
+
+
+# --- kapot settings.json ------------------------------------------------- #
+def _corrupt_files(path):
+    return sorted(path.parent.glob(f"{path.name}.corrupt-*"))
+
+
+@pytest.mark.parametrize("content", ["{niet-json", "", "[]", '"tekst"', "null", "123", '{"camera": '])
+def test_corrupt_settings_are_quarantined_not_overwritten(content):
+    """Het kapotte bestand werd bij de eerstvolgende config.set() overschreven met
+    alleen het verschil met DEFAULTS: alle eigen instellingen waren dan voorgoed weg.
+    (Een JSON-array/-string/null liet _deep_merge bovendien crashen -> app start niet.)"""
+    import config
+    import config.settings as cs
+
+    cs.SETTINGS_FILE.write_text(content, encoding="utf-8")
+    config.reload()
+
+    assert config.get("camera.fps") == cs.DEFAULTS["camera"]["fps"]     # defaults actief, geen crash
+    found = _corrupt_files(cs.SETTINGS_FILE)
+    assert len(found) == 1 and found[0].read_text(encoding="utf-8") == content
+
+    config.set("alarm.time", "07:30")                                      # schrijft een vers bestand
+    assert json.loads(cs.SETTINGS_FILE.read_text(encoding="utf-8"))["alarm"]["time"] == "07:30"
+    assert found[0].exists() and found[0].read_text(encoding="utf-8") == content
+
+
+def test_valid_settings_are_not_quarantined():
+    import config
+    import config.settings as cs
+
+    cs.SETTINGS_FILE.write_text('{"alarm": {"time": "06:00"}}', encoding="utf-8")
+    config.reload()
+    assert config.get("alarm.time") == "06:00"
+    assert _corrupt_files(cs.SETTINGS_FILE) == []
+
+
+def test_only_the_last_three_corrupt_copies_are_kept(monkeypatch):
+    import config
+    import config.settings as cs
+
+    stamps = iter(["20260101-000001", "20260101-000002", "20260101-000003", "20260101-000004", "20260101-000005"])
+    monkeypatch.setattr(cs.time, "strftime", lambda fmt: next(stamps))
+    for i in range(5):
+        cs.SETTINGS_FILE.write_text("{kapot %d" % i, encoding="utf-8")
+        config.reload()
+    kept = _corrupt_files(cs.SETTINGS_FILE)
+    assert len(kept) == 3
+    assert [p.read_text(encoding="utf-8") for p in kept] == ["{kapot 2", "{kapot 3", "{kapot 4"]

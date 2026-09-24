@@ -11,6 +11,7 @@ from flask import Blueprint, jsonify, request
 import config
 from Dashboard.backend import services as S
 from Dashboard.backend.auth import mail_ready, password_set, require_password
+from Dashboard.backend.util import json_body
 
 system_bp = Blueprint("system", __name__)
 
@@ -23,7 +24,7 @@ def get_settings():
 @system_bp.route("/api/settings", methods=["POST"])
 @require_password
 def set_settings():
-    patch = request.get_json(silent=True) or {}
+    patch = json_body()
     if not isinstance(patch, dict):
         return jsonify({"success": False, "error": "verwacht een JSON-object"}), 400
     config.update(patch)
@@ -194,6 +195,11 @@ _BOOT_SHA = _git_sha()   # vastgelegd bij het starten van dit proces
 def _ollama_reachable() -> bool | None:
     if (config.get("ai.backend") or "ollama").lower() != "ollama":
         return None
+    # Een onbereikbare Ollama-host kost tot 2s per aanroep; gecachet (single-flight).
+    return S._cached("health:ollama", 10.0, _ollama_probe)
+
+
+def _ollama_probe() -> bool:
     try:
         import requests
 

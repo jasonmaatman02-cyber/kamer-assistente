@@ -2,11 +2,12 @@
 import os
 import re
 
-from flask import Blueprint, jsonify, request
+from flask import Blueprint, jsonify
 
 import config
 from Dashboard.backend import services as S
 from Dashboard.backend.auth import mail_ready, unlocked
+from Dashboard.backend.util import json_body
 
 secrets_bp = Blueprint("secrets", __name__)
 
@@ -39,7 +40,7 @@ def get_secrets():
 def set_secrets():
     if not unlocked():
         return jsonify({"ok": False, "error": "Niet ontgrendeld"}), 403
-    data = request.get_json(silent=True) or {}
+    data = json_body()
     for key, value in data.items():
         if key in config.SECRET_KEYS and isinstance(value, str):
             err = _validate(key, value)
@@ -75,7 +76,7 @@ def spotify_token():
     oauth = S.spotify_oauth()
     if not oauth:
         return jsonify({"ok": False, "error": "Spotify client-id/secret ontbreekt"}), 400
-    redirect_url = (request.get_json(silent=True) or {}).get("redirect_url", "").strip()
+    redirect_url = json_body().get("redirect_url", "").strip()
     if not redirect_url:
         return jsonify({"ok": False, "error": "Plak de volledige URL waar je op uitkwam"}), 400
     try:
@@ -122,7 +123,7 @@ def google_calendar_token():
     # (state/iss/code/scope) blijven onaangeroerd -- de library parset en
     # url-decodeert de hele authorization_response zelf (urllib.parse),
     # dus geen eigen, foutgevoelige query-parsing hier.
-    redirect_url = (request.get_json(silent=True) or {}).get("redirect_url", "").strip()
+    redirect_url = json_body().get("redirect_url", "").strip()
     if not redirect_url:
         return jsonify({"ok": False, "error": "Plak de volledige URL waar je op uitkwam"}), 400
     try:

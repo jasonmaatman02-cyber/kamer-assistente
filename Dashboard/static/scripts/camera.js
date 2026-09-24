@@ -84,7 +84,7 @@ function startDetection(threshold) {
     setStatus('<span class="green">model geladen</span>');
     tick();
   }).catch(e => {
-    setStatus(`<span class="red">model laden mislukt: ${e.message} — opnieuw over 1 min</span>`);
+    setStatus(`<span class="red">model laden mislukt: ${esc(e.message)} — opnieuw over 1 min</span>`);
     _modelFailAt = Date.now();
     detector = null;
   });
@@ -142,7 +142,7 @@ function startDetection(threshold) {
       schedule(Math.min(3000, Math.max(500, ms * 1.5)));   // trager apparaat -> rustiger aan
     } catch (e) {
       try { bmp && bmp.close(); } catch (_) {}
-      setStatus(`<span class="red">detectie-fout: ${e.message}</span>`);
+      setStatus(`<span class="red">detectie-fout: ${esc(e.message)}</span>`);
       schedule(2000);
     }
   }
@@ -175,7 +175,7 @@ async function syncWithConfig() {
     setStatus('<span class="muted">Camera staat uit (zet aan via Settings)</span>');
     return;
   }
-  setStatus(cam.error ? `<span class="red">${cam.error}</span>` : '<span class="muted">Live</span>');
+  setStatus(cam.error ? `<span class="red">${esc(cam.error)}</span>` : '<span class="muted">Live</span>');
   await syncWithConfig();
   setInterval(syncWithConfig, 15000);
 })();

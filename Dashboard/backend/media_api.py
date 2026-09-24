@@ -3,6 +3,7 @@ from flask import Blueprint, jsonify, request
 
 import config
 from Dashboard.backend import services as S
+from Dashboard.backend.util import json_body
 
 media_bp = Blueprint("media", __name__)
 
@@ -32,6 +33,10 @@ def _play_error(exc):
         return jsonify({"success": False, "error": "Spotify weigerde dit commando (niets speelt of apparaat staat het niet toe)."}), 403
     if "invalid_grant" in msg:
         return jsonify({"success": False, "relink": True, "error": "Spotify-token verlopen — opnieuw koppelen via Settings."}), 401
+    if isinstance(exc, RuntimeError):
+        # 'Spotify niet ingesteld / niet beschikbaar' (S.sp_dj()): de dienst ontbreekt,
+        # dat is geen serverfout.
+        return jsonify({"success": False, "error": msg}), 503
     return jsonify({"success": False, "error": msg}), 500
 
 
@@ -56,11 +61,11 @@ def last_played_playlists():
 
 @media_bp.route("/api/playlist_tracks/<playlist_id>")
 def playlist_tracks(playlist_id):
-    sp = S.sp_dj().sp
     try:
+        sp = S.sp_dj().sp       # buiten de try gaf 'Spotify niet ingesteld' een HTML-500
         meta = sp.playlist(playlist_id, fields="name,images")
     except Exception as exc:  # noqa: BLE001
-        return jsonify({"error": str(exc)}), 500
+        return jsonify({"error": str(exc)}), (503 if isinstance(exc, RuntimeError) else 500)
 
     market = config.get("spotify.market", "NL")
     tracks, offset = [], 0
@@ -100,7 +105,7 @@ def playlist_tracks(playlist_id):
 # --------------------------------------------------------------------------- #
 @media_bp.route("/api/play_playlist", methods=["POST"])
 def play_playlist():
-    pid = (request.get_json(silent=True) or {}).get("id")
+    pid = json_body().get("id")
     if not pid:
         return jsonify({"success": False, "error": "Geen playlist ID"}), 400
     try:
@@ -113,7 +118,7 @@ def play_playlist():
 
 @media_bp.route("/api/play_track", methods=["POST"])
 def play_track():
-    data = request.get_json(silent=True) or {}
+    data = json_body()
     track_id = data.get("track_id")
     playlist_id = data.get("playlist_id")
     if not track_id:
@@ -196,7 +201,7 @@ def spotify_previous():
 
 @media_bp.route("/api/seek", methods=["POST"])
 def seek():
-    pos = (request.get_json(silent=True) or {}).get("position_ms")
+    pos = json_body().get("position_ms")
     if pos is None:
         return jsonify({"success": False, "error": "Geen positie"}), 400
     return _simple(lambda: S.sp_dj().sp.seek_track(int(pos)))
@@ -210,7 +215,7 @@ def devices():
 
 @media_bp.route("/api/set_device", methods=["POST"])
 def set_device():
-    did = (request.get_json(silent=True) or {}).get("device_id")
+    did = json_body().get("device_id")
     if not did:
         return jsonify({"success": False, "error": "Geen device ID"}), 400
     return _simple(lambda: S.sp_dj().sp.transfer_playback(device_id=did, force_play=False))
@@ -227,14 +232,18 @@ def radio_stations():
 
 @media_bp.route("/api/radio_play", methods=["POST"])
 def radio_play():
-    station = (request.get_json(silent=True) or {}).get("station")
+    station = json_body().get("station")
     r = S.svc("radio")
     if not r:
         return jsonify({"success": False, "error": "radio niet beschikbaar"}), 503
-    if not station:
+    if not station or not isinstance(station, str):
         return jsonify({"success": False, "error": "Geen station"}), 400
     msg = r.play(station)
     S.invalidate("now_playing")
+    err = getattr(r, "last_error", None)
+    if err:
+        # onbekend station -> 404; stream startte niet (URL/internet) -> 502
+        return jsonify({"success": False, "error": err}), (404 if "niet gevonden" in err else 502)
     return jsonify({"success": True, "message": msg})
 
 
@@ -272,7 +281,7 @@ def current_playing():
 
 @media_bp.route("/api/set_volume", methods=["POST"])
 def set_volume():
-    volume = (request.get_json(silent=True) or {}).get("volume")
+    volume = json_body().get("volume")
     if volume is None:
         return jsonify({"success": False, "error": "Geen volume"}), 400
     sp, r = S.svc("spotify"), S.svc("radio")

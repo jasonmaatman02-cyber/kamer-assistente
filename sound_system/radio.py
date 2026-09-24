@@ -26,17 +26,25 @@ class RadioPlayer:
         }
 
     def play(self, station_name):
-        self.player.stop()
+        # last_error: None = gelukt. Laat de API (media_api.radio_play) een mislukte
+        # start als fout melden i.p.v. als "success" (de tekst-uitkomst blijft
+        # ongewijzigd voor de spraak/AI-aanroepers).
+        self.last_error = None
         if not station_name:
-            return "Geen station opgegeven"
+            self.last_error = "Geen station opgegeven"
+            return self.last_error
 
         station_key = station_name.lower().replace(" ", "")
         url = self.stations.get(station_key)
 
         if not url:
             log("Radio", f"Station '{station_name}' niet gevonden!")
-            return f"Station '{station_name}' niet gevonden"
+            self.last_error = f"Station '{station_name}' niet gevonden"
+            return self.last_error
 
+        # Pas NU de huidige zender stoppen: een onbekende/lege zendernaam stopte
+        # voorheen eerst de lopende radio en meldde daarna 'niet gevonden'.
+        self.player.stop()
         if self.player.is_playing():
             self.player.stop()
             time.sleep(0.3)
@@ -58,7 +66,8 @@ class RadioPlayer:
 
         state = self.player.get_state()
         if state != vlc.State.Playing:
-            return "Radio kon niet starten (check URL of internet)."
+            self.last_error = "Radio kon niet starten (check URL of internet)."
+            return self.last_error
         self.start_time = time.time()
         self.current_station_name = station_name
         return f"Speelt nu: {station_name}"

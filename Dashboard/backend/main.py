@@ -12,12 +12,19 @@ from flask import Flask, request
 app = Flask(__name__, template_folder="../", static_folder="../static")
 
 
+_SIDE_EFFECT_GETS = {"/api/chat_stream"}
+
+
 @app.before_request
 def _csrf_guard():
     """Blokkeer state-changing requests van een andere site (CSRF). Same-origin
     browserverzoeken sturen een matchende Origin; curl/scripts sturen er geen.
     Sec-Fetch-Site (moderne browsers) is leidend; anders Origin vs Host."""
-    if request.method in ("GET", "HEAD", "OPTIONS"):
+    # /api/chat_stream is een GET (EventSource kan niets anders) maar voert wél
+    # acties uit (lamp, mail versturen, muziek via de AI-tools): zonder deze uitzondering
+    # kon elke website met een <img>/fetch(no-cors) naar http://<pi>:5000/api/chat_stream?
+    # message=... die acties uit de browser van iemand op je LAN laten uitvoeren.
+    if request.method in ("GET", "HEAD", "OPTIONS") and request.path not in _SIDE_EFFECT_GETS:
         return
     sfs = request.headers.get("Sec-Fetch-Site")
     if sfs in ("same-origin", "same-site", "none"):

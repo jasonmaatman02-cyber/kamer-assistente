@@ -37,7 +37,7 @@ async function load() {
     }));
     grid.querySelectorAll("[data-del]").forEach(btn => btn.addEventListener("click", async () => {
       if (!confirm(`Routine "${btn.dataset.del}" verwijderen?`)) return;
-      await j(`/api/routines/${btn.dataset.del}`, { method: "DELETE" });
+      await j(`/api/routines/${encodeURIComponent(btn.dataset.del)}`, { method: "DELETE" });
       load();
     }));
   } catch (e) {

@@ -17,6 +17,7 @@ import time
 from flask import Blueprint, jsonify, render_template, request
 
 import config
+from Dashboard.backend.util import json_body
 
 auth_bp = Blueprint("auth", __name__)
 
@@ -110,7 +111,8 @@ def request_code():
 
 @auth_bp.route("/api/auth/verify", methods=["POST"])
 def verify():
-    code = (request.get_json(silent=True) or {}).get("code", "").strip()
+    # str(): een JSON-getal ({"code": 123456}) gaf een AttributeError -> 500
+    code = str(json_body().get("code", "")).strip()
     with _auth_lock:
         if _otp["fails"] >= _OTP_MAX_FAILS:
             _otp.update(code=None, expires=0.0)
@@ -178,7 +180,7 @@ def require_password(fn):
 @auth_bp.route("/api/login", methods=["POST"])
 def login():
     now = time.time()
-    given = (request.get_json(silent=True) or {}).get("password", "")
+    given = json_body().get("password", "")
     want = config.secret("DASHBOARD_PASSWORD")
     with _auth_lock:
         if _pw_fails["n"] >= _PW_MAX_FAILS and now < _pw_fails["until"]:

@@ -120,7 +120,7 @@ async function openPlaylistOverlay(playlistId) {
   overlay.dataset.playlistId = playlistId;
   const list = $("tracks-list");
   list.innerHTML = '<p class="empty">laden…</p>';
-  const { ok, d } = await jget(`/api/playlist_tracks/${playlistId}`).catch(() => ({ ok: false }));
+  const { ok, d } = await jget(`/api/playlist_tracks/${encodeURIComponent(playlistId)}`).catch(() => ({ ok: false }));
   if (!ok || !d || d.error) { list.innerHTML = `<p class="empty">${esc((d && d.error) || "Kan playlist niet laden")}</p>`; return; }
   $("overlay-thumb").src = d.thumbnail || FALLBACK_ART;
   $("overlay-title").textContent = d.name || "";
@@ -163,7 +163,7 @@ async function loadRadioStations() {
       </div>`;
     box.appendChild(div);
     div.querySelector(".play").addEventListener("click", async () => {
-      await jpost("/api/radio_play", { station: s.name });
+      await playAction("/api/radio_play", { station: s.name });   // toont ook 'kon niet starten'
       updateCurrentPlaying();
     });
     div.querySelector(".stop").addEventListener("click", async () => {

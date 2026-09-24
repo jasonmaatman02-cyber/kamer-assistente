@@ -5,6 +5,7 @@ import re
 from flask import Blueprint, Response, jsonify, request, stream_with_context
 
 from Dashboard.backend.auth import COOKIE, require_password
+from Dashboard.backend.util import json_body
 
 chat_bp = Blueprint("chat", __name__)
 
@@ -23,14 +24,14 @@ def _sid(raw) -> str:
 def chat_reset():
     from logic.gpt_handler import reset_session
 
-    reset_session(_sid((request.get_json(silent=True) or {}).get("sid")))
+    reset_session(_sid(json_body().get("sid")))
     return jsonify({"ok": True})
 
 
 @chat_bp.route("/api/send_message", methods=["POST"])
 @require_password
 def send_message():
-    body = request.get_json(silent=True) or {}
+    body = json_body()
     text = (body.get("message") or "").strip()
     if not text:
         return jsonify({"reply": "Typ iets alsjeblieft."})

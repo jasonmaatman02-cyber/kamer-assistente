@@ -279,7 +279,6 @@ def test_presence_grace_restarts_after_sensor_recovery(monkeypatch):
     niet direct 'leeg' maken: de grace-periode moet vanaf het herstel lopen."""
     import config
     from Dashboard.backend.presence import PresenceWorker
-    import Dashboard.backend.presence as presence_mod
 
     config.set("presence.consecutive_required", 1)
     config.set("presence.empty_grace_s", 20.0)

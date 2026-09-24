@@ -14,6 +14,7 @@ import copy
 import json
 import os
 import threading
+import time
 from pathlib import Path
 
 try:
@@ -197,10 +198,36 @@ def _load() -> dict:
         if SETTINGS_FILE.exists():
             try:
                 user = json.loads(SETTINGS_FILE.read_text(encoding="utf-8"))
-            except (json.JSONDecodeError, OSError) as exc:
+                if not isinstance(user, dict):     # bv. [] of "tekst": _deep_merge crashte hier op
+                    raise ValueError(f"verwacht een JSON-object, kreeg {type(user).__name__}")
+            except (ValueError, OSError) as exc:    # JSONDecodeError is een ValueError
                 print(f"[config] kon settings.json niet lezen: {exc}")
+                user = {}
+                if not isinstance(exc, OSError):
+                    _quarantine_corrupt_settings()
         _cache = _deep_merge(DEFAULTS, user)
         return _cache
+
+
+def _quarantine_corrupt_settings() -> None:
+    """Een onleesbaar settings.json niet stilzwijgend laten overschrijven: de
+    eerstvolgende config.set() schrijft alleen het verschil met DEFAULTS weg, dus
+    het kapotte bestand (met al je lampen, wachtwoorden-hints, wake-woorden, ...)
+    was daarmee voorgoed weg. Hernoem het naar settings.json.corrupt-<tijd> zodat
+    het handmatig te herstellen is; de laatste 3 blijven bewaard."""
+    try:
+        stamp = time.strftime("%Y%m%d-%H%M%S")
+        target = SETTINGS_FILE.with_name(f"{SETTINGS_FILE.name}.corrupt-{stamp}")
+        os.replace(SETTINGS_FILE, target)
+        print(f"[config] kapot settings.json bewaard als {target.name}; standaardwaarden actief")
+        old = sorted(SETTINGS_FILE.parent.glob(f"{SETTINGS_FILE.name}.corrupt-*"))
+        for extra in old[:-3]:
+            try:
+                extra.unlink()
+            except OSError:
+                pass
+    except OSError as exc:
+        print(f"[config] kon kapot settings.json niet opzij zetten: {exc}")
 
 
 def reload() -> dict:

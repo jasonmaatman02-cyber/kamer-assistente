@@ -24,6 +24,17 @@ def hex_to_hsl(hex_color):
     hsl = colorsys.rgb_to_hls(*rgb)
     return hsl
 
+
+def hex_to_hue_saturation(hex_color):
+    """(hue 0-360, saturatie 0-100) zoals de Tapo-lamp die verwacht (HSV/HSB,
+    net als de Tapo-app). hex_to_hsl() gaf HLS-saturatie terug: bij een pastelkleur
+    (bv. #ff9999) is die 100 i.p.v. 40, dus elke niet-volle kleur uit de kleurkiezer
+    werd op de lamp volledig verzadigd."""
+    hex_color = hex_color.lstrip('#')
+    r, g, b = (int(hex_color[i:i + 2], 16) / 255.0 for i in (0, 2, 4))
+    h, s, _v = colorsys.rgb_to_hsv(r, g, b)
+    return int(round(h * 360)) % 360, int(round(s * 100))
+
 kleuren = {
     "rood": (0, 100),
     "oranje": (30, 100),
@@ -34,6 +45,13 @@ kleuren = {
     "roze": (330, 100),
     "wit": (0, 1),  
 }
+
+# Party-modus kiest willekeurig uit deze kleuren. Bewust zonder paars: de
+# gewenste sfeer is donker/blauw/neon, "geen paarse verlichting". (Een expliciet
+# gevraagde kleur -- chat-tool of kleurkiezer in het dashboard -- blijft gewoon
+# mogelijk; dit gaat alleen over wat de automatiek zelf kiest.)
+PARTY_KLEUREN = [v for k, v in kleuren.items() if k != "paars"]
+
 
 class SlimmeLamp:
     def __init__(self, email, wachtwoord, ip_adres):
@@ -70,9 +88,7 @@ class SlimmeLamp:
         
     async def zet_kleur(self, kleur_naam):
         if "#" in kleur_naam:
-            h, l, s = hex_to_hsl(kleur_naam)
-            hue = int(h * 360)
-            saturation = int(s * 100)
+            hue, saturation = hex_to_hue_saturation(kleur_naam)
         elif kleur_naam in kleuren:
             hue, saturation = kleuren[kleur_naam]
         else:
@@ -88,7 +104,7 @@ class SlimmeLamp:
 
     async def party(self, duur=10, interval=0.1):
         x = await self.lamp.get_device_info()
-        kleuren_lijst = list(kleuren.values())
+        kleuren_lijst = PARTY_KLEUREN
         einde = time.monotonic() + duur
         await self.lamp.set_brightness(100)
 

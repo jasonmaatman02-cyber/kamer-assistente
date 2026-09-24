@@ -126,7 +126,7 @@ class WeerAPI:
     # ------------------------------------------------------------------ #
     def _fetch_weatherapi(self, city: str):
         r = requests.get(
-            "http://api.weatherapi.com/v1/current.json",
+            "https://api.weatherapi.com/v1/current.json",
             params={"key": config.secret("WEATHERAPI_KEY"), "q": city},
             timeout=5,
         )

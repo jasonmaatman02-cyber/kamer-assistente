@@ -448,6 +448,13 @@ def start_playback(sp, **kwargs):
 # Data helpers (used by the individual routes and by /api/overview)
 # --------------------------------------------------------------------------- #
 def system_stats() -> dict:
+    # cpu_percent(interval=0.2) blokkeert de aanroeper 200ms; overview/health/
+    # system_stats-polls van meerdere tabs deden dat elk apart. Nu hooguit 1x per
+    # 2s (single-flight), de rest krijgt de gecachete waarde.
+    return _cached("system_stats", 2.0, _system_stats_uncached)
+
+
+def _system_stats_uncached() -> dict:
     try:
         import psutil
 

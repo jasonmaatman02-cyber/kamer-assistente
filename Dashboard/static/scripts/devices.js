@@ -12,19 +12,20 @@ function toast(msg, isErr) {
   setTimeout(() => (t.className = "toast" + (isErr ? " err" : "")), 2800);
 }
 
+// Tapo-hue/saturatie is HSV/HSB (zoals de Tapo-app; Python: devices.Lights.hex_to_hue_saturation).
+// Met HSL (L=0.5) toonde de kleurkiezer een andere kleur dan de lamp echt gaf.
 function hsToHex(h, s) {
   s = (s ?? 100) / 100;
-  const k = n => (n + h / 30) % 12;
-  const f = n => 0.5 - 0.5 * Math.max(-1, Math.min(k(n) - 3, 9 - k(n), 1)) * s;
+  const f = n => { const k = (n + h / 60) % 6; return 1 - s * Math.max(0, Math.min(k, 4 - k, 1)); };
   const to = n => Math.round(255 * f(n)).toString(16).padStart(2, "0");
-  return `#${to(0)}${to(8)}${to(4)}`;
+  return `#${to(5)}${to(3)}${to(1)}`;
 }
 
 function lampCard(lamp, i) {
   return `
   <div class="card device" data-i="${i}">
-    <h3><i class="fa fa-lightbulb"></i> ${lamp.name || "Lamp " + (i + 1)}</h3>
-    <p class="muted lamp-ip">${lamp.ip || "geen IP"}</p>
+    <h3><i class="fa fa-lightbulb"></i> ${esc(lamp.name || "Lamp " + (i + 1))}</h3>
+    <p class="muted lamp-ip">${esc(lamp.ip || "geen IP")}</p>
 
     <label class="toggle" style="margin:6px 0">
       <input type="checkbox" class="l-power"><span class="track"></span>
