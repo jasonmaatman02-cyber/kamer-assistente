@@ -3,6 +3,31 @@
 Doorlopend logboek. Formaat per item: probleem, oorzaak, oplossing, bestanden,
 tests, resultaat, resterend risico. Nieuwste sessie bovenaan.
 
+## Sessie 3 (vanaf 2026-09-24 15:24, langlopende audit met de Pi beschikbaar)
+
+Opdracht: minimaal 8 uur doorlopende audit (stabiliteit, watchdog, presence, lampen, agenda, voice/TTS,
+Spotify, API/frontend, oude services, security, performance). Beperkingen: geen SIGSTOP/vriestest, geen
+onnodige lampacties, geen hoorbare audio, geen destructieve verwijderingen van (oude) services.
+Werkwijze per bevinding: inspecteren -> oorzaak -> fix -> test (lokaal + op de Pi) -> logs/CPU/RAM -> commit/deploy.
+Tijdelijke meetinstrumenten op de Pi (mijn eigen, geen configuratie): `/tmp/kamer-monitor.sh` schrijft elke 60 s
+`/tmp/kamer-monitor.csv` (pid, NRestarts, CPU, RSS, threads, fds, load, temp, throttled, ollama-RSS).
+
+Formaat per item: **ID | subsystem | probleem | oorzaak | oplossing | tests | resultaat | resterend risico**.
+
+### S3-1 | oude services | `llama-server` + `room-assistant` crash-loopen (onderzocht, NIET gewijzigd)
+- **Probleem**: 143.148 herstarts (elke 5 s sinds ~15 sep); ~9.000 journalregels/uur = ~63% van alle journalregels.
+- **Oorzaak (vastgesteld, read-only)**: units uit een eerder project (`/etc/systemd/system/*.service`, 2 sep 2026, `enabled`): `llama-server` = llama.cpp met Phi-3-mini (`/home/pi/room-assistant/third_party/llama.cpp/build/bin/llama-server`, model `.../models/llm/phi-3-mini-4k-instruct-q4_k_m.gguf`, `127.0.0.1:8080`, `--threads 4`, `WorkingDirectory=/home/pi/room-assistant`); `room-assistant` = `uvicorn src.dashboard.api:app --port 8000` (`Requires=llama-server`). De map `/home/pi/room-assistant` bestaat niet meer (`Unable to locate executable`); geen `*.gguf` of `room-assistant*` elders op de schijf; niets luistert op 8080/8000. Uit `.bash_history` (alleen gefilterde regels): de oude versie heette `room-assistantv3` en werd ooit met rsync in `room-assistant` gezet.
+- **Afhankelijkheid Kamer-AI**: geen. `grep` op `llama-server|room-assistant|:8080|phi-3` in code/scripts/units/docs levert niets op (poort 8000 komt alleen voor als *default Spotify-redirect-URL-string* in `sound_system/muziek.py`, geen luisterende server). Kamer-AI gebruikt Ollama (`/usr/local/lib/ollama/llama-server` is Ollama's eigen runner, iets anders).
+- **Gevolg**: naast CPU-wakeups (2 mislukte exec's per 5 s) verdringt de spam het echte logboek: journald staat op `Storage=volatile` (Raspberry Pi OS-standaard; `/run/log/journal`, tmpfs 760 MB, nu 72 MB gebruikt) en houdt daardoor maar ~11 uur aan (oudste regel vandaag 04:06) -- ouder dan dat is er geen journal van het dashboard meer, en bij een stroomstoring is alles weg. (Applicatielog `data/logs/` is persistent en dus niet getroffen.)
+- **Veilig uitschakelen kan** (niet uitgevoerd; wacht op akkoord): `sudo systemctl disable --now room-assistant.service llama-server.service && sudo systemctl reset-failed room-assistant llama-server`. Volledig opruimen (optioneel, destructief): `sudo rm /etc/systemd/system/{room-assistant,llama-server}.service && sudo systemctl daemon-reload`. Terugdraaien kan door de unit-bestanden terug te zetten; de data (model, code) bestaat al niet meer, dus herstel van de oude app vereist een nieuwe installatie.
+- **Tests**: n.v.t. (systeeminspectie). **Resultaat**: onderzocht en gedocumenteerd. **Resterend risico**: zolang de units aanstaan blijft de journal-retentie ~11 u en de CPU-ruis bestaan.
+
+### S3-2 | watchdog | kan een GEDEELTELIJKE freeze überhaupt gedetecteerd worden? (analyse + fix)
+- **Analyse (wat ziet de watchdog?)**: de vorige versie pingde zolang `GET /api/config` binnen 20 s antwoordde. Dat vangt: alle waitress-workers vast, een deadlock in het request-pad, een GIL-hang (de ping-thread draait dan ook niet), een dood proces. Het vangt NIET: (a) een vastgelopen presence-lus (hangende native `cv2`-call of netwerkcall) -- de automatisering staat dan stil terwijl het dashboard prima antwoordt; (b) een TTS-lock die nooit vrijkomt (alle spraak/wekker stil); (c) gelekte AI-slots (assistent zegt voor altijd "druk bezig"). Niet gedetecteerd en ook niet met een herstart op te lossen: een externe dienst die traag is (bewust: SWR/timeouts vangen dat af zonder herstart).
+- **Fix**: `PresenceWorker.liveness()` (heartbeat `_beat`; grens `max(300 s, 20 x interval)`; een DODE thread wordt herstart i.p.v. gemeld), `ai.tts.liveness()` (`_speaking_since`, grens 300 s > `_PLAY_MAX_S`), `logic.gpt_handler.liveness()` (alle AI-slots > 25 min bezet = lek); `watchdog.internal_failures()` combineert ze; de probe pingt alleen als HTTP EN interne checks gezond zijn; een check die zelf crasht telt niet als storing (nooit een valse herstart door een bug in de check); `/api/health` toont `liveness`. Nog steeds zonder de vriestest uit te voeren: alle paden zijn met nep-klok/-threads getest.
+- **Tests**: `tests/test_liveness.py` (13): heartbeat gezond/vast (echte thread met hangende `_tick`), interval-schaling, dode thread -> herstart, uit = gezond, TTS-lock te lang + marker vóór/na `speak`, AI-slot-lek + reset, samenstelling, probe faalt bij interne storing terwijl HTTP ok is, health-endpoint. Volledige suite lokaal 563 geslaagd.
+- **Resultaat (Pi, na deploy c0a37b7)**: `/api/health` -> `liveness: presence ok (laatste ronde 2 s geleden), tts ok (stil), ai ok (2/2 slots vrij)`; watchdog actief, `NRestarts=0`. **Resterend risico**: de echte SIGSTOP-/vriestest is niet uitgevoerd (geen toestemming); een hangende camera-*thread* raakt presence niet direct (frames worden 'stale' -> sensor onbekend) en wordt dus bewust niet als vriezer gezien; drempels (300 s / 25 min) zijn ruim gekozen om valse herstarts te voorkomen.
+
 ## Sessie 2 (2026-09-24, Pi tijdelijk onbereikbaar -> alles lokaal getest)
 
 Omgeving: Windows 11 dev-machine, Python 3.12. Geen SSH/deploy mogelijk;
