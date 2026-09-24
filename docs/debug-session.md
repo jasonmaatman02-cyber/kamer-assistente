@@ -132,6 +132,22 @@ Formaat per item: **ID | subsystem | probleem | oorzaak | oplossing | tests | re
 - **Advies (niet uitgevoerd, systeemconfiguratie)**: `ModemManager` en `bluetooth` uitzetten als ze niet worden gebruikt (kleiner aanvalsvlak, geringe RAM/CPU-winst); zet een dashboard-wachtwoord (`DASHBOARD_PASSWORD`) als er ooit VPN-clients of gasten in het netwerk komen -- `password_set: true` staat nu al aan op de Pi.
 - **Tests**: n.v.t. **Resterend risico**: hangt af van de routerconfiguratie (buiten mijn bereik).
 
+### S3-21 | dashboard/waitress | 100 lege verbindingen legden het hele dashboard (en de watchdog-probe) plat
+- **Probleem**: waitress accepteert standaard hooguit `connection_limit=100` gelijktijdige verbindingen. Een lekkende client, script of port-scan op het LAN die 100 verbindingen open houdt zonder verzoek maakt het dashboard onbereikbaar tot die na `channel_timeout` (300 s) worden opgeruimd; de watchdog-probe (zelfde poort) faalt dan ook en systemd herstart de service na 3 minuten.
+- **Reproductie (lokaal)**: dev-server + 150 lege TCP-verbindingen -> `GET /api/config` **time-out na 6 s**; na het sluiten 0,02 s. Met `connection_limit=250` en dezelfde 150 verbindingen: 200 in 0,04 s.
+- **Semantiek gemeten** (los waitress-testje): `channel_timeout` sluit alleen verbindingen **zonder lopend verzoek**; een verzoek dat 6 s stil blijft (`/slow`, of een SSE-stream vóór het eerste byte) wordt niet afgekapt, een lege verbinding wel (na 2 s bij `channel_timeout=2`). De waarde 300 blijft dus staan (bewezen veilig voor de chatstream); ik heb niet aan de timeout gedraaid.
+- **Oplossing**: `rundashboard.py`: `connection_limit=250` (kost enkele honderden fd's en MB's; de unit staat op de systemd-standaard 1024 fd's). **Test**: `test_watchdog.py::test_rundashboard_starts_the_watchdog...` bewaakt `connection_limit >= 250` en de body-limiet. **Resterend risico**: een LAN-aanvaller kan ook 250 verbindingen openen (de echte oplossing is een firewall/reverse-proxy; buiten scope).
+
+### S3-22 | api | onverwachte fouten gaven Flask's HTML-500 aan JSON-clients; mDNS-constructor kon `/api/devices` laten crashen
+- **Probleem**: elke niet-afgevangen fout in een `/api`-route gaf een HTML-pagina terwijl alle pagina-scripts JSON lezen (`KT.jget` faalt dan met een SyntaxError). `services._discover_pi_spotify_device()` riep `Zeroconf()` buiten zijn try aan: een falende constructor (geen netwerkinterface, poort bezet) gaf bij elke poll van media.js (elke paar seconden) een 500.
+- **Oplossing**: `Dashboard/backend/main.py` `errorhandler(Exception)`: `HTTPException`s (404/405/413...) blijven zoals Flask ze afhandelt; verder krijgt `/api/*` `{"success": false, "error": "interne fout -- zie het logboek van de server"}` (500, zonder detail) met de traceback in het journal, pagina's houden de gewone 500. `main.unhandled` bewaart de laatste 20 meldingen zodat de fuzz-test echte crashes blijft vangen (anders had de handler ze verborgen). `Zeroconf()` staat nu binnen de try; `close()` is beschermd.
+- **Tests**: `test_api_hardening.py` (+3: JSON zonder detail, HTML-500 voor pagina's, 404/405 ongemoeid) op een los Flask-appje met dezelfde handler, `test_fuzz_api.py` controleert `unhandled` (66 routes-cases), `test_units.py` (+1: falende Zeroconf-constructor). **Resterend risico**: geen bekend.
+
+### S3-23 | spotify | `null`-items in zoekresultaten, tracks zonder artiest, ongebonden `last_played_playlists`
+- **Probleem**: Spotify laat in `tracks.items` soms `null` (of een track zonder `id`/`uri`, bv. niet beschikbaar in de markt) staan. `/api/search_spotify` faalde dan helemaal (503) i.p.v. de rest te tonen; `SpotifyDJ.speel_muziek` nam `items[0]` blind (TypeError bij `null`) en crashte NA een geslaagde start op `track['artists'][0]` als de artiestenlijst leeg was (het commando "mislukte" terwijl de muziek al speelde); `laatst_afgespeeld` idem. `/api/last_played_playlists` deed tot 30 Spotify-aanroepen per verzoek zonder cache.
+- **Oplossing**: eerste bruikbare item kiezen, ontbrekende velden tolereren, artiest optioneel in de melding; `last_played_playlists` 60 s single-flight gecached.
+- **Tests**: `test_api_hardening.py` (+3), `test_ai_tools.py` (+6: `null`-eerste-resultaat, alleen onbruikbare resultaten, deel-items). **Resterend risico**: het echte hoorbare afspelen is niet getest (geen toestemming voor audio).
+
 ## Sessie 2 (2026-09-24, Pi tijdelijk onbereikbaar -> alles lokaal getest)
 
 Omgeving: Windows 11 dev-machine, Python 3.12. Geen SSH/deploy mogelijk;
