@@ -22,7 +22,8 @@ requirements-dashboard.txt` voor de nieuwe `zeroconf`-dependency).
 - dd228cf API-invoer/CSRF/radio/kleuren + fuzz/soak (S2-12)
 - fc33b02 routine-uitkomsten, settings.json-quarantaine, lamp-fouten (S2-13)
 - c8a6ac6 agenda/ICS-parsing (S2-14)
-- (volgende commit) AI-tools melden echte uitkomst (S2-15)
+- 3c04aac AI-tools melden echte uitkomst (S2-15)
+- (volgende commit) begrensde groei, calendar-API auth, key-redactie (S2-16)
 
 ### Items
 
@@ -152,6 +153,17 @@ Bron: `scheduler/agenda.py::_normalize_event`/`_parse_event` lazen de ruwe VEVEN
 - **Probleem**: `speel_muziek` gaf altijd "Muziek gestart: X" terug, ook als Spotify onbereikbaar was, er geen actief apparaat was of er niets gevonden werd (`SpotifyDJ.speel_muziek` gaf `False`, het resultaat werd genegeerd). Hetzelfde voor `stop_audio`, `pauze_audio`, `resume_audio` ("Muziek gestopt" bij een mislukte stop) en `pas_volume_aan` (`set_volume`-resultaat genegeerd; bij "niets speelt" gaf `current_playback().get(...)` een AttributeError op `None`). Het model gaf die tekst rechtstreeks door als succes aan de gebruiker. `speel_radio` logde "Radio gestart" ook als de stream niet startte. `zet_lamp(helderheid=0|250|"fel")` liet de Tapo-fout doorborrelen.
 - **Fix**: alle tools rapporteren de echte uitkomst met de reden uit `SpotifyDJ.last_error` ("Kon 'abba' niet afspelen: Geen actief Spotify-apparaat."); `speel_muziek` zet `last_error` ook bij "geen resultaat"/zoekfout; radio-log klopt; helderheid wordt geklemd op 1-100 (onleesbaar = nette melding, lamp niet aangeraakt).
 - **Bestanden**: `logic/gpt_handler.py`, `sound_system/muziek.py`, `tests/test_ai_tools.py` (13 tests; 12 falen tegen de oude code).
+
+#### S2-16 Onbegrensde groei door client-gestuurde invoer (geheugen/schijf) en consistente auth
+Langlopende stabiliteit: alles wat een client kan laten groeien moet een bovengrens hebben.
+- **`_data_cache` + `_data_cache_locks`** (keys `weather:<city>`, `calendar:events:<start>:<end>`): onbegrensd; `?city=` mocht tot ~256 kB lang zijn. Nu maximaal 256 entries (verlopen eerst, dan oudste; locks van weggegooide keys en niet in gebruik worden opgeruimd). `WeerAPI._cache`/`_geo_cache` (elke nieuwe stad = een geocoding-request naar open-meteo) begrensd op 64; `/api/weather?city=` weigert lege/>64/niet-printbare namen (400).
+- **AI-chatsessies** (`sid` komt van de client): max 200, minst recent gebruikte weg (nooit de huidige of een sessie die net een beurt draait).
+- **Notities**: max 2000 tekens per notitie en 1000 in totaal (elke wijziging herschrijft het hele bestand, `/api/overview` stuurt ze allemaal mee); lege notitie was toegestaan. Een onleesbaar/ongeldig `notes.json` (`{kapot`, `[]`) werd door de eerstvolgende `add_note()` overschreven -> nu gequarantaineerd als `notes.json.corrupt-<tijd>` (zelfde patroon als settings.json).
+- **Eigen routines**: max 50, 30 stappen (objecten), naam 80 / omschrijving 300 tekens.
+- **Request-bodies**: 2 MB (Flask `MAX_CONTENT_LENGTH` + waitress `max_request_body_size`; waitress-default is 1 GB gespoold naar schijf).
+- **Consistentie**: `/api/calendar/events` (alle afspraken van elk bereik) volgt nu het wachtwoord van de Kalender-pagina (de pagina was beschermd, de API niet). Bewust ongewijzigd: `/api/overview` (home toont de agenda van vandaag) en de overige LAN-bediening.
+- **API-keys in journald**: `requests`-fouten bevatten de volledige URL incl. `?key=`/`?appid=`; nu geredigeerd in de weer-foutprint.
+- **Bestanden**: `Dashboard/backend/{services,system_api,routines_api,calendar_api,main}.py`, `weer/weer.py`, `logic/{gpt_handler,notes}.py`, `rundashboard.py`, tests in `test_swr.py`, `test_llm.py`, `test_notes.py`, `test_security.py`.
 
 #### Statische analyse (uitgevoerd, geen verdere bevindingen)
 - ruff F: schoon na S2-2. bandit: 0 High, 1 Medium (`0.0.0.0` bind in `rundashboard.py`, bewust: LAN-dashboard achter optioneel wachtwoord), 21 Low (vaste-argv-subprocess, `try/except/pass`; beoordeeld, alleen tts-argv was echt).

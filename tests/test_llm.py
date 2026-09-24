@@ -220,3 +220,27 @@ def test_openai_client_is_rebuilt_when_the_key_changes_and_has_a_timeout(monkeyp
     c2 = llm._get_openai()
     assert c2 is not c1 and built[-1][0] == "sleutel-2"
     assert built[-1][1]["timeout"] <= 120 and built[-1][1]["max_retries"] <= 2
+
+
+def test_chat_sessions_are_bounded():
+    from logic import gpt_handler as gh
+
+    gh._sessions.clear()
+    for i in range(gh._MAX_SESSIONS * 3):
+        gh._session(f"tab{i}")
+    assert len(gh._sessions) <= gh._MAX_SESSIONS
+    assert f"tab{gh._MAX_SESSIONS * 3 - 1}" in gh._sessions       # de nieuwste blijft
+
+
+def test_a_running_session_is_never_evicted():
+    from logic import gpt_handler as gh
+
+    gh._sessions.clear()
+    busy = gh._session("bezig")
+    busy["lock"].acquire()
+    try:
+        for i in range(gh._MAX_SESSIONS * 2):
+            gh._session(f"tab{i}")
+        assert "bezig" in gh._sessions
+    finally:
+        busy["lock"].release()

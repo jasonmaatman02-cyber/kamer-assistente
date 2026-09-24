@@ -53,8 +53,15 @@ def routines_save():
     steps = data.get("steps") or []
     if not isinstance(steps, list):
         return jsonify({"success": False, "error": "steps moet een lijst zijn"}), 400
+    # Grenzen: alles landt in settings.json, dat bij elke wijziging volledig herschreven wordt
+    if len(name) > 80 or len(str(data.get("desc", ""))) > 300:
+        return jsonify({"success": False, "error": "naam (max 80) of omschrijving (max 300) te lang"}), 400
+    if len(steps) > 30 or not all(isinstance(st, dict) for st in steps):
+        return jsonify({"success": False, "error": "max 30 stappen, elk een object"}), 400
     with _routines_lock:
         custom = [r for r in (config.get("routines", []) or []) if r.get("id") != rid]
+        if len(custom) >= 50:
+            return jsonify({"success": False, "error": "max 50 eigen routines"}), 400
         custom.append({"id": rid, "name": name, "desc": data.get("desc", ""), "steps": steps})
         config.set("routines", custom)
     return jsonify({"success": True})
@@ -298,7 +305,10 @@ def notes_add():
     text = raw.strip() if isinstance(raw, str) else ""      # {"note": 5} gaf een AttributeError
     if not text:
         return jsonify({"success": False, "error": "lege notitie"}), 400
-    add_note(text)
+    try:
+        add_note(text)
+    except ValueError as exc:
+        return jsonify({"success": False, "error": str(exc)}), 400
     return jsonify({"success": True})
 
 

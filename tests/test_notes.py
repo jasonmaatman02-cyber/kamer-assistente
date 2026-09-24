@@ -72,3 +72,44 @@ def test_concurrent_add_and_delete_stay_consistent():
 
     # 5 seed + 1 toegevoegd - 1 verwijderd = 5, en het bestand blijft geldige JSON
     assert len(get_notes("mix")) == 5
+
+
+# --- grenzen en kapot bestand -------------------------------------------- #
+import pytest  # noqa: E402
+
+
+def test_note_length_and_count_are_bounded(client):
+    from logic import notes as N
+
+    assert client.post("/api/notes", json={"note": "x" * (N.MAX_NOTE_CHARS + 1)}).status_code == 400
+    assert client.post("/api/notes", json={"note": "   "}).status_code == 400
+    assert client.post("/api/notes", json={"note": "x" * N.MAX_NOTE_CHARS}).status_code == 200
+
+    N.save_notes({"default": [{"note": "n", "timestamp": "t"}] * N.MAX_NOTES})
+    r = client.post("/api/notes", json={"note": "een te veel"})
+    assert r.status_code == 400 and "Te veel notities" in r.get_json()["error"]
+    assert client.delete("/api/notes/0").get_json()["success"] is True
+    assert client.post("/api/notes", json={"note": "nu past het weer"}).status_code == 200
+
+
+def test_add_note_rejects_empty_and_coerces_non_strings():
+    from logic.notes import add_note, get_notes
+
+    with pytest.raises(ValueError):
+        add_note("  ")
+    add_note(123, category="typen")
+    assert get_notes("typen")[0]["note"] == "123"
+
+
+@pytest.mark.parametrize("content", ["{kapot", "[]", '"x"', "null"])
+def test_corrupt_notes_file_is_kept_not_overwritten(content):
+    from logic import notes as N
+
+    N.NOTES_FILE.write_text(content, encoding="utf-8")
+    assert N.load_notes() == {}
+    kept = list(N.NOTES_FILE.parent.glob(f"{N.NOTES_FILE.name}.corrupt-*"))
+    assert len(kept) == 1 and kept[0].read_text(encoding="utf-8") == content
+
+    N.add_note("nieuw begin")                      # schrijft een vers bestand
+    assert [n["note"] for n in N.get_notes("default")] == ["nieuw begin"]
+    assert kept[0].exists()

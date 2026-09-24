@@ -200,3 +200,55 @@ def test_spotify_without_credentials_gives_a_friendly_dutch_message():
     assert S.svc("spotify") is None
     msg = S.errors()["spotify"]
     assert "Settings" in msg and "client_id" not in msg.lower().replace("client id", "")
+
+
+# --------------------------------------------------------------------------- #
+# Begrensde cache: client-gestuurde keys (?city=, ?start=&end=) mogen geheugen niet laten groeien
+# --------------------------------------------------------------------------- #
+def test_data_cache_is_bounded_and_keeps_recent_entries():
+    from Dashboard.backend import services as S
+
+    for i in range(S._DATA_CACHE_MAX * 4):
+        S._cached(f"weather:stad{i}", 600, lambda i=i: {"city": i})
+    assert len(S._data_cache) <= S._DATA_CACHE_MAX
+    assert len(S._data_cache_locks) <= S._DATA_CACHE_MAX + 8       # de locks van weggegooide keys worden ook opgeruimd
+    last = f"weather:stad{S._DATA_CACHE_MAX * 4 - 1}"
+    assert last in S._data_cache                                   # het nieuwste blijft
+
+
+def test_pruning_drops_expired_first_and_never_a_lock_in_use():
+    import threading
+
+    from Dashboard.backend import services as S
+
+    S._data_cache.clear()
+    S._data_cache_locks.clear()
+    held = S._named_lock(S._data_cache_locks, "held")
+    held.acquire()
+    try:
+        for i in range(S._DATA_CACHE_MAX + 50):
+            S._data_cache[f"old{i}"] = ("x", 1.0)                  # allemaal al verlopen
+        S._store("fresh", 600, {"ok": 1})
+        assert "fresh" in S._data_cache and len(S._data_cache) <= S._DATA_CACHE_MAX
+        assert "held" in S._data_cache_locks                       # in gebruik: blijft bestaan
+    finally:
+        held.release()
+    assert isinstance(threading.Lock(), type(held))
+
+
+def test_weather_route_rejects_absurd_city_names(client):
+    assert client.get("/api/weather?city=" + "x" * 200).status_code == 400
+    assert client.get("/api/weather?city=").status_code == 400
+    assert client.get("/api/weather?city=%00%01").status_code == 400
+    assert client.get("/api/weather?city=Arnhem").status_code in (200, 503)
+
+
+def test_weerapi_city_caches_are_bounded(monkeypatch):
+    import weer.weer as W
+
+    api = W.WeerAPI()
+    monkeypatch.setattr(api, "_fetch_open_meteo", lambda city: {"temp": 1, "city": city})
+    for i in range(W._MAX_CACHED_CITIES * 3):
+        api.fetch_weather(f"stad{i}")
+    assert len(api._cache) <= W._MAX_CACHED_CITIES
+    assert f"open-meteo:stad{W._MAX_CACHED_CITIES * 3 - 1}" in api._cache

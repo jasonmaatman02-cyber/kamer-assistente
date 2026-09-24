@@ -52,6 +52,16 @@ def _redact(text: str) -> str:
     return _SECRET_QS.sub(lambda m: f"{m.group(1)}=***", str(text))
 
 
+_MAX_CACHED_CITIES = 64
+
+
+def _bounded_put(cache: dict, key, value) -> None:
+    """Zet ``value`` in ``cache`` en gooi de oudste entries weg boven _MAX_CACHED_CITIES."""
+    cache[key] = value
+    while len(cache) > _MAX_CACHED_CITIES:
+        cache.pop(next(iter(cache)), None)
+
+
 class WeerAPI:
     def __init__(self):
         self._geo_cache: dict[str, tuple[float, float]] = {}
@@ -81,7 +91,7 @@ class WeerAPI:
             return hit[1] if hit else None   # val terug op oude data indien beschikbaar
 
         if data:
-            self._cache[key] = (time.time(), data)
+            _bounded_put(self._cache, key, (time.time(), data))
         return data
 
     # ------------------------------------------------------------------ #
@@ -93,7 +103,7 @@ class WeerAPI:
         lat = config.get("weather.latitude")
         lon = config.get("weather.longitude")
         if city == config.get("weather.city") and lat is not None and lon is not None:
-            self._geo_cache[city] = (lat, lon)
+            _bounded_put(self._geo_cache, city, (lat, lon))
             return lat, lon
         r = requests.get(
             "https://geocoding-api.open-meteo.com/v1/search",
@@ -105,7 +115,7 @@ class WeerAPI:
         if not results:
             raise requests.RequestException(f"stad '{city}' niet gevonden")
         loc = results[0]
-        self._geo_cache[city] = (loc["latitude"], loc["longitude"])
+        _bounded_put(self._geo_cache, city, (loc["latitude"], loc["longitude"]))
         return self._geo_cache[city]
 
     def _fetch_open_meteo(self, city: str):

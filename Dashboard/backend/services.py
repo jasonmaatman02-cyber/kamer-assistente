@@ -576,9 +576,34 @@ def _expire(key: str) -> None:
         _data_cache[key] = (hit[0], 0.0)
 
 
+# Keys worden deels door de client bepaald (?city=..., ?start=..&end=..): zonder
+# bovengrens groeit de cache (en _data_cache_locks) onbeperkt met elk nieuw verzoek.
+_DATA_CACHE_MAX = 256
+
+
+def _prune_cache() -> None:
+    """Houd _data_cache (en de bijbehorende locks) klein: eerst verlopen entries weg,
+    dan de oudste. Locks die in gebruik zijn of bij een bewaarde key horen blijven."""
+    if len(_data_cache) <= _DATA_CACHE_MAX:
+        return
+    now = time.time()
+    items = list(_data_cache.items())
+    for key, (_val, exp) in items:
+        if exp < now and len(_data_cache) > _DATA_CACHE_MAX:
+            _data_cache.pop(key, None)
+    if len(_data_cache) > _DATA_CACHE_MAX:
+        oldest = sorted(_data_cache.items(), key=lambda kv: kv[1][1])
+        for key, _ in oldest[: len(_data_cache) - _DATA_CACHE_MAX]:
+            _data_cache.pop(key, None)
+    with _locks_lock:
+        for key in [k for k, lk in _data_cache_locks.items() if k not in _data_cache and not lk.locked()]:
+            _data_cache_locks.pop(key, None)
+
+
 def _store(key: str, ttl: float, val):
     # een foutresultaat kort cachen zodat we niet elke 10s opnieuw hameren
     _data_cache[key] = (val, time.time() + (20 if isinstance(val, dict) and val.get("error") else ttl))
+    _prune_cache()
 
 
 def _cached(key: str, ttl: float, produce, fallback=None):

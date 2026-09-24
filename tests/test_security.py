@@ -163,3 +163,15 @@ def test_calendar_events_api_follows_the_calendar_page_password(client, monkeypa
 
 def test_calendar_events_api_is_open_when_no_password_is_set(client):
     assert client.get("/api/calendar/events").status_code == 200
+
+
+def test_routine_size_limits(client):
+    ok = {"id": "r1", "name": "n", "steps": [{"action": "say", "text": "hoi"}]}
+    assert client.post("/api/routines", json=ok).status_code == 200
+    assert client.post("/api/routines", json={**ok, "id": "r2", "name": "x" * 81}).status_code == 400
+    assert client.post("/api/routines", json={**ok, "id": "r2", "steps": [{"action": "say"}] * 31}).status_code == 400
+    assert client.post("/api/routines", json={**ok, "id": "r2", "steps": [1, 2]}).status_code == 400
+    for i in range(49):
+        assert client.post("/api/routines", json={**ok, "id": f"x{i}"}).status_code == 200
+    assert client.post("/api/routines", json={**ok, "id": "een-te-veel"}).status_code == 400
+    assert client.post("/api/routines", json={**ok, "id": "r1", "name": "vervangen"}).status_code == 200   # bestaande updaten mag

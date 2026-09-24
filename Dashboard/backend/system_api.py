@@ -62,7 +62,12 @@ def service_status():
 def weather():
     # de losse route (Environment-pagina "verversen") wil verse data;
     # /api/overview mag de cache van services gebruiken
-    data = S.weather_data(request.args.get("city"), fresh=True)
+    city = request.args.get("city")
+    if city is not None and not (1 <= len(city.strip()) <= 64 and city.isprintable()):
+        # de stad is (via de cache-key en WeerAPI's geocode-cache) client-gestuurd: onbegrensde
+        # invoer liet geheugen groeien en de Pi bij elke nieuwe naam open-meteo bevragen
+        return jsonify({"error": "ongeldige stad"}), 400
+    data = S.weather_data(city.strip() if city else city, fresh=True)
     return jsonify(data), (503 if data.get("error") else 200)
 
 

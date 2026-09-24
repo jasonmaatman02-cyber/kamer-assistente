@@ -349,6 +349,9 @@ def _system_prompt() -> dict:
 _sessions: dict[str, dict] = {}
 _sessions_lock = threading.Lock()
 _SESSION_TTL = 24 * 3600
+# sid komt van de client (chat-tab-id): zonder bovengrens kon één client met steeds nieuwe
+# sid's binnen de TTL onbeperkt sessies (elk met eigen historie) laten aanmaken.
+_MAX_SESSIONS = 200
 
 
 def _session(key: str) -> dict:
@@ -363,6 +366,11 @@ def _session(key: str) -> dict:
             s["seen"] = now
         for old in [k for k, v in _sessions.items() if k != key and now - v["seen"] > _SESSION_TTL]:
             _sessions.pop(old, None)
+        if len(_sessions) > _MAX_SESSIONS:
+            # de minst recent gebruikte weg (niet de huidige, en niet eentje die net een beurt draait)
+            idle = sorted((v["seen"], k) for k, v in _sessions.items() if k != key and not v["lock"].locked())
+            for _seen, k in idle[: len(_sessions) - _MAX_SESSIONS]:
+                _sessions.pop(k, None)
         return s
 
 
