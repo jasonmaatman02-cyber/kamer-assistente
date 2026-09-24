@@ -20,7 +20,8 @@ requirements-dashboard.txt` voor de nieuwe `zeroconf`-dependency).
 - 408ccba wekker/routines + spraakpijplijn (S2-9, S2-10)
 - e45b475 detectiefout-als-onbekend + notifications (S2-11)
 - dd228cf API-invoer/CSRF/radio/kleuren + fuzz/soak (S2-12)
-- (volgende commit) routine-uitkomsten, settings.json-quarantaine, lamp-fouten (S2-13)
+- fc33b02 routine-uitkomsten, settings.json-quarantaine, lamp-fouten (S2-13)
+- (volgende commit) agenda/ICS-parsing (S2-14)
 
 ### Items
 
@@ -136,6 +137,15 @@ Aanleiding: een fuzz over alle routes (774 requests met kapotte/verkeerd getypee
 - **Bestanden**: `scheduler/routines.py`, `Dashboard/backend/routines_api.py`, `logic/gpt_handler.py`, `devices/Lights.py`, `Dashboard/backend/devices_api.py`, `config/settings.py`, `Dashboard/static/scripts/{routines,home}.js`, `tools/dev_server.py` (isoleert nu ook notes/logs), tests: `test_routine_results.py`, `test_config.py`.
 - **Idle-CPU-meting (lokaal)**: presence AAN + echte webcam = ~10% van 1 core op Windows, maar verdeeld over native MSMF-driverthreads (geen Python-thread in de top); presence UIT = 0,0%. Op de Pi (V4L2) moet dit live gemeten worden (`/api/presence.detect_ms`).
 - **Resterend risico**: `speak()` geeft geen succes/mislukt terug (faalt stil), dus een mislukte TTS telt niet als mislukte routinestap.
+
+#### S2-14 Agenda/ICS-parsing: afgekapte velden, verkeerde beschrijving, UTC-tijden, injectie
+Bron: `scheduler/agenda.py::_normalize_event`/`_parse_event` lazen de ruwe VEVENT-tekst regel voor regel (`tests/test_ics.py`, 10 tests, 8 falen tegen de oude parser).
+- **Gevouwen regels** (RFC 5545: voortzetting begint met spatie/tab, vouw op 75 tekens) werden niet samengevoegd: lange LOCATION/DESCRIPTION (adressen!) werden halverwege afgekapt.
+- **Geneste componenten**: `DESCRIPTION:Herinnering` in een `VALARM` (iCloud zet die bij bijna elk event) overschreef de echte beschrijving; `DTSTART` uit een `VTIMEZONE` kon in een VEVENT zonder start lekken. Nu alleen eigenschappen van het VEVENT zelf (`_vevent_props`).
+- **SUMMARY werd als enige veld niet ge-unescaped** (`Lunch\, met Jan` toonde de backslash) en `SUMMARY;LANGUAGE=nl:...` werd door `_parse_event` gemist ("Geen titel").
+- **UTC-tijden** (`DTSTART:...Z`) werden als UTC-klokslag voorgelezen ("om 07:00" voor een afspraak om 09:00); nu naar lokale tijd.
+- **Injectie/collisie**: `add_event()` en de Google->ICS-conversie zetten de titel onge-escaped in de ICS (een newline in de titel voegde eigenschappen toe, bv. ATTENDEE/LOCATION); `add_event` gebruikte `int(timestamp)` als UID (twee events in dezelfde seconde overschreven elkaar) -> uuid4. (`add_event` wordt nu door geen enkele tool aangeroepen; toch robuust gemaakt.)
+- **Resterend risico (P3)**: `DTSTART;TZID=<andere zone>` wordt als zwevende tijd doorgegeven (geen TZID-conversie): correct zolang browser/Pi in dezelfde zone als de agenda staan (NL); Google-events in een andere zone tonen de klokslag van die zone.
 
 #### Statische analyse (uitgevoerd, geen verdere bevindingen)
 - ruff F: schoon na S2-2. bandit: 0 High, 1 Medium (`0.0.0.0` bind in `rundashboard.py`, bewust: LAN-dashboard achter optioneel wachtwoord), 21 Low (vaste-argv-subprocess, `try/except/pass`; beoordeeld, alleen tts-argv was echt).

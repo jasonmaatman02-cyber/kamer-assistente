@@ -31,6 +31,8 @@ werkt ongewijzigd voor beide providers.
 from __future__ import annotations
 
 import os
+import re
+import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -87,7 +89,7 @@ def _google_event_to_simple(item: dict) -> _SimpleEvent:
     return _SimpleEvent(
         "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//kamerproject//NL\r\n"
         "BEGIN:VEVENT\r\n"
-        f"SUMMARY:{summary}\r\n" + "\r\n".join(l for l in lines if l) + "\r\n"
+        f"SUMMARY:{_ics_escape(summary)}\r\n" + "\r\n".join(l for l in lines if l) + "\r\n"
         "END:VEVENT\r\nEND:VCALENDAR\r\n"
     )
 
@@ -109,6 +111,51 @@ def _ics_unescape(text: str) -> str:
     return text.replace("\\n", "\n").replace("\\,", ",").replace("\\;", ";").replace("\\\\", "\\")
 
 
+def _local_tz():
+    """None = de tijdzone van het systeem (op de Pi: Europe/Amsterdam)."""
+    return None
+
+
+def _unfold_ics(text: str) -> str:
+    """RFC 5545: een regel die met een spatie/tab begint is de voortzetting van de
+    vorige (regels worden op 75 tekens gevouwen). Zonder dit werd elke lange LOCATION
+    of DESCRIPTION halverwege afgekapt."""
+    return re.sub(r"\r?\n[ \t]", "", text)
+
+
+def _vevent_props(data: str):
+    """Yield (NAAM, waarde) voor de eigenschappen die echt bij het VEVENT horen.
+    Eigenschappen in een geneste VALARM (DESCRIPTION:Herinnering) of in een
+    VTIMEZONE (DTSTART:19701025T030000) overschreven voorheen de echte titel-/
+    beschrijving-/starttijd-velden. Data zonder BEGIN:VEVENT wordt als kaal
+    eigenschappenblok behandeld."""
+    text = _unfold_ics(data)
+    has_event = "BEGIN:VEVENT" in text.upper()
+    in_event = not has_event
+    nested = 0                     # diepte binnen VALARM/VTIMEZONE (of ander sub-component)
+    for line in text.splitlines():
+        stripped = line.strip()
+        upper = stripped.upper()
+        if upper == "BEGIN:VEVENT":
+            in_event = True
+            continue
+        if upper == "END:VEVENT":
+            in_event = False
+            continue
+        if not in_event:
+            continue
+        if upper.startswith("BEGIN:"):
+            nested += 1
+            continue
+        if upper.startswith("END:"):
+            nested = max(0, nested - 1)
+            continue
+        if nested or ":" not in stripped:
+            continue
+        head, _, value = stripped.partition(":")
+        yield head.split(";", 1)[0].upper(), value.strip()
+
+
 def _ics_value_to_iso(value: str | None) -> str | None:
     if not value:
         return None
@@ -126,16 +173,14 @@ def _ics_value_to_iso(value: str | None) -> str | None:
 def _normalize_event(event, calendar_name: str, provider: str) -> dict:
     fields = {"SUMMARY": None, "DTSTART": None, "DTEND": None,
               "LOCATION": None, "DESCRIPTION": None, "UID": None}
-    for line in event.data.splitlines():
-        for key in fields:
-            if line.startswith(key) and ":" in line:
-                fields[key] = line.split(":", 1)[1].strip()
-                break
+    for name, value in _vevent_props(event.data):
+        if name in fields:
+            fields[name] = value
     start_raw = fields["DTSTART"]
     start_iso = _ics_value_to_iso(start_raw)
     end_iso = _ics_value_to_iso(fields["DTEND"]) or start_iso
     all_day = bool(start_raw) and "T" not in start_raw
-    title = fields["SUMMARY"] or "Geen titel"
+    title = _ics_unescape(fields["SUMMARY"]) if fields["SUMMARY"] else "Geen titel"   # 'Lunch\, met Jan' -> 'Lunch, met Jan'
     return {
         "id": fields["UID"] or f"{provider}:{calendar_name}:{start_raw}:{title}",
         "title": title,
@@ -377,11 +422,11 @@ class MultiProviderCalendar:
         template = (
             "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//kamerproject//NL\r\n"
             "BEGIN:VEVENT\r\n"
-            f"UID:{int(datetime.now().timestamp())}@kamerproject\r\n"
+            f"UID:{uuid.uuid4()}@kamerproject\r\n"     # int(timestamp): twee events in dezelfde seconde overschreven elkaar
             f"DTSTAMP:{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}\r\n"
             f"DTSTART:{start.strftime('%Y%m%dT%H%M%S')}\r\n"
             f"DTEND:{end.strftime('%Y%m%dT%H%M%S')}\r\n"
-            f"SUMMARY:{summary}\r\n"
+            f"SUMMARY:{_ics_escape(summary)}\r\n"     # zonder escape kon een newline in de titel extra ICS-eigenschappen injecteren
             "END:VEVENT\r\nEND:VCALENDAR\r\n"
         )
         try:
@@ -394,18 +439,20 @@ class MultiProviderCalendar:
     @staticmethod
     def _parse_event(event):
         summary, dtstart = "Geen titel", None
-        for line in event.data.splitlines():
-            if line.startswith("SUMMARY:"):
-                summary = line[len("SUMMARY:"):].strip()
-            elif line.startswith("DTSTART"):
-                # 'DTSTART:...' of 'DTSTART;TZID=...:...' of 'DTSTART;VALUE=DATE:...'
-                dtstart = line.split(":", 1)[1].strip() if ":" in line else None
+        for name, value in _vevent_props(event.data):
+            if name == "SUMMARY":
+                summary = _ics_unescape(value)
+            elif name == "DTSTART":
+                dtstart = value            # 'DTSTART:..' / 'DTSTART;TZID=..:..' / 'DTSTART;VALUE=DATE:..'
         if not dtstart:
             return summary, "tijd onbekend"
         if "T" not in dtstart:
             return summary, "hele dag"
         try:
-            return summary, parse(dtstart).strftime("%H:%M")
+            dt = parse(dtstart)
+            if dt.tzinfo is not None:      # '...Z' (UTC) of met offset: naar lokale tijd, anders 1-2 uur ernaast
+                dt = dt.astimezone(_local_tz())
+            return summary, dt.strftime("%H:%M")
         except (ValueError, OverflowError):
             return summary, "tijd onbekend"
 
