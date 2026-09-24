@@ -998,6 +998,11 @@ def test_auto_light_block_resets_after_midnight():
     assert is_auto_light_blocked(datetime.datetime(2026, 1, 6, 0, 5)) is False
     assert is_auto_light_blocked(datetime.datetime(2026, 1, 6, 21, 29)) is False
     assert is_auto_light_blocked(datetime.datetime(2026, 1, 6, 21, 30)) is True
+    # seconden tellen mee, en het "nachtvenster" eindigt NIET om 07:00: er is er geen (zie S2-24/S3-18)
+    assert is_auto_light_blocked(datetime.datetime(2026, 1, 6, 21, 29, 59)) is False
+    assert is_auto_light_blocked(datetime.datetime(2026, 1, 6, 21, 30, 0)) is True
+    assert is_auto_light_blocked(datetime.datetime(2026, 1, 6, 6, 59, 59)) is False
+    assert is_auto_light_blocked(datetime.datetime(2026, 1, 6, 7, 0, 0)) is False
 
 
 def test_auto_light_block_disabled_when_empty():

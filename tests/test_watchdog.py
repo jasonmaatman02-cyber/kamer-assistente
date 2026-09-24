@@ -169,3 +169,16 @@ def test_rundashboard_starts_the_watchdog_and_the_unit_enables_it(monkeypatch):
     unit = (os.path.join(os.path.dirname(__file__), "..", "deploy", "kamer-dashboard.service"))
     text = open(unit, encoding="utf-8").read()
     assert "WatchdogSec=" in text and "NotifyAccess=main" in text
+
+
+def test_probe_endpoint_stays_open_when_a_dashboard_password_is_set(monkeypatch):
+    """De watchdog vraagt /api/config ZONDER login op. Zou dat ooit achter het wachtwoord komen, dan telt
+    elke probe als mislukt en herstart systemd de service om de 3 minuten -- een herstartlus die je alleen
+    ziet als je een wachtwoord instelt. Deze test bewaakt dat pad."""
+    from Dashboard.backend.main import app
+
+    monkeypatch.setenv("DASHBOARD_PASSWORD", "geheim")
+    with app.test_client() as c:
+        r = c.get("/api/config")
+        assert r.status_code == 200 and "camera" in r.get_json()
+        assert c.get("/video_feed").status_code == 401        # het wachtwoord is wel actief
