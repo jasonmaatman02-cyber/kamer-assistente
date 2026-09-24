@@ -7,8 +7,9 @@ import pytest
 
 import config
 
-SKIP = {"/video_feed", "/api/chat_stream", "/api/send_message", "/api/routines/run",
-        "/api/speedtest", "/api/camera_snapshot"}
+# chat- en routine-routes doen nu ook mee: met deze bodies bereiken ze het model/de hardware nooit
+# (ongeldige of ontbrekende invoer wordt eerder geweigerd) -- juist daar zaten typefouten (S3-25)
+SKIP = {"/video_feed", "/api/speedtest", "/api/camera_snapshot"}
 
 BODIES = [
     None, "{}", "[]", '"str"', "null", "123", "{not json", '{"x": null}',
@@ -80,3 +81,40 @@ def test_no_route_crashes_on_malformed_input(fuzz_client):
     assert not crashes, "\n".join(map(str, crashes[:20]))
     # de globale foutafhandeling maakt van een crash een JSON-500: die mag hier nooit optreden
     assert not _main.unhandled, "\n".join(_main.unhandled)
+
+
+KEYS = ["brightness", "code", "color", "color_temp", "desc", "device_id", "id", "lamp", "message", "name", "note",
+        "password", "playlist_id", "position_ms", "redirect_url", "routine", "sid", "station", "steps", "target",
+        "time", "track_id", "volume", "query", "city", "text", "settings", "keys", "state", "mode", "value"]
+WRONG = [None, 5, -1, 1.5, True, [], ["a"], {}, {"a": 1}, "", "x" * 300, "\x00", "../../etc/passwd", 10 ** 30]
+
+
+def test_no_route_crashes_on_a_wrongly_typed_value_for_any_known_key(fuzz_client):
+    """Elke bekende body-sleutel met elk verkeerd type, een sleutel tegelijk, op elke schrijf-route: geen
+    onverwachte fout (de globale foutafhandeling zou die als JSON-500 verbergen; ``unhandled`` vangt ze)."""
+    import json
+
+    from Dashboard.backend import main as _main
+
+    client, app = fuzz_client
+    _main.unhandled.clear()
+    routes = []
+    for rule in sorted(app.url_map.iter_rules(), key=lambda r: r.rule):
+        if rule.endpoint == "static" or rule.rule in SKIP:
+            continue
+        methods = [m for m in rule.methods if m in ("POST", "PUT", "DELETE", "PATCH")]
+        if not methods:
+            continue
+        url = rule.rule
+        for arg in rule.arguments:
+            url = url.replace(f"<int:{arg}>", "1").replace(f"<{arg}>", "abc")
+        routes += [(m, url) for m in methods]
+    assert len(routes) > 20
+    for method, url in routes:
+        for key in KEYS:
+            for value in WRONG:
+                try:
+                    client.open(url, method=method, data=json.dumps({key: value}), content_type="application/json")
+                except Exception as exc:  # noqa: BLE001
+                    pytest.fail(f"{method} {url} {key}={value!r}: {exc!r}")
+    assert not _main.unhandled, "\n".join(sorted(set(_main.unhandled))[:20])
