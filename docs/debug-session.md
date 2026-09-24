@@ -251,6 +251,7 @@ Pi 4B (192.168.2.34), Debian 13, Python 3.13.5; was `9c30f40`, nu `ce1eec4`+ (`b
 - **Fix**: `_system_play_timeout()` = lengte van de wav + 10 s (min 20 s, max 180 s; mp3 = 120 s); `_speak_espeak()` (backend `espeak`, blokkerend) vaste 15 s -> `10 s + 0,12 s/teken`. Zonder pygame gaat het stil naar de systeemspeler (voorheen bij elke uitspraak "afspelen mislukt (pygame)" in het journal) en de backend-foutmelding ("piper faalde") komt hooguit 1x per 10 min.
 - **Op de Pi geverifieerd (zonder geluid)**: na deploy geeft een korte zin timeout 20,0 s en de ~60-woorden-tekst **34,8 s** (voorheen 20 s); 4 opeenvolgende `synthesize()`-aanroepen schreven de piper-melding 1x. Afspelen zelf niet uitgevoerd (geen geluid/hardware-actie zonder toestemming).
 - **Bestanden**: `ai/tts.py`, `tests/test_tts.py` (+6).
+- **Afhankelijkheden op de Pi**: alle pakketten uit `requirements-dashboard.txt` aanwezig (tapo 0.9.0, spotipy 2.26.0, opencv 4.14, waitress 3.0.2, zeroconf 0.151.3, ...), `pip check` schoon, en **`pip-audit --local` op de Pi-venv: "No known vulnerabilities found"** (sluit het eerdere, op de dev-machine niet uitvoerbare pip-audit-punt; de tool stond buiten de service-venv).
 - **Opmerking voor Jason**: de Pi draait dus op espeak-ng (robotstem). Piper (natuurlijker) vereist `pip install piper-tts` + de stem in `models/`; niet gedaan omdat het een grote afhankelijkheid is en de stem hardware-/geluidstests vraagt.
 
 #### Statische analyse (uitgevoerd, geen verdere bevindingen)
