@@ -69,6 +69,12 @@ if systemctl is-enabled kamer-dashboard.service >/dev/null 2>&1 \
   done
   if [ "$ok" = 1 ]; then
     echo "==> dashboard OK (nu op $(git rev-parse --short HEAD), was $PREV)"
+    # De systemd-unit wordt alleen door setup-pi.sh vernieuwd; zonder WatchdogSec herstart systemd
+    # een VASTGELOPEN (niet gecrasht) dashboard niet.
+    wd="$(systemctl show kamer-dashboard.service -p WatchdogUSec --value 2>/dev/null || true)"
+    if [ -z "$wd" ] || [ "$wd" = "0" ] || [ "$wd" = "infinity" ]; then
+      echo "==> tip: draai 'bash deploy/setup-pi.sh' eenmalig om de systemd-watchdog te activeren"
+    fi
   else
     echo
     echo "!!  Het dashboard antwoordt niet na de update. Laatste logregels:"

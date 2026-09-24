@@ -20,6 +20,11 @@ def main():
 
     presence_worker.start()
 
+    # Herstart via systemd als het dashboard VASTLOOPT (doet niets zonder WatchdogSec in de unit)
+    from Dashboard.backend import watchdog
+
+    watchdog.start(PORT)
+
     try:
         from waitress import serve
 

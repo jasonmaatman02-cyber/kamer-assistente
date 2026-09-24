@@ -12,6 +12,11 @@ ExecStart=/home/pi/kamer-assistente/.venv/bin/python -m rundashboard
 Environment=PYTHONUNBUFFERED=1
 Restart=always
 RestartSec=3
+# Herstart ook als het dashboard draait maar niet meer antwoordt (dead-lock / alle workers vast):
+# Dashboard/backend/watchdog.py meldt elke 60s "gezond" zolang /api/config antwoordt. Ruim gekozen
+# zodat een even zwaar belaste Pi (Ollama) geen valse herstart krijgt.
+WatchdogSec=180
+NotifyAccess=main
 # Geef 't wat lucht op een Pi 4B, maar niet oneindig
 MemoryMax=1200M
 Nice=5

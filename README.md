@@ -69,7 +69,10 @@ sudo systemctl restart kamer-dashboard
 ```
 
 De service draait `python -m rundashboard` (waitress) als user `pi`, met
-`Restart=always` en een geheugenlimiet van 1,2 GB.
+`Restart=always`, een geheugenlimiet van 1,2 GB en een **watchdog** (`WatchdogSec=180`):
+het dashboard vraagt elke minuut zijn eigen `/api/config` op en meldt dat aan systemd; blijft dat
+3 minuten uit (dashboard vastgelopen, niet gecrasht), dan herstart systemd de service. De unit
+wordt alleen door `bash deploy/setup-pi.sh` vernieuwd — draai dat eenmalig na deze update.
 
 ## Instellingen
 

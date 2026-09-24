@@ -27,7 +27,8 @@ requirements-dashboard.txt` voor de nieuwe `zeroconf`-dependency).
 - b22ae23 verse presence-frames + chaos-test (S2-17)
 - 6e34d24 settings-typecontrole (S2-18)
 - 70b0d3c lamp-adressering, Tapo-account-check (S2-19)
-- (volgende commit) voorgelezen/rauwe foutteksten (S2-20)
+- ead88f1 voorgelezen/rauwe foutteksten (S2-20)
+- (volgende commit) systemd-watchdog (S2-21; vereist setup-pi.sh voor de nieuwe unit)
 
 ### Items
 
@@ -193,6 +194,13 @@ Langlopende stabiliteit: alles wat een client kan laten groeien moet een bovengr
 - **Chat/spraak-fouten**: `verwerk_input`/de stream gaven `Fout bij verwerken input: <ruwe exceptie>` terug (in de chat, en door de spraakassistent voorgelezen; kan URL's/poorten/gedeeltelijke sleutels bevatten). Nu `friendly_ai_error()`: "De AI is nu niet bereikbaar (draait Ollama, of is er internet?)", "reageert te traag", "sleutel ontbreekt/ongeldig", "model niet geinstalleerd", anders een generieke melding; het log houdt de volledige fout. Zelfde voor de SSE-stream (`/api/chat_stream`).
 - **Lamp-tools zonder lampen**: `gpt_handler._lamp()` en `scheduler.routines._all_lamps()` gaven een `KeyError`/`TypeError` bij een lamp zonder `ip`; nu een duidelijke melding resp. overslaan.
 - **Bestanden**: `scheduler/routines.py`, `logic/gpt_handler.py`, `Dashboard/backend/chat_api.py`, tests (`test_routine_results.py`, `test_ai_tools.py`, `test_llm.py`).
+
+#### S2-21 Zelfherstel bij een VASTGELOPEN dashboard: systemd-watchdog
+- **Probleem**: `Restart=always` herstart alleen een gecrasht proces. De ernstigste fouten van deze sessie (S2-4: offline lamp, S2-5: trage externe dienst, S2-6: AI-flood) lieten het proces draaien maar het hele dashboard bevriezen; zonder watchdog blijft zo'n dashboard op een headless Pi voor altijd kapot tot iemand ingrijpt.
+- **Fix**: `Dashboard/backend/watchdog.py` -- draait alleen als systemd `WatchdogSec` heeft gezet (`WATCHDOG_USEC` + `NOTIFY_SOCKET`): een daemon-thread vraagt elke `WatchdogSec/3` (60 s) de eigen `/api/config` op (timeout 20 s) en stuurt bij een antwoord `WATCHDOG=1` via de notify-socket (eigen minimale `sd_notify`, geen dependency). Geen antwoord = geen ping = systemd doodt en herstart de service na 180 s. De eerste 60 s worden altijd doorgemeld (imports op een Pi). Een vastgelopen GIL (C-extensie) legt ook de ping-thread stil -> ook dan herstart. `deploy/kamer-dashboard.service`: `WatchdogSec=180`, `NotifyAccess=main`.
+- **Bewust ruim** (180 s / 20 s-probe): een Pi die even door Ollama verzadigd is mag geen valse herstart krijgen; `update-pi.sh` meldt een tip als de draaiende unit nog geen watchdog heeft.
+- **Activeren op de Pi**: `git pull` + `bash deploy/setup-pi.sh` (nieuwe unit) + herstart. Zonder nieuwe unit doet de thread niets (veilig). **Niet op de Pi getest** (o.a. dat `NotifyAccess=main` met `Type=simple` de socket exporteert -- volgens de systemd-documentatie wel); controleren met `systemctl show kamer-dashboard -p WatchdogUSec` en `journalctl -u kamer-dashboard | grep watchdog`.
+- **Bestanden**: `Dashboard/backend/watchdog.py`, `rundashboard.py`, `deploy/kamer-dashboard.service`, `deploy/update-pi.sh`, `README.md`, `tests/test_watchdog.py` (16 tests, 1 platformafhankelijk overgeslagen op Windows).
 
 #### Statische analyse (uitgevoerd, geen verdere bevindingen)
 - ruff F: schoon na S2-2. bandit: 0 High, 1 Medium (`0.0.0.0` bind in `rundashboard.py`, bewust: LAN-dashboard achter optioneel wachtwoord), 21 Low (vaste-argv-subprocess, `try/except/pass`; beoordeeld, alleen tts-argv was echt).
