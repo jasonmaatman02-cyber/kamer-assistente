@@ -152,6 +152,18 @@ $REPO_DIR/data/logs/*/*.txt {
 }
 EOF
 
+# ---------------------------------------------------------------- tijdzone
+# De 21:30-regel (geen automatisch licht 's avonds), wekkers en de agenda rekenen met de lokale
+# tijd; een Pi die op UTC staat loopt 1-2 uur mis.
+TZ_NOW="$(timedatectl show -p Timezone --value 2>/dev/null || true)"
+case "$TZ_NOW" in
+  ""|UTC|Etc/UTC|Etc/UCT|Universal)
+    echo "!!  tijdzone staat op '${TZ_NOW:-onbekend}' -- zet 'm goed voor de 21:30-regel/wekkers:"
+    echo "!!      sudo timedatectl set-timezone Europe/Amsterdam"
+    ;;
+  *) echo "==> tijdzone: $TZ_NOW" ;;
+esac
+
 # ---------------------------------------------------------------- systemd service
 echo "==> systemd service installeren"
 TMP_UNIT="$(mktemp)"

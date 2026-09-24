@@ -425,3 +425,10 @@ def test_voice_set_alarm_is_visible_and_cancelable_from_dashboard(client):
     finally:
         from scheduler.alarm_manager import alarm as shared_alarm
         shared_alarm.cancel_alarm()
+
+
+def test_health_reports_the_timezone(client):
+    d = client.get("/api/health").get_json()
+    tz = d["timezone"]
+    assert isinstance(tz["name"], str) and tz["name"]
+    assert -14 <= tz["utc_offset_h"] <= 14

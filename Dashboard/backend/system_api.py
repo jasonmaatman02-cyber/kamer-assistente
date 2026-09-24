@@ -269,6 +269,9 @@ def health():
     return jsonify({
         "ok": True,
         "time": time.strftime("%Y-%m-%d %H:%M:%S"),
+        # De 21:30-regel, wekkers en de agenda rekenen met de LOKALE tijd: staat de Pi op UTC,
+        # dan loopt dat 1-2 uur mis. Zichtbaar maken i.p.v. stilzwijgend fout.
+        "timezone": {"name": time.tzname[0], "utc_offset_h": round(-(time.altzone if time.localtime().tm_isdst > 0 else time.timezone) / 3600, 2)},
         "git": on_disk,                          # commit op schijf
         "git_running": _BOOT_SHA,                # commit waarmee dit proces startte
         "restart_pending": on_disk != _BOOT_SHA and "?" not in (on_disk, _BOOT_SHA),
