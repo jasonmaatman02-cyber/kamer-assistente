@@ -141,3 +141,31 @@ def test_dj_search_failures_set_last_error(monkeypatch):
     dj.sp = Boom()
     assert dj.speel_muziek("abba") is False
     assert "onbereikbaar" in dj.last_error
+
+
+def test_zet_lamp_without_lamps_gives_a_clear_message():
+    import config
+
+    config.set("devices.lamps", [])
+    out = gh._dispatch({"name": "zet_lamp", "arguments": {"aan": True}})
+    assert "Geen lamp geconfigureerd" in out
+
+
+def test_lamp_lookup_by_name_and_fallback(monkeypatch):
+    import config
+    import devices.Lights as L
+
+    seen = []
+
+    class FakeLamp:
+        def __init__(self, user, pw, ip):
+            seen.append(ip)
+
+        async def connect(self):
+            pass
+
+    monkeypatch.setattr(L, "SlimmeLamp", FakeLamp)
+    config.set("devices.lamps", [{"name": "Bureaulamp", "ip": "192.0.2.1"}, {"name": "Slaapkamer", "ip": "192.0.2.2"}, {"name": "Kapot"}])
+    gh._lamp("slaap")
+    gh._lamp("woonkamer")           # onbekend: eerste lamp, zoals voorheen
+    assert seen == ["192.0.2.2", "192.0.2.1"]

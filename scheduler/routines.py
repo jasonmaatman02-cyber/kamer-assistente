@@ -10,10 +10,28 @@ from sound_system.radio import RadioPlayer
 from devices.Lights import SlimmeLamp, describe_lamp_error
 
 
+def _say_generated(prompt: str, fallback: str) -> None:
+    """Laat het model een groet bedenken en spreek die uit. Faalt het model (Ollama uit, geen
+    internet), dan spreekt de routine een vaste groet uit i.p.v. de foutmelding
+    (``vraag_aan_gpt`` geeft "Sorry, ik kan nu geen antwoord geven: HTTPConnectionPool(...)"
+    terug, en dat werd om 07:00 als wekker hardop voorgelezen) en meldt de stap alsnog als
+    mislukt (de exceptie gaat door naar ``_step``)."""
+    from ai import llm
+
+    try:
+        text = (llm.complete(prompt) or "").strip()
+    except Exception:
+        speak(fallback)
+        raise
+    speak(text or fallback)
+
+
 def _all_lamps():
     creds = (config.secret("TAPO_USER"), config.secret("TAPO_PASSWORD"))
-    for entry in config.get("devices.lamps", []):
-        yield SlimmeLamp(*creds, entry["ip"])
+    for entry in config.get("devices.lamps", []) or []:
+        ip = entry.get("ip") if isinstance(entry, dict) else None
+        if ip:      # een lamp zonder ip (of een kapotte entry) mag de hele routine niet laten crashen
+            yield SlimmeLamp(*creds, ip)
 
 
 def _for_each_lamp(coro_name: str, failures: list | None = None):
@@ -44,14 +62,13 @@ def _step(what: str, fn, failures: list | None = None) -> None:
 
 def morning_routine() -> list[str]:
     """Voert de ochtend-routine uit; geeft de lijst mislukte stappen terug (leeg = alles gelukt)."""
-    from logic.ask_gpt import vraag_aan_gpt
-
     log("ROUTINE", "Starting morning routine")
     failures: list[str] = []
 
-    _step("Greeting", lambda: speak(vraag_aan_gpt(
-        "Bedenk een kort, grappig zinnetje om te zeggen bij het wakker worden. Max 3 zinnen."
-    )), failures)
+    _step("Greeting", lambda: _say_generated(
+        "Bedenk een kort, grappig zinnetje om te zeggen bij het wakker worden. Max 3 zinnen.",
+        "Goedemorgen!",
+    ), failures)
 
     if config.get("features.radio", True):
         _step("Radio", lambda: RadioPlayer().play("radio538"), failures)
@@ -61,7 +78,7 @@ def morning_routine() -> list[str]:
         if notes:
             speak("Hier zijn je notities voor vandaag.")
             for note in notes:
-                speak(f"{note['timestamp']}: {note['note']}")
+                speak(f"{note.get('timestamp', '')}: {note.get('note', '')}".strip(": "))
         else:
             speak("Je hebt geen notities voor vandaag.")
 
@@ -77,9 +94,10 @@ def bedtime_routine() -> list[str]:
     log("ROUTINE", "Starting bedtime routine")
     failures: list[str] = []
 
-    _step("Greeting", lambda: speak(vraag_aan_gpt(
-        "Bedenk een kort, grappig zinnetje om welterusten te wensen bij het slapengaan."
-    )), failures)
+    _step("Greeting", lambda: _say_generated(
+        "Bedenk een kort, grappig zinnetje om welterusten te wensen bij het slapengaan.",
+        "Welterusten!",
+    ), failures)
 
     _for_each_lamp("uit", failures)
 

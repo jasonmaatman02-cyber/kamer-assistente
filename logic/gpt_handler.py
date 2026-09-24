@@ -54,14 +54,16 @@ def _get(name: str):
 def _lamp(location: str = "kamer"):
     from devices.Lights import SlimmeLamp
 
-    lamps = config.get("devices.lamps", [])
+    lamps = [e for e in (config.get("devices.lamps", []) or []) if isinstance(e, dict)]
     ip = None
     for entry in lamps:
-        if location.lower() in entry.get("name", "").lower():
+        if str(location or "").lower() in str(entry.get("name", "")).lower():
             ip = entry.get("ip")
             break
-    if ip is None and lamps:
-        ip = lamps[0]["ip"]
+    if not ip and lamps:
+        ip = lamps[0].get("ip")
+    if not ip:
+        raise RuntimeError("Geen lamp geconfigureerd -- voeg er een toe bij Settings > Lampen")
     lamp = SlimmeLamp(config.secret("TAPO_USER"), config.secret("TAPO_PASSWORD"), ip)
     asyncio.run(lamp.connect())
     return lamp
@@ -422,6 +424,27 @@ def _begin_turn(s):
     return release, None
 
 
+def friendly_ai_error(exc: BaseException) -> str:
+    """Leesbare melding voor een AI-fout. De ruwe tekst (bv. ``HTTPConnectionPool(host=
+    'localhost', port=11434): Max retries exceeded with url: /api/chat ...``) kwam
+    rechtstreeks in de chat en werd door de spraakassistent HARDOP voorgelezen; het log
+    houdt de volledige fout."""
+    msg = str(exc).lower()
+    if isinstance(exc, (ConnectionError, TimeoutError)) or any(k in msg for k in (
+            "connection refused", "connecterror", "max retries", "connection error", "failed to connect",
+            "name or service not known", "network is unreachable", "nameresolution")):
+        if "timed out" in msg or "timeout" in msg or isinstance(exc, TimeoutError):
+            return "De AI reageert te traag; probeer het zo nog eens."
+        return "De AI is nu niet bereikbaar (draait Ollama, of is er internet?)."
+    if "timed out" in msg or "timeout" in msg:
+        return "De AI reageert te traag; probeer het zo nog eens."
+    if "api key" in msg or "incorrect api" in msg or "authentication" in msg or "401" in msg:
+        return "De AI-sleutel (OpenAI) ontbreekt of is ongeldig -- controleer Settings > Inloggegevens."
+    if "not found" in msg and "model" in msg:
+        return f"Het AI-model '{config.get('ai.ollama_model')}' is niet geinstalleerd (ollama pull)."
+    return "Er ging iets mis bij de AI; de details staan in het logboek."
+
+
 def _dispatch(call) -> str:
     """Eén tool draaien; een fout wordt een nette string i.p.v. een traceback."""
     name = call.get("name", "?")
@@ -491,7 +514,7 @@ def verwerk_input(text: str, session: str = "voice") -> str:
             return answer
         except Exception as exc:  # noqa: BLE001
             log("ERROR", f"Fout bij verwerken input: {exc}")
-            return f"Fout bij verwerken input: {exc}"
+            return f"Fout bij verwerken input: {friendly_ai_error(exc)}"
     finally:
         release()
 
@@ -542,7 +565,7 @@ def verwerk_input_stream(text: str, session: str = "voice"):
                     yield answer
         except Exception as exc:  # noqa: BLE001
             log("ERROR", f"Fout bij streamen: {exc}")
-            yield f"\n[fout: {exc}]"
+            yield f"\n[fout: {friendly_ai_error(exc)}]"
             return
         if answer:
             hist.append({"role": "assistant", "content": answer})

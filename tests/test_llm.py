@@ -2,6 +2,7 @@
 hikje, Ollama herstart tijdens het antwoord), mag dat niet leiden tot een
 compleet TWEEDE, losstaand antwoord achter het al getoonde partiële
 antwoord (zie /api/chat_stream, dat elk stukje direct naar de browser stuurt)."""
+import pytest
 import ai.llm as llm
 
 
@@ -244,3 +245,35 @@ def test_a_running_session_is_never_evicted():
         assert "bezig" in gh._sessions
     finally:
         busy["lock"].release()
+
+
+@pytest.mark.parametrize("exc,expected", [
+    (ConnectionError("HTTPConnectionPool(host='localhost', port=11434): Max retries exceeded with url: /api/chat"), "niet bereikbaar"),
+    (RuntimeError("[Errno 111] Connection refused"), "niet bereikbaar"),
+    (TimeoutError("timed out"), "te traag"),
+    (RuntimeError("Request timed out."), "te traag"),
+    (RuntimeError("Error code: 401 - Incorrect API key provided: sk-abc***xyz"), "sleutel"),
+    (RuntimeError("model 'qwen2.5:1.5b' not found (status code: 404)"), "niet geinstalleerd"),
+    (ValueError("iets onverwachts"), "logboek"),
+])
+def test_friendly_ai_error_hides_raw_details(exc, expected):
+    from logic.gpt_handler import friendly_ai_error
+
+    text = friendly_ai_error(exc)
+    assert expected in text
+    assert "HTTPConnectionPool" not in text and "sk-" not in text and "11434" not in text
+
+
+def test_chat_failure_message_is_friendly_for_voice_and_stream(monkeypatch):
+    from logic import gpt_handler as gh
+
+    def boom(*a, **k):
+        raise ConnectionError("HTTPConnectionPool(host='localhost', port=11434): Max retries exceeded")
+
+    monkeypatch.setattr(gh.llm, "chat", boom)
+    out = gh.verwerk_input("hoi", session="friendly")
+    assert out.startswith("Fout bij verwerken input") and "HTTPConnectionPool" not in out
+
+    monkeypatch.setattr(gh.llm, "chat_stream", boom)
+    text = "".join(gh.verwerk_input_stream("hoi", session="friendly2"))
+    assert "niet bereikbaar" in text and "HTTPConnectionPool" not in text

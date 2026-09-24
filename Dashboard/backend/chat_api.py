@@ -55,7 +55,9 @@ def chat_stream():
             for piece in verwerk_input_stream(text, session=sid):
                 yield f"data: {json.dumps({'t': piece})}\n\n"
         except Exception as exc:  # noqa: BLE001
-            yield f"data: {json.dumps({'t': f'[fout: {exc}]'})}\n\n"
+            from logic.gpt_handler import friendly_ai_error
+
+            yield f"data: {json.dumps({'t': f'[fout: {friendly_ai_error(exc)}]'})}\n\n"
         yield "data: {\"done\": true}\n\n"
 
     return Response(gen(), mimetype="text/event-stream",

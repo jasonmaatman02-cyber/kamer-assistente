@@ -26,7 +26,8 @@ requirements-dashboard.txt` voor de nieuwe `zeroconf`-dependency).
 - e4da17f begrensde groei, calendar-API auth, key-redactie (S2-16)
 - b22ae23 verse presence-frames + chaos-test (S2-17)
 - 6e34d24 settings-typecontrole (S2-18)
-- (volgende commit) lamp-adressering, Tapo-account-check (S2-19)
+- 70b0d3c lamp-adressering, Tapo-account-check (S2-19)
+- (volgende commit) voorgelezen/rauwe foutteksten (S2-20)
 
 ### Items
 
@@ -186,6 +187,12 @@ Langlopende stabiliteit: alles wat een client kan laten groeien moet een bovengr
 - **Regressiecheck stress**: alle vijf hang-scenario's (`tools/stress_dashboard.py` spotify/weer/agenda/ollama/radio) opnieuw: 0 canary-timeouts, worst-case 0,1 s. (Een eenmalige uitschieter van 33 s in een reeks viel samen met een pauze van de machine/sessie; herhaling schoon.)
 - **UI-kleurcontrole**: geen paars/violet/magenta (hex, rgb, hsl, kleurnamen) in `Dashboard/static` of de HTML-pagina's.
 - **Bestanden**: `Dashboard/backend/services.py`, `devices/Lights.py`, `tests/test_lights.py`, `tests/test_api_hardening.py`.
+
+#### S2-20 Foutteksten die hardop voorgelezen of rauw getoond werden
+- **Wekker leest een fout voor**: `morning_routine`/`bedtime_routine` deden `speak(vraag_aan_gpt(...))`; bij een uitgevallen Ollama/internet geeft `vraag_aan_gpt` de tekst "Sorry, ik kan nu geen antwoord geven: HTTPConnectionPool(host='localhost', port=11434): Max retries exceeded ..." terug en dat werd om 07:00 hardop voorgelezen (en telde niet als mislukte stap). Nu `_say_generated()`: bij een fout een vaste groet ("Goedemorgen!"/"Welterusten!") en de stap wordt alsnog als mislukt gemeld (zie S2-13). Een notitie zonder `timestamp` liet de notitie-stap crashen.
+- **Chat/spraak-fouten**: `verwerk_input`/de stream gaven `Fout bij verwerken input: <ruwe exceptie>` terug (in de chat, en door de spraakassistent voorgelezen; kan URL's/poorten/gedeeltelijke sleutels bevatten). Nu `friendly_ai_error()`: "De AI is nu niet bereikbaar (draait Ollama, of is er internet?)", "reageert te traag", "sleutel ontbreekt/ongeldig", "model niet geinstalleerd", anders een generieke melding; het log houdt de volledige fout. Zelfde voor de SSE-stream (`/api/chat_stream`).
+- **Lamp-tools zonder lampen**: `gpt_handler._lamp()` en `scheduler.routines._all_lamps()` gaven een `KeyError`/`TypeError` bij een lamp zonder `ip`; nu een duidelijke melding resp. overslaan.
+- **Bestanden**: `scheduler/routines.py`, `logic/gpt_handler.py`, `Dashboard/backend/chat_api.py`, tests (`test_routine_results.py`, `test_ai_tools.py`, `test_llm.py`).
 
 #### Statische analyse (uitgevoerd, geen verdere bevindingen)
 - ruff F: schoon na S2-2. bandit: 0 High, 1 Medium (`0.0.0.0` bind in `rundashboard.py`, bewust: LAN-dashboard achter optioneel wachtwoord), 21 Low (vaste-argv-subprocess, `try/except/pass`; beoordeeld, alleen tts-argv was echt).

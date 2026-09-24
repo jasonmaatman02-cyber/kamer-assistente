@@ -110,8 +110,8 @@ def test_morning_routine_returns_failed_steps(monkeypatch):
     import scheduler.routines as R
 
     monkeypatch.setattr(R, "speak", lambda text: None)
-    import logic.ask_gpt as ag
-    monkeypatch.setattr(ag, "vraag_aan_gpt", lambda p: "hoi")
+    from ai import llm
+    monkeypatch.setattr(llm, "complete", lambda p, **kw: "hoi")
 
     class BoomRadio:
         def play(self, name):
@@ -134,8 +134,8 @@ def test_bedtime_routine_reports_offline_lamps(monkeypatch):
     import scheduler.routines as R
 
     monkeypatch.setattr(R, "speak", lambda text: None)
-    import logic.ask_gpt as ag
-    monkeypatch.setattr(ag, "vraag_aan_gpt", lambda p: "welterusten")
+    from ai import llm
+    monkeypatch.setattr(llm, "complete", lambda p, **kw: "welterusten")
     import voice.Whisper as W
     monkeypatch.setattr(W, "mic_available", lambda: False)
 
@@ -193,3 +193,49 @@ def test_lamp_endpoint_error_is_readable_not_raw_rust_text(client, monkeypatch):
     assert r.get_json()["message"] == "Lamp 192.0.2.1 is niet bereikbaar (time-out)"
     r = client.get("/api/lamp/state?lamp=0")
     assert r.status_code == 503 and "niet bereikbaar" in r.get_json()["error"]
+
+
+def test_routine_lamp_iteration_skips_entries_without_ip():
+    import scheduler.routines as R
+
+    config.set("devices.lamps", [{"name": "Leeg"}, {"name": "A", "ip": "192.0.2.1"}, {"name": "B", "ip": ""}])
+    assert [l.ip for l in R._all_lamps()] == ["192.0.2.1"]
+
+
+def test_greeting_falls_back_to_a_fixed_line_instead_of_speaking_the_llm_error(monkeypatch):
+    """'Sorry, ik kan nu geen antwoord geven: HTTPConnectionPool(...)' werd om 07:00 hardop voorgelezen."""
+    import scheduler.routines as R
+    from ai import llm
+
+    spoken = []
+    monkeypatch.setattr(R, "speak", spoken.append)
+
+    def down(prompt, **kw):
+        raise ConnectionError("HTTPConnectionPool(host='localhost', port=11434): Max retries exceeded")
+
+    monkeypatch.setattr(llm, "complete", down)
+
+    class OkRadio:
+        def play(self, name):
+            return "ok"
+
+    monkeypatch.setattr(R, "RadioPlayer", OkRadio)
+    config.set("features.radio", True)
+    failures = R.morning_routine()
+
+    assert spoken[0] == "Goedemorgen!"
+    assert not any("HTTPConnectionPool" in t or "Sorry" in t for t in spoken)
+    assert len(failures) == 1 and failures[0].startswith("Greeting:")      # de mislukking wordt wel gemeld
+
+
+def test_morning_notes_survive_a_note_without_timestamp(monkeypatch):
+    import scheduler.routines as R
+    from ai import llm
+
+    spoken = []
+    monkeypatch.setattr(R, "speak", spoken.append)
+    monkeypatch.setattr(llm, "complete", lambda p, **kw: "hoi")
+    monkeypatch.setattr(R, "get_notes", lambda cat: [{"note": "melk kopen"}])
+    config.set("features.radio", False)
+    assert R.morning_routine() == []
+    assert "melk kopen" in spoken
