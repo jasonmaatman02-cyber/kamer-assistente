@@ -1,4 +1,5 @@
 import asyncio
+import threading
 
 import config
 from scheduler.alarm_manager import set_alarm
@@ -10,20 +11,37 @@ from sound_system.radio import RadioPlayer
 from devices.Lights import SlimmeLamp, describe_lamp_error
 
 
+_GREETING_WAIT_S = 45.0
+
+
 def _say_generated(prompt: str, fallback: str) -> None:
-    """Laat het model een groet bedenken en spreek die uit. Faalt het model (Ollama uit, geen
-    internet), dan spreekt de routine een vaste groet uit i.p.v. de foutmelding
-    (``vraag_aan_gpt`` geeft "Sorry, ik kan nu geen antwoord geven: HTTPConnectionPool(...)"
-    terug, en dat werd om 07:00 als wekker hardop voorgelezen) en meldt de stap alsnog als
-    mislukt (de exceptie gaat door naar ``_step``)."""
+    """Laat het model een groet bedenken en spreek die uit -- maar wacht er hooguit
+    ``_GREETING_WAIT_S`` op. Faalt of hangt het model (Ollama uit, koude start, geen internet), dan
+    spreekt de routine een vaste groet uit i.p.v. de foutmelding en gaat het door met de rest
+    (radio!): een hangende Ollama hield de wekker tot de LLM-timeout (330 s) vast voordat de radio
+    aanging. (``vraag_aan_gpt`` gaf bovendien "Sorry, ik kan nu geen antwoord geven:
+    HTTPConnectionPool(...)" terug, en dat werd om 07:00 hardop voorgelezen.) De mislukking wordt
+    door ``_step`` als mislukte stap gemeld; een te late LLM-aanroep loopt op de achtergrond af."""
     from ai import llm
 
-    try:
-        text = (llm.complete(prompt) or "").strip()
-    except Exception:
+    result: dict = {}
+
+    def work():
+        try:
+            result["text"] = llm.complete(prompt)
+        except Exception as exc:  # noqa: BLE001
+            result["exc"] = exc
+
+    worker = threading.Thread(target=work, daemon=True, name="routine-greeting")
+    worker.start()
+    worker.join(_GREETING_WAIT_S)
+    if worker.is_alive():
         speak(fallback)
-        raise
-    speak(text or fallback)
+        raise TimeoutError(f"het model antwoordde niet binnen {int(_GREETING_WAIT_S)} s")
+    if "exc" in result:
+        speak(fallback)
+        raise result["exc"]
+    speak((result.get("text") or "").strip() or fallback)
 
 
 def _all_lamps():

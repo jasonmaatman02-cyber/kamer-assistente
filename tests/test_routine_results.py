@@ -239,3 +239,48 @@ def test_morning_notes_survive_a_note_without_timestamp(monkeypatch):
     config.set("features.radio", False)
     assert R.morning_routine() == []
     assert "melk kopen" in spoken
+
+
+def test_a_hanging_llm_does_not_delay_the_rest_of_the_morning_routine(monkeypatch):
+    """Ollama accepteert de verbinding maar antwoordt niet (koude start / vastgelopen): de wekker moest
+    tot de LLM-timeout (330 s) wachten voordat de radio aanging."""
+    import threading
+    import time
+
+    import scheduler.routines as R
+    from ai import llm
+
+    spoken = []
+    monkeypatch.setattr(R, "speak", spoken.append)
+    release = threading.Event()
+    monkeypatch.setattr(llm, "complete", lambda p, **kw: release.wait(30) or "te laat")
+    monkeypatch.setattr(R, "_GREETING_WAIT_S", 0.3)
+    order = []
+
+    class Radio:
+        def play(self, name):
+            order.append("radio")
+            return "ok"
+
+    monkeypatch.setattr(R, "RadioPlayer", Radio)
+    config.set("features.radio", True)
+    t0 = time.monotonic()
+    failures = R.morning_routine()
+    took = time.monotonic() - t0
+    release.set()
+
+    assert took < 5, f"routine wachtte {took:.1f}s op het model"
+    assert spoken[0] == "Goedemorgen!" and order == ["radio"]
+    assert len(failures) == 1 and failures[0].startswith("Greeting:") and "antwoordde niet" in failures[0]
+    assert "te laat" not in spoken            # het late antwoord wordt niet ineens alsnog uitgesproken
+
+
+def test_a_quick_llm_answer_is_spoken_as_before(monkeypatch):
+    import scheduler.routines as R
+    from ai import llm
+
+    spoken = []
+    monkeypatch.setattr(R, "speak", spoken.append)
+    monkeypatch.setattr(llm, "complete", lambda p, **kw: "  Goedemorgen, slaapkop!  ")
+    R._say_generated("prompt", "vast")
+    assert spoken == ["Goedemorgen, slaapkop!"]
