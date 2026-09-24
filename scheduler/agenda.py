@@ -92,6 +92,15 @@ def _google_event_to_simple(item: dict) -> _SimpleEvent:
     )
 
 
+def _restrict_token_file(path) -> None:
+    """0600 op het Google-tokenbestand (refresh-token). De atomische tmp+replace-
+    schrijfactie gaf het anders de default umask-rechten (0644) terug."""
+    try:
+        os.chmod(path, 0o600)
+    except OSError:
+        pass
+
+
 def _rfc3339_day_start(d) -> str:
     return datetime(d.year, d.month, d.day, tzinfo=timezone.utc).isoformat()
 
@@ -225,6 +234,7 @@ class GoogleCalendarAccount:
             # config/settings.py::_persist().
             tmp = token_path.with_suffix(".json.tmp")
             tmp.write_text(creds.to_json(), encoding="utf-8")
+            _restrict_token_file(tmp)   # bevat de refresh-token: alleen de eigenaar
             os.replace(tmp, token_path)
         return creds
 

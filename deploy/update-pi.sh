@@ -5,6 +5,7 @@ set -euo pipefail
 cd "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 git fetch --quiet origin
+PREV="$(git rev-parse --short HEAD)"
 
 # ---- lokale wijzigingen? even opzij zetten zodat de pull kan slagen ----
 STASHED=0
@@ -56,6 +57,26 @@ if systemctl is-enabled kamer-dashboard.service >/dev/null 2>&1 \
   sudo systemctl restart kamer-dashboard
   sleep 1
   sudo systemctl --no-pager --lines=6 status kamer-dashboard || true
+
+  # Health-check: liever nu een duidelijke fout dan een stil kapot dashboard op
+  # een headless Pi (bv. na een mislukte dependency of een syntaxfout).
+  # /api/config heeft geen externe afhankelijkheden, dus antwoordt snel.
+  echo "==> wachten tot het dashboard antwoordt (max 40s)"
+  ok=0
+  for _ in $(seq 1 40); do
+    if curl -fsS --max-time 2 http://127.0.0.1:5000/api/config >/dev/null 2>&1; then ok=1; break; fi
+    sleep 1
+  done
+  if [ "$ok" = 1 ]; then
+    echo "==> dashboard OK (nu op $(git rev-parse --short HEAD), was $PREV)"
+  else
+    echo
+    echo "!!  Het dashboard antwoordt niet na de update. Laatste logregels:"
+    journalctl -u kamer-dashboard -n 25 --no-pager || true
+    echo "!!  Terugdraaien naar de vorige versie ($PREV):"
+    echo "!!      git reset --hard $PREV && sudo systemctl restart kamer-dashboard"
+    exit 1
+  fi
 else
   echo "!!  Geen systemd-service gevonden."
   echo "!!  Aanrader: 'bash deploy/setup-pi.sh' (dan herstart 'ie voortaan vanzelf)."

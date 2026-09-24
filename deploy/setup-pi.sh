@@ -6,6 +6,11 @@
 #
 set -euo pipefail
 
+# true als de systemd-unit bestaat. 'systemctl list-unit-files <unit>' zelf geeft
+# niet op elke systemd-versie een betrouwbare exit-status; --no-legend maakt de
+# uitvoer leeg als er niks matcht, en dat is overal hetzelfde.
+unit_exists() { [ -n "$(systemctl list-unit-files "$1" --no-legend 2>/dev/null)" ]; }
+
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SERVICE_USER="${SUDO_USER:-$(id -un)}"
 PY_MODEL="${OLLAMA_MODEL:-qwen2.5:1.5b}"
@@ -34,7 +39,7 @@ sudo apt-get install -y --no-install-recommends \
 # icoon), verschijnt 'ie vanzelf in het bestaande apparaatlijstje van het
 # dashboard (/api/devices, Media-pagina) -- die bestuurt elk Spotify Connect-
 # apparaat al generiek, dus daar hoeft niets voor bij te veranderen.
-if ! command -v raspotify >/dev/null 2>&1 && ! systemctl list-unit-files raspotify.service >/dev/null 2>&1; then
+if ! command -v raspotify >/dev/null 2>&1 && ! unit_exists raspotify.service; then
   echo "==> raspotify installeren (Spotify Connect voor de Pi zelf)"
   curl -sL https://dtcooper.github.io/raspotify/install.sh | sh
 else
@@ -121,7 +126,9 @@ fi
 # betaalt bijna elk "eerste bericht na een tijdje" de volledige herlaad- +
 # ongecachte-prompt-kosten opnieuw (live gemeten: ~4 minuten op een Pi 4B
 # met qwen2.5:1.5b), wat in de praktijk precies de AI-timeouts veroorzaakte.
-if systemctl list-unit-files ollama.service >/dev/null 2>&1; then
+if command -v ollama >/dev/null 2>&1 && unit_exists ollama.service; then
+  # (zonder deze guard brak 'systemctl restart ollama' -- bij niet-geinstalleerd
+  # Ollama -- de hele setup af door 'set -e', vóór de dashboard-service.)
   echo "==> ollama: model warm houden (OLLAMA_KEEP_ALIVE=24h, i.p.v. de 5 min. default)"
   sudo mkdir -p /etc/systemd/system/ollama.service.d
   sudo tee /etc/systemd/system/ollama.service.d/override.conf >/dev/null <<'EOF'

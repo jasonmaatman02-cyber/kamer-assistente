@@ -134,6 +134,10 @@ def google_calendar_token():
     # Atomisch schrijven -- zelfde reden als scheduler/agenda.py::_credentials()
     tmp = GOOGLE_TOKEN_FILE.with_suffix(".json.tmp")
     tmp.write_text(flow.credentials.to_json(), encoding="utf-8")
+    try:
+        os.chmod(tmp, 0o600)   # refresh-token: alleen de eigenaar (geen-op op Windows)
+    except OSError:
+        pass
     os.replace(tmp, GOOGLE_TOKEN_FILE)
     S.reset_services()
     return jsonify({"ok": True})

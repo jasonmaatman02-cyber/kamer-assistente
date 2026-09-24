@@ -312,6 +312,15 @@ _PUBLIC_SECRETS = {
 }
 
 
+def _restrict(path: Path) -> None:
+    """Alleen de eigenaar mag dit lezen (0600): .env bevat wachtwoorden en API-keys.
+    Op Windows (dev-machine) is chmod grotendeels een no-op; geen fout."""
+    try:
+        os.chmod(path, 0o600)
+    except OSError:
+        pass
+
+
 def secret(name: str, default: str = "") -> str:
     """Read a secret from the environment (``.env``)."""
     return os.environ.get(name, default)
@@ -329,6 +338,7 @@ def set_secret(name: str, value: str) -> None:
                 # quote_mode="always": zet 'value' tussen quotes zodat een
                 # wachtwoord met #, $, spaties enz. niet corrupt terugleest.
                 set_key(str(ENV_FILE), name, value, quote_mode="always")
+                _restrict(ENV_FILE)
                 os.environ[name] = value
             else:
                 from dotenv import unset_key

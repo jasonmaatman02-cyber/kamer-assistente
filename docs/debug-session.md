@@ -71,6 +71,13 @@ Reproductie lokaal met een gescripte nep-`cv2` (`tests/test_camera.py`, 12 tests
 - **Niet gefixt (cosmetisch)**: `chat.js` reset naar een hardcoded "Hey Jason!"-begroeting; `config.DEFAULTS` bevat hardcoded voorbeeld-lamp-IP's (192.168.2.15 / 192.168.3.19).
 - **Bestanden**: `Dashboard/static/styles/main.css`, `services.py`, `tests/test_calendar_api.py`, `tests/test_swr.py`, `tools/dev_server.py`, `tools/*.py` (scrub).
 
+#### S2-8 Deploy-scripts en bestandsrechten
+- `shellcheck` op `setup-pi.sh`/`update-pi.sh`: schoon (nu ook als test in `tests/test_deploy.py`, skip als shellcheck ontbreekt).
+- **Bug (setup)**: de Ollama-drop-in werd geactiveerd op `systemctl list-unit-files ollama.service` -- exit-status is niet op elke systemd-versie betrouwbaar; bij niet-geinstalleerde Ollama zou `systemctl restart ollama` de hele setup afbreken (`set -e`) vóór de dashboard-service. Nu `unit_exists()` (`--no-legend`, leeg = bestaat niet) + `command -v ollama`-guard; getest met een gestubde `systemctl`.
+- **Verbetering (update)**: `update-pi.sh` herstartte maar controleerde niet of het dashboard terugkwam. Nu health-check (`/api/config`, max 40s) met logregels + exacte rollback-opdracht (`git reset --hard <vorige>`) en exit 1. Bewust geen automatische rollback (zou lokale wijzigingen kunnen wissen).
+- **Rechten (regressie van S1-13/S1-16)**: de atomische tmp+replace-writes gaven `google_calendar_token.json` (refresh-token!) de default 0644 terug; `config.set_secret` schreef `.env` zonder 0600. Nu `chmod 0600` op `.env` en beide token-schrijfplekken (no-op op Windows).
+- **Niet uitgevoerd / advies**: extra systemd-hardening (`NoNewPrivileges`, `PrivateTmp`, `ProtectSystem`) -- risico op kapotte toegang tot /dev/video0/ALSA, niet testbaar zonder Pi; `MemoryMax=1200M` en `Restart=always`/`RestartSec=3` beoordeeld: prima (dashboard ~230MB RSS).
+
 #### Statische analyse (uitgevoerd, geen verdere bevindingen)
 - ruff F: schoon na S2-2. bandit: 0 High, 1 Medium (`0.0.0.0` bind in `rundashboard.py`, bewust: LAN-dashboard achter optioneel wachtwoord), 21 Low (vaste-argv-subprocess, `try/except/pass`; beoordeeld, alleen tts-argv was echt).
 - vulture: `devices/Lights.py:65` ongebruikte parameters `stappen`/`vertraging` (`zet_helderheid`) -- API-compat, laten staan.
