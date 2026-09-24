@@ -146,7 +146,13 @@ def _synth_openai(text: str, out_path: str) -> str:
 def _play(path: str) -> None:
     global _mixer_ready
     try:
-        import pygame
+        try:
+            import pygame
+        except ImportError:
+            # Dashboard-only installatie (de Pi): pygame is er bewust niet; gewoon de systeemspeler,
+            # zonder bij elke uitspraak een foutmelding naar het journal te schrijven.
+            _play_system(path)
+            return
 
         if _mixer_ready is None:
             if os.name == "nt":
@@ -173,13 +179,28 @@ def _play(path: str) -> None:
         _play_system(path)
 
 
+def _system_play_timeout(path: str) -> float:
+    """Timeout voor één systeemspeler-aanroep: de LENGTE van de audio + marge. Vast op 20 s
+    kapte alles wat langer duurde af (en liet de volgende speler het daarna opnieuw van voren af
+    afspelen); op de Pi, waar pygame niet is geinstalleerd, is dit het ENIGE afspeelpad."""
+    try:
+        import wave
+
+        with wave.open(path, "rb") as w:
+            seconds = w.getnframes() / float(w.getframerate() or 1)
+        return min(float(_PLAY_MAX_S), max(20.0, seconds + 10.0))
+    except Exception:  # noqa: BLE001 - geen wav (bv. mp3 van de OpenAI-backend) of onleesbaar
+        return 20.0 if not str(path).lower().endswith(".mp3") else 120.0
+
+
 def _play_system(path: str) -> None:
+    timeout = _system_play_timeout(path)
     for player in (["aplay", path], ["ffplay", "-nodisp", "-autoexit", path], ["afplay", path]):
         try:
             # timeout: een audio-device dat bezet is (bv. raspotify dat tegelijk
             # ALSA gebruikt) mag deze speler nooit voorgoed laten hangen -- dan
             # gewoon door naar de volgende speler in de lijst.
-            subprocess.run(player, check=True, capture_output=True, timeout=20)
+            subprocess.run(player, check=True, capture_output=True, timeout=timeout)
             return
         except Exception:  # noqa: BLE001
             continue
@@ -188,6 +209,21 @@ def _play_system(path: str) -> None:
 # --------------------------------------------------------------------------- #
 # Public
 # --------------------------------------------------------------------------- #
+_printed: dict[str, float] = {}
+_PRINT_EVERY_S = 600.0
+
+
+def _print_dedup(msg: str) -> None:
+    """Dezelfde foutmelding (bv. 'No module named piper' op een Pi zonder piper-tts, bij elke
+    uitspraak) hooguit 1x per 10 min in het journal."""
+    now = time.monotonic()
+    if msg not in _printed or now - _printed[msg] >= _PRINT_EVERY_S:
+        if len(_printed) > 50:
+            _printed.clear()
+        _printed[msg] = now
+        print(msg)
+
+
 def synthesize(text: str, out_path: str | None = None) -> str | None:
     backend = (config.get("tts.backend") or "piper").lower()
     if not text or not text.strip() or backend == "none":
@@ -204,7 +240,7 @@ def synthesize(text: str, out_path: str | None = None) -> str | None:
             return _synth_espeak(text, out_path)
         return _synth_piper(text, out_path)
     except Exception as exc:  # noqa: BLE001
-        print(f"[tts] backend '{backend}' faalde: {exc}")
+        _print_dedup(f"[tts] backend '{backend}' faalde: {exc}")
         if backend != "espeak":
             try:
                 return _synth_espeak(text, out_path)

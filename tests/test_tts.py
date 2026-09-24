@@ -221,3 +221,87 @@ def test_piper_voice_loads_only_once_under_concurrency(monkeypatch):
     for t in threads:
         t.join(timeout=5)
     assert loads["n"] == 1, f"stem {loads['n']}x geladen (elk ~60MB op een Pi)"
+
+
+def _write_wav(path, seconds, rate=8000):
+    import wave
+
+    with wave.open(str(path), "wb") as w:
+        w.setnchannels(1)
+        w.setsampwidth(2)
+        w.setframerate(rate)
+        w.writeframes(b"\x00\x00" * int(rate * seconds))
+
+
+def test_system_player_timeout_follows_the_audio_length(tmp_path):
+    """Vast 20 s kapte elke langere spraak af (en ffplay speelde 'm daarna opnieuw)."""
+    import ai.tts as tts
+
+    short, long_ = tmp_path / "kort.wav", tmp_path / "lang.wav"
+    _write_wav(short, 2)
+    _write_wav(long_, 55)
+    assert tts._system_play_timeout(str(short)) == 20.0          # ondergrens
+    assert tts._system_play_timeout(str(long_)) == 65.0          # 55 s + 10 s marge
+    assert tts._system_play_timeout(str(tmp_path / "bestaat-niet.wav")) == 20.0
+    assert tts._system_play_timeout(str(tmp_path / "antwoord.mp3")) == 120.0
+
+
+def test_play_system_uses_the_length_based_timeout(monkeypatch, tmp_path):
+    import ai.tts as tts
+
+    wav = tmp_path / "lang.wav"
+    _write_wav(wav, 50)
+    seen = []
+
+    def fake_run(cmd, **kwargs):
+        seen.append(kwargs.get("timeout"))
+        return subprocess.CompletedProcess(cmd, 0)
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    tts._play_system(str(wav))
+    assert seen == [60.0]
+
+
+def test_the_audio_length_timeout_is_capped(monkeypatch, tmp_path):
+    import ai.tts as tts
+
+    wav = tmp_path / "enorm.wav"
+    _write_wav(wav, 400, rate=1000)
+    assert tts._system_play_timeout(str(wav)) == float(tts._PLAY_MAX_S)
+
+
+def test_missing_pygame_uses_the_system_player_quietly(monkeypatch, capsys):
+    """Op de Pi (dashboard-only) staat pygame er niet: elke uitspraak schreef 'afspelen mislukt'."""
+    import sys
+
+    import ai.tts as tts
+
+    monkeypatch.setitem(sys.modules, "pygame", None)          # import pygame -> ImportError
+    played = []
+    monkeypatch.setattr(tts, "_play_system", played.append)
+    tts._play("/tmp/x.wav")
+    assert played == ["/tmp/x.wav"]
+    assert "mislukt" not in capsys.readouterr().out
+
+
+def test_repeated_backend_failure_is_printed_once_not_per_utterance(monkeypatch, capsys):
+    import ai.tts as tts
+    import config
+
+    config.set("tts.backend", "piper")
+    monkeypatch.setattr(tts, "_printed", {})
+
+    def no_piper(text, out):
+        raise ModuleNotFoundError("No module named 'piper'")
+
+    def fake_espeak(text, out):
+        return out
+
+    monkeypatch.setattr(tts, "_synth_piper", no_piper)
+    monkeypatch.setattr(tts, "_synth_espeak", fake_espeak)
+    for _ in range(5):
+        path = tts.synthesize("hoi")
+        assert path and path.endswith(".wav")                     # de espeak-terugval werkt gewoon
+        import os
+        os.remove(path)
+    assert capsys.readouterr().out.count("faalde") == 1
