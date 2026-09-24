@@ -19,7 +19,7 @@ def wacht_op_wakeword(timeout: float | None = 30) -> bool:
     start = time.time()
     while timeout is None or (time.time() - start) < timeout:
         try:
-            text = stt.transcribe_array(_record(1.5), SAMPLERATE)
+            text = stt.transcribe_array(_record(1.5), SAMPLERATE, cloud_fallback=False)
             if text:
                 print(f"Herkend (kort): {text}")
                 if _is_wake(text):

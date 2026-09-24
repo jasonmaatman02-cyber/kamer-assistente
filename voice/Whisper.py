@@ -46,6 +46,9 @@ SAMPLERATE = 16000
 WAKE_DURATION = 2.0
 COMMAND_DURATION = 5.0
 PORCUPINE_LISTEN_TIMEOUT = 20.0
+_RECORD_SLACK_S = 5.0          # zoveel langer dan de opnameduur mag een opname hooguit duren
+_LOOP_ERROR_LOG_EVERY_S = 600.0
+_LOOP_ERROR_SLEEP_MAX_S = 30.0
 
 _wake_backend_warned = False
 
@@ -115,13 +118,59 @@ def mic_available() -> bool:
         return False
 
 
+def _wait_recording(seconds: float) -> None:
+    """Wacht tot de opname klaar is, maar hooguit ``seconds + _RECORD_SLACK_S``.
+    ``sd.wait()`` heeft geen timeout: een USB-mic die tijdens de opname verdwijnt
+    (of een PortAudio/ALSA-stream die blijft hangen) liet de hele luisterlus --
+    en bij de bedtijd-routine de routine-thread -- voor altijd vastzitten."""
+    deadline = time.monotonic() + seconds + _RECORD_SLACK_S
+    try:
+        stream = sd.get_stream()
+    except Exception:  # noqa: BLE001 - geen stream-object beschikbaar: val terug op sd.wait()
+        stream = None
+    while stream is not None and stream.active:
+        if time.monotonic() > deadline:
+            try:
+                sd.stop()
+            except Exception:  # noqa: BLE001
+                pass
+            raise NoMicError(f"opname hing (> {seconds + _RECORD_SLACK_S:.0f}s), microfoon weg?")
+        time.sleep(0.05)
+    sd.wait()      # geeft eventuele stream-fouten door (en is meteen klaar als hij al stopte)
+
+
+def _recover_audio() -> None:
+    """Na een mislukte opname: onthoud de samplerate niet meer en laat PortAudio
+    de apparaatlijst opnieuw inlezen. PortAudio leest die één keer bij het laden,
+    dus een USB-mic die na een losrukken weer wordt aangesloten blijft anders tot
+    een herstart van het proces 'niet gevonden' (zelfde soort probleem als de
+    USB-camera). Alleen aanroepen als er geen stream actief is."""
+    global _record_rate_cache
+    _record_rate_cache = None
+    if sd is None:
+        return
+    # Twee aparte stappen: faalt _terminate (al afgesloten na een eerdere, half
+    # geslaagde poging), dan MOET _initialize alsnog draaien -- anders blijft
+    # PortAudio voorgoed uit.
+    try:
+        sd._terminate()
+    except Exception:  # noqa: BLE001 - privé API; nooit de lus laten crashen
+        pass
+    try:
+        sd._initialize()
+    except Exception as exc:  # noqa: BLE001
+        print(f"[AUDIO] PortAudio herinitialiseren mislukt: {exc}")
+
+
 def _record(seconds: float):
     if sd is None or np is None:
         raise NoMicError("sounddevice/numpy niet geïnstalleerd")
     try:
         rate = _pick_record_rate()
         audio = sd.rec(int(rate * seconds), samplerate=rate, channels=1, dtype="float32")
-        sd.wait()
+        _wait_recording(seconds)
+    except NoMicError:
+        raise
     except Exception as exc:  # noqa: BLE001 - sounddevice/PortAudio errors
         raise NoMicError(str(exc)) from exc
     audio = np.squeeze(audio)
@@ -147,45 +196,85 @@ def _is_wake(text: str, threshold: float = 0.6) -> bool:
     return max((difflib.SequenceMatcher(None, t, w).ratio() for w in words), default=0) >= threshold
 
 
+_loop_errors = 0                       # opeenvolgende mislukte rondes
+_loop_last_logged: dict[str, float] = {}
+
+
+def _loop_ok() -> None:
+    global _loop_errors
+    _loop_errors = 0
+
+
+def _loop_error_sleep(base: float = 30.0) -> float:
+    """Pauze na een mislukte ronde: ``base``, dan verdubbelend tot maximaal 30s."""
+    return min(base * (2 ** min(_loop_errors - 1, 5)), _LOOP_ERROR_SLEEP_MAX_S) if _loop_errors else base
+
+
+def _log_dedup(level: str, msg: str) -> None:
+    """Dezelfde fout (bv. mic weg, model laadt niet) niet elke 2-30s opnieuw naar
+    het logbestand: eerst meteen, daarna hooguit 1x per 10 minuten."""
+    now = time.monotonic()
+    last = _loop_last_logged.get(msg)
+    if last is None or now - last >= _LOOP_ERROR_LOG_EVERY_S:
+        _loop_last_logged[msg] = now
+        if len(_loop_last_logged) > 50:
+            _loop_last_logged.clear()
+        log(level, msg)
+
+
+def _log_loop_error(kind: str, exc: Exception) -> None:
+    global _loop_errors
+    _loop_errors += 1
+    _log_dedup("Error", f"{kind}: {exc}")
+
+
 def whisperrr():
     if not config.get("features.voice_assistant", True):
         time.sleep(5)  # uitgezet via Settings — rustig blijven pollen
         return
     try:
-        if _use_porcupine():
-            try:
-                if not detect_wakeword_porcupine(timeout=PORCUPINE_LISTEN_TIMEOUT):
-                    return
-            except Exception as exc:  # noqa: BLE001 - val terug op whisper deze ronde
-                log("Error", f"Porcupine-fout, whisper-fallback: {exc}")
-                if not _is_wake(stt.transcribe_array(_record(WAKE_DURATION), SAMPLERATE)):
-                    return
-        else:
-            wake_text = stt.transcribe_array(_record(WAKE_DURATION), SAMPLERATE)
-            if wake_text:
-                print(f"Gehoord: {wake_text}")
-            if not _is_wake(wake_text):
-                return
-
-        print("Wake word herkend, neem opdracht op...")
-        speak("Zeg het eens.")
-        log("Input", "Wake word herkend")
-
-        command = stt.transcribe_array(_record(COMMAND_DURATION), SAMPLERATE)
-        if not command:
-            print("Kon opdracht niet verstaan.")
-            log("Error", "Kon opdracht niet transcriberen")
-            return
-
-        print("Jij zei:", command)
-        antwoord = verwerk_input(command)
-        if antwoord:
-            speak(antwoord)
+        _listen_once()
     except NoMicError as exc:
-        log("Error", f"Geen microfoon: {exc}")
-        print(f"Geen microfoon beschikbaar ({exc}) — 30s pauze.")
-        time.sleep(30)
+        _log_loop_error("Geen microfoon", exc)
+        print(f"Geen microfoon beschikbaar ({exc}) — pauze.")
+        _recover_audio()
+        time.sleep(_loop_error_sleep())
     except Exception as exc:  # noqa: BLE001
         print(f"Er ging iets mis: {exc}")
-        log("Error", f"Fout in wake-loop: {exc}")
-        time.sleep(2)
+        _log_loop_error("Fout in wake-loop", exc)
+        time.sleep(_loop_error_sleep(base=2.0))
+    else:
+        _loop_ok()      # ook een ronde zonder wake-woord telt als gezond
+
+
+def _listen_once():
+    """Eén luisterronde: wake-word, dan één opdracht. Gooit door bij fouten."""
+    if _use_porcupine():
+        try:
+            if not detect_wakeword_porcupine(timeout=PORCUPINE_LISTEN_TIMEOUT):
+                return
+        except Exception as exc:  # noqa: BLE001 - val terug op whisper deze ronde
+            _log_dedup("Error", f"Porcupine-fout, whisper-fallback: {exc}")
+            if not _is_wake(stt.transcribe_array(_record(WAKE_DURATION), SAMPLERATE, cloud_fallback=False)):
+                return
+    else:
+        wake_text = stt.transcribe_array(_record(WAKE_DURATION), SAMPLERATE, cloud_fallback=False)
+        if wake_text:
+            print(f"Gehoord: {wake_text}")
+        if not _is_wake(wake_text):
+            return
+
+    print("Wake word herkend, neem opdracht op...")
+    speak("Zeg het eens.")
+    log("Input", "Wake word herkend")
+
+    command = stt.transcribe_array(_record(COMMAND_DURATION), SAMPLERATE)
+    if not command:
+        print("Kon opdracht niet verstaan.")
+        log("Error", "Kon opdracht niet transcriberen")
+        return
+
+    print("Jij zei:", command)
+    antwoord = verwerk_input(command)
+    if antwoord:
+        speak(antwoord)

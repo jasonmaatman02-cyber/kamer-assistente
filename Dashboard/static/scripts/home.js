@@ -141,12 +141,15 @@ $("prev-btn").addEventListener("click", async () => { await jpost("/api/spotify_
 
 document.querySelectorAll(".actions button[data-routine]").forEach(btn => {
   btn.addEventListener("click", async () => {
+    if (btn.disabled) return;      // een routine duurt minuten (LLM, TTS, radio): geen dubbelklik
     const msg = $("qa-msg");
     msg.textContent = `${btn.textContent.trim()}…`;
+    btn.disabled = true;
     try {
       const r = await jpost("/api/routines/run", { id: btn.dataset.routine });
       msg.textContent = r.success ? "Klaar." : `Mislukt: ${r.error || "?"}`;
     } catch (e) { msg.textContent = "Mislukt."; }
+    btn.disabled = false;
     setTimeout(() => (msg.textContent = ""), 4000);
   });
 });

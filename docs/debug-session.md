@@ -12,6 +12,12 @@ requirements-dashboard.txt` voor de nieuwe `zeroconf`-dependency).
 
 ### Nog niet op de Pi gedeployed
 - 321c094 mDNS-discovery van de Pi in `/api/devices` (nieuwe dependency zeroconf)
+- 81f8415 / 2b66748 camera-backoff, presence-herstel, TTS-hardening, lamp-timeout (S2-1..S2-4)
+- 956db0f single-flight SWR-cache voor trage externe diensten (S2-5)
+- dafa087 begrensde AI-concurrency, eindige Ollama-timeout, OpenAI-key-herlaad (S2-6)
+- 84e3fcf UI-fixes (lamp-schakelaar, vriendelijke meldingen), dev-server (S2-7)
+- aded680 deploy-scripts + 0600-rechten (S2-8)
+- (volgende commit) wekker/routines + spraakpijplijn (S2-9, S2-10)
 
 ### Items
 
@@ -77,6 +83,26 @@ Reproductie lokaal met een gescripte nep-`cv2` (`tests/test_camera.py`, 12 tests
 - **Verbetering (update)**: `update-pi.sh` herstartte maar controleerde niet of het dashboard terugkwam. Nu health-check (`/api/config`, max 40s) met logregels + exacte rollback-opdracht (`git reset --hard <vorige>`) en exit 1. Bewust geen automatische rollback (zou lokale wijzigingen kunnen wissen).
 - **Rechten (regressie van S1-13/S1-16)**: de atomische tmp+replace-writes gaven `google_calendar_token.json` (refresh-token!) de default 0644 terug; `config.set_secret` schreef `.env` zonder 0600. Nu `chmod 0600` op `.env` en beide token-schrijfplekken (no-op op Windows).
 - **Niet uitgevoerd / advies**: extra systemd-hardening (`NoNewPrivileges`, `PrivateTmp`, `ProtectSystem`) -- risico op kapotte toegang tot /dev/video0/ALSA, niet testbaar zonder Pi; `MemoryMax=1200M` en `Restart=always`/`RestartSec=3` beoordeeld: prima (dashboard ~230MB RSS).
+
+#### S2-9 Wekker/routines: blokkerende set_alarm, gedeelde callback, her-armen, dubbele runs
+Reproductie: `tests/test_alarm.py` (10 tests; de blokkeer-test faalt tegen de oude code met "set_alarm blokkeert achter de lopende routine").
+- **Blokkade**: de wekker-callback (= een hele routine: LLM-groet tot 330s, TTS, radio) draait IN de wekker-thread; `set_alarm()` deed daar `join()` zonder timeout op, onder de scheduler-lock. Een POST/DELETE `/api/alarm` tijdens een lopende routine hing dus minuten en pinde een waitress-thread per klik (16 in totaal). Nu: elke wachter-thread heeft een eigen stop-event + eigen tijdstip, geen join op een afgegane thread, cancel joint buiten de lock met 0,5s-timeout en nooit op de eigen thread (`set_alarm` vanuit de callback gaf `RuntimeError: cannot join current thread`). Een afgelopen wachter wist alleen zijn eigen `alarm_time`.
+- **Gedeelde callback overschreven**: `scheduler.alarm_manager.set_alarm(tijd, callback)` (spraak-Q&A in de bedtijd-routine) zet `alarm.callback = morning_routine` op het GEDEELDE object; een daarna vanaf het dashboard gezette wekker draaide stilzwijgend die routine i.p.v. de gekozen (`alarm.routine`, bv. een eigen routine). `POST /api/alarm` zet de callback nu expliciet terug.
+- **Afgegane wekker werd bij elke herstart opnieuw ingepland**: de UI zegt na afgaan "Geen wekker gezet", maar `alarm.time` bleef in `settings.json` en de opstart-code her-armde 'm bij elke herstart (crash/reboot/update) -> de volgende ochtend ging de radio ongevraagd aan. Nieuwe sleutel `alarm.armed` (False na afgaan/wissen, True bij zetten); oude settings zonder sleutel tellen als armed (geen verlies van een openstaande wekker bij de eerste herstart na deploy). `alarm.time` blijft als voorinvulling van het tijdveld.
+- **Dubbele run**: `/api/routines/run` draait synchroon en zonder guard; dubbelklik/twee tabbladen/wekker-tijdens-handmatig gaf twee tegelijk lopende routines (dubbele TTS, dubbele radio, twee vastgezette threads). Nu per routine-id één tegelijk: tweede aanroep geeft 409 `routine 'x' is al bezig`; lock wordt ook na een exceptie vrijgegeven; andere routines blijven parallel mogelijk. Home-knoppen zijn nu ook disabled tijdens de run (routines.js deed dat al).
+- **Bestanden**: `scheduler/alarm.py`, `Dashboard/backend/routines_api.py`, `Dashboard/static/scripts/home.js`, `tests/test_alarm.py`.
+- **Resterend risico**: het AI-tool-pad (`start_morning_routine` in `logic/gpt_handler.py`) roept de routine direct aan en valt buiten de guard (een dubbele "start de ochtendroutine" in de chat kan nog twee runs geven; bewust niet gekoppeld om `logic/` niet van de Flask-laag te laten afhangen). Een via spraak gezette wekker wordt niet in `settings.json` bewaard (overleeft geen herstart). Wekker blijft één gedeeld slot.
+
+#### S2-10 Spraakpijplijn: hangende opname, cloud-upload van kamergeluid, log-spam, PortAudio-herstel
+Tests: `tests/test_voice.py` (14 tests). Niet uitvoerbaar zonder hardware: echte USB-mic-replug/PortAudio-gedrag (nagebootst met een nep-`sounddevice`).
+- **(kosten/privacy) Cloud-fallback op de wake-lus**: `stt.transcribe` valt bij een falend lokaal model door naar de OpenAI-API; de wake-lus transcribeert elke ~2s een 2s-stukje kamergeluid. Met een `OPENAI_API_KEY` (die de chat ook gebruikt) en een kapot lokaal model (model niet gecached + geen internet, OOM) ging dus 24/7 kamergeluid naar een betaalde cloud-API (~$0,006/min = ~$8,6/dag). Nu `cloud_fallback=False` voor alle wake-chunks (`whisperrr`, `wacht_op_wakeword`); alleen `stt.backend: openai` (bewuste keuze) of een expliciete opdracht (`cloud_fallback=True`, default) gebruikt de cloud nog.
+- **Request zonder key**: `_tr_openai` deed zonder key toch een POST met `Bearer ` (bewezen tegen de oude code: request geregistreerd met header `Bearer `) -> 401 per ronde. Nu `RuntimeError("OPENAI_API_KEY ontbreekt")` zonder netwerk.
+- **Modellen**: `_get_fw()`/`_tr_whisper` zonder lock (twee threads = twee modellen in RAM) en een niet-ladend model werd elke ~2s opnieuw geprobeerd. Nu lock + 60s-backoff per backend (fout blijft zichtbaar in `[stt]`-regels).
+- **Hangende opname**: `sd.wait()` heeft geen timeout; een verdwenen USB-mic kon de luisterlus (en de routine-thread van de bedtijd-routine in het dashboard) voor altijd laten hangen. Nu wachten tot `duur + 5s`, dan `sd.stop()` + `NoMicError`.
+- **Mic-herstel**: PortAudio leest de apparaatlijst één keer; een losgetrokken/opnieuw aangesloten mic bleef tot een procesherstart onvindbaar, en `_record_rate_cache` bleef van het oude apparaat. Na `NoMicError` nu cache wissen + `sd._terminate()`/`_initialize()` (aparte stappen, zodat `_initialize` ook draait als `_terminate` faalt; privé-API, alleen als er geen stream actief is).
+- **Log-spam**: elke mislukte ronde schreef een regel (mic weg: 30s -> 2880/dag; generieke fout 2s -> 43k/dag). Nu dezelfde melding 1x per 10 min (+ "ronde N op rij"), generieke fouten met verdubbelende pauze (2->30s), en een ronde zonder fout (ook "geen wake-woord gehoord") reset de teller. Porcupine-fallback-melding idem.
+- **Bestanden**: `ai/stt.py`, `voice/Whisper.py`, `voice/Whisper_short.py`, `tests/test_voice.py`.
+- **Resterend risico**: `sd._terminate()` is privé-API van sounddevice; getest tegen een nep-module, niet tegen een echte hot-plug. De voice-lus draait niet in de systemd-service (alleen `main.py assistant/all` en de bedtijd-routine).
 
 #### Statische analyse (uitgevoerd, geen verdere bevindingen)
 - ruff F: schoon na S2-2. bandit: 0 High, 1 Medium (`0.0.0.0` bind in `rundashboard.py`, bewust: LAN-dashboard achter optioneel wachtwoord), 21 Low (vaste-argv-subprocess, `try/except/pass`; beoordeeld, alleen tts-argv was echt).

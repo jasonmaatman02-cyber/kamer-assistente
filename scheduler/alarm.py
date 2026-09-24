@@ -43,32 +43,40 @@ class AlarmScheduler:
         print(f"Wekker ingesteld op {alarm_dt.strftime('%H:%M')}")
 
         with self._lock:
+            # Elke wachter-thread krijgt zijn EIGEN stop-event en zijn eigen
+            # tijdstip. De vorige wachter stoppen we alleen (event zetten) en
+            # joinen we bewust NIET: is die al afgegaan, dan draait zijn
+            # callback (= een hele routine: LLM-groet, TTS, radio -- minuten)
+            # in die thread, en een join() zonder timeout onder deze lock
+            # liet elke POST /api/alarm en elke cancel zo lang hangen.
+            self._stop_event.set()
+            stop = self._stop_event = threading.Event()
             self.alarm_time = alarm_dt
-            if self.alarm_thread and self.alarm_thread.is_alive():
-                self._stop_event.set()
-                self.alarm_thread.join()
-
-            self._stop_event.clear()
-            self.alarm_thread = threading.Thread(target=self._wait_for_alarm, daemon=True)
+            self.alarm_thread = threading.Thread(
+                target=self._wait_for_alarm, args=(stop, alarm_dt), daemon=True
+            )
             self.alarm_thread.start()
         return alarm_dt
 
-    def _wait_for_alarm(self):
+    def _wait_for_alarm(self, stop: threading.Event, alarm_dt: datetime.datetime):
         # Efficiënt wachten: slaap tot de wekkertijd (in blokken van max 30s zodat
         # een systeemklok-sprong of lange slaapstand wordt opgevangen), en word
-        # meteen wakker bij cancel.
-        while not self._stop_event.is_set():
-            remaining = (self.alarm_time - datetime.datetime.now()).total_seconds()
+        # meteen wakker bij cancel/vervanging.
+        while not stop.is_set():
+            remaining = (alarm_dt - datetime.datetime.now()).total_seconds()
             if remaining <= 0:
                 break
-            if self._stop_event.wait(min(remaining, 30)):
-                return  # geannuleerd
-        if self._stop_event.is_set():
-            return
+            if stop.wait(min(remaining, 30)):
+                return  # geannuleerd of vervangen
+        with self._lock:
+            if stop.is_set():
+                return  # cancel/set_alarm kwam er net tussen
+            # Alleen 'onze' wekker wissen; een nieuwe wekker blijft staan.
+            if self.alarm_time == alarm_dt:
+                self.alarm_time = None
+            cb = self.callback
         print("Wekker gaat af!")
         log("Alarm", "Wekker gaat af")
-        cb = self.callback
-        self.alarm_time = None
         if callable(cb):
             try:
                 cb()
@@ -78,9 +86,12 @@ class AlarmScheduler:
     def cancel_alarm(self):
         with self._lock:
             self._stop_event.set()
-            if self.alarm_thread and self.alarm_thread.is_alive():
-                self.alarm_thread.join(timeout=2)
+            thread = self.alarm_thread
             self.alarm_time = None
+        # Buiten de lock joinen: de wachter pakt die lock zelf ook (zie
+        # _wait_for_alarm), en een routine-callback mag nooit op zichzelf wachten.
+        if thread and thread.is_alive() and thread is not threading.current_thread():
+            thread.join(timeout=0.5)   # een wachtende thread stopt direct; een afgegane draait zijn routine door
         log("Alarm", "Wekker geannuleerd")
         print("Wekker geannuleerd.")
 
