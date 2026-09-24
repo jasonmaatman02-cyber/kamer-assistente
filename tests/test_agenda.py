@@ -10,6 +10,7 @@ Achtergrond: familiemaatman17@gmail.com bleek helemaal geen iCloud-account
 te zijn maar een gewoon Google-account -- vandaar dat account 2 nu een
 losstaande, expliciet gekozen provider heeft i.p.v. automatisch CalDAV.
 """
+import pytest
 from datetime import date
 
 
@@ -355,7 +356,7 @@ def test_google_calendar_http_transport_has_a_timeout(monkeypatch):
             class _L:
                 def list(self_inner):
                     class _E:
-                        def execute(self_inner2):
+                        def execute(self_inner2, **kw):
                             return {"items": []}
                     return _E()
             return _L()
@@ -530,3 +531,124 @@ def test_retries_are_rate_limited_and_never_concurrent():
     assert acc.calls == 2                                               # 1x opstart + 1x retry, niet 8x
     cal.get_all_events(None, None)
     assert acc.calls == 2                                               # en de volgende minuut weer pas
+
+
+# --------------------------------------------------------------------------- #
+# Google-hardening: lokale dagen, tijdzones, kapotte items, fouten zichtbaar
+# --------------------------------------------------------------------------- #
+def test_day_boundaries_are_local_midnight_not_utc(monkeypatch):
+    """timeMin/timeMax waren UTC-middernacht: op de Pi (UTC+2) viel een event van 00:30 lokaal onder de
+    vorige dag en verscheen het van morgen (00:30) bij 'vandaag'."""
+    import datetime
+
+    import scheduler.agenda as A
+
+    monkeypatch.setattr(A, "_local_tz", lambda: datetime.timezone(datetime.timedelta(hours=2)))
+    assert A._rfc3339_day_start(datetime.date(2026, 9, 24)) == "2026-09-24T00:00:00+02:00"
+    monkeypatch.setattr(A, "_local_tz", lambda: datetime.timezone(datetime.timedelta(hours=-5)))
+    assert A._rfc3339_day_start(datetime.date(2026, 9, 24)) == "2026-09-24T00:00:00-05:00"
+
+
+def test_google_datetime_with_an_offset_is_converted_to_local_time(monkeypatch):
+    import datetime
+
+    import scheduler.agenda as A
+
+    monkeypatch.setattr(A, "_local_tz", lambda: datetime.timezone(datetime.timedelta(hours=2)))
+    # event in New York (-04:00) om 09:00 = 15:00 in Nederland (+02:00)
+    item = {"summary": "Call", "start": {"dateTime": "2026-09-24T09:00:00-04:00"},
+            "end": {"dateTime": "2026-09-24T10:00:00-04:00"}}
+    ev = A._normalize_event(A._google_event_to_simple(item), "G", "google")
+    assert ev["start"].startswith("2026-09-24T15:00:00") and ev["end"].startswith("2026-09-24T16:00:00")
+    utc = {"summary": "Z", "start": {"dateTime": "2026-09-24T07:00:00Z"}}
+    assert A._normalize_event(A._google_event_to_simple(utc), "G", "google")["start"].startswith("2026-09-24T09:00:00")
+
+
+@pytest.mark.parametrize("item", [
+    {},
+    {"summary": None, "start": None, "end": None},
+    {"summary": 5, "start": {"dateTime": "geen-datum"}},
+    {"summary": "x", "start": "2026-09-24"},
+    {"summary": "x", "start": {"date": None}, "location": 12, "description": ["a"]},
+])
+def test_malformed_google_items_never_crash_the_conversion(item):
+    import scheduler.agenda as A
+
+    ev = A._normalize_event(A._google_event_to_simple(item), "G", "google")
+    assert ev["title"] and isinstance(ev["all_day"], bool)
+
+
+def test_one_malformed_event_does_not_hide_the_rest_of_the_calendar(capsys):
+    import scheduler.agenda as A
+
+    class Svc:
+        def events(self):
+            return self
+
+        def list(self, **kw):
+            self.kw = kw
+            return self
+
+        def execute(self, **kw):
+            self.retries = kw.get("num_retries")
+            return {"items": [{"summary": "goed", "start": {"date": "2026-09-24"}}, {"boom": object()},
+                              None, {"summary": "ook goed", "start": {"date": "2026-09-25"}}]}
+
+    import datetime
+    svc = Svc()
+    view = A._GoogleCalendarView(svc, "id", "Agenda")
+    events = view.date_search(datetime.date(2026, 9, 24), datetime.date(2026, 9, 26))
+    titles = [A._normalize_event(e, "A", "google")["title"] for e in events]
+    assert titles == ["goed", "Geen titel", "ook goed"]      # het lege item blijft, het kapotte item (None) valt weg
+    assert svc.retries == 2                                  # tijdelijke Google-fouten/rate limits: eigen retries
+    assert "T00:00:00" in svc.kw["timeMin"] and "T00:00:00" in svc.kw["timeMax"]
+
+
+def test_null_items_from_google_are_treated_as_empty():
+    import datetime
+
+    import scheduler.agenda as A
+
+    class Svc:
+        def events(self):
+            return self
+
+        def list(self, **kw):
+            return self
+
+        def execute(self, **kw):
+            return {"items": None}
+
+    assert A._GoogleCalendarView(Svc(), "i", "n").date_search(datetime.date(2026, 9, 24), datetime.date(2026, 9, 25)) == []
+
+
+def test_calendar_that_fails_to_fetch_is_reported_not_shown_as_no_events(monkeypatch):
+    """Een ingetrokken Google-token tijdens de draai gaf 'Geen events vandaag!' (schijnbaar succes)."""
+    from Dashboard.backend import services as S
+    from scheduler.agenda import MultiProviderCalendar
+
+    class Cal:
+        name = "Prive"
+
+        def date_search(self, start, end):
+            raise RuntimeError("('invalid_grant: Token has been expired or revoked.', {})")
+
+    cal = object.__new__(MultiProviderCalendar)
+    cal._accounts, cal.error, cal._failed, cal._last_attempt, cal.fetch_errors = [], None, [], 0.0, []
+    cal.calendars = [Cal()]
+    S._services["agenda"] = cal
+    today = S.calendar_today(fresh=True)
+    assert today["events"] == [] and "koppel opnieuw" in today["error"]
+    rng = S.calendar_events(__import__("datetime").date(2026, 9, 24), __import__("datetime").date(2026, 9, 25))
+    assert "koppel opnieuw" in rng["error"] and rng["events"] == []
+
+    class Good(Cal):
+        def date_search(self, start, end):
+            class E:
+                data = "BEGIN:VEVENT\r\nSUMMARY:Tandarts\r\nDTSTART:20260924T090000\r\nEND:VEVENT\r\n"
+            return [E()]
+
+    cal.calendars = [Good()]
+    S._data_cache.clear()
+    ok = S.calendar_today(fresh=True)
+    assert ok.get("error") is None and any("Tandarts" in e for e in ok["events"])

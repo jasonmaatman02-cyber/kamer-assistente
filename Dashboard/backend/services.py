@@ -677,9 +677,17 @@ def calendar_today(fresh: bool = False) -> dict:
         if not cal:
             return {"events": [], "error": _errors.get("agenda")}
         try:
-            return {"events": cal.return_todays_events()}
+            events = cal.return_todays_events()
         except Exception as exc:  # noqa: BLE001
-            return {"events": [], "error": str(exc)}
+            from scheduler.agenda import describe_calendar_error
+
+            return {"events": [], "error": describe_calendar_error(exc)}
+        errors = list(getattr(cal, "fetch_errors", None) or [])
+        if errors:
+            # een agenda faalde bij het ophalen: NIET stilzwijgend "Geen events vandaag" tonen
+            real = [e for e in events if not str(e).startswith("Geen events")]
+            return {"events": real, "error": "; ".join(errors)}
+        return {"events": events}
 
     return _cached("calendar:today", 300, fetch,
                    fallback={"events": [], "error": "agenda wordt opgehaald"})   # 5 min
@@ -704,10 +712,15 @@ def calendar_events(start, end) -> dict:
         try:
             events = cal.get_normalized_events(start, end)
         except Exception as exc:  # noqa: BLE001 - een onverwachte fout mag de tab niet slopen
-            return {"events": [], "error": str(exc)}
+            from scheduler.agenda import describe_calendar_error
+
+            return {"events": [], "error": describe_calendar_error(exc)}
         # Geen accounts gekoppeld gaf een lege kalender zonder enige uitleg
         err = cal.error or (None if getattr(cal, "calendars", None) else
                             "Geen agenda gekoppeld -- stel een account in via Settings.")
+        fetch_errors = list(getattr(cal, "fetch_errors", None) or [])
+        if fetch_errors:
+            err = "; ".join(x for x in [err, *fetch_errors] if x)
         return {"events": events, "error": err}
 
     return _cached(key, 300, fetch,

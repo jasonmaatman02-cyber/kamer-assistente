@@ -68,24 +68,33 @@ def _ics_escape(text: str) -> str:
 def _ics_datetime_line(prop: str, value: dict) -> str | None:
     """Bouwt een DTSTART/DTEND-regel uit een Google-achtige {"dateTime": ...}
     of {"date": ...} dict."""
+    if not isinstance(value, dict):
+        return None
     if "dateTime" in value:
-        dt = parse(value["dateTime"])
+        try:
+            dt = parse(value["dateTime"])
+        except (ValueError, OverflowError, TypeError):
+            return None
+        if dt.tzinfo is not None:
+            # Google levert de tijd met de offset van de tijdzone van het EVENT; zonder omrekenen
+            # naar lokale tijd toonde een event uit een andere zone de klokslag van die zone.
+            dt = dt.astimezone(_local_tz())
         return f"{prop}:{dt.strftime('%Y%m%dT%H%M%S')}"
     if "date" in value:
-        return f"{prop};VALUE=DATE:{value['date'].replace('-', '')}"
+        return f"{prop};VALUE=DATE:{str(value['date']).replace('-', '')}"
     return None
 
 
 def _google_event_to_simple(item: dict) -> _SimpleEvent:
-    summary = item.get("summary") or "Geen titel"
-    lines = [_ics_datetime_line("DTSTART", item.get("start", {}))]
-    end_line = _ics_datetime_line("DTEND", item.get("end", {}))
+    summary = str(item.get("summary") or "Geen titel")
+    lines = [_ics_datetime_line("DTSTART", item.get("start"))]
+    end_line = _ics_datetime_line("DTEND", item.get("end"))
     if end_line:
         lines.append(end_line)
     if item.get("location"):
-        lines.append(f"LOCATION:{_ics_escape(item['location'])}")
+        lines.append(f"LOCATION:{_ics_escape(str(item['location']))}")
     if item.get("description"):
-        lines.append(f"DESCRIPTION:{_ics_escape(item['description'])}")
+        lines.append(f"DESCRIPTION:{_ics_escape(str(item['description']))}")
     if item.get("id"):
         lines.append(f"UID:{item['id']}")
     return _SimpleEvent(
@@ -117,7 +126,13 @@ def describe_calendar_error(exc) -> str:
 
 
 def _rfc3339_day_start(d) -> str:
-    return datetime(d.year, d.month, d.day, tzinfo=timezone.utc).isoformat()
+    """Begin van de LOKALE dag ``d`` als RFC 3339 (mét offset). Was UTC-middernacht: op de Pi
+    (UTC+1/+2) viel een event tussen 00:00 en 02:00 lokaal daardoor onder de vorige dag en
+    verscheen het van morgen (00:00-02:00) bij "vandaag"."""
+    tz = _local_tz()
+    midnight = datetime(d.year, d.month, d.day)
+    # tz=None -> de systeemzone (astimezone() op een naief tijdstip = 'lokale tijd', DST-correct voor die datum)
+    return (midnight.replace(tzinfo=tz) if tz is not None else midnight.astimezone()).isoformat()
 
 
 def _ics_unescape(text: str) -> str:
@@ -238,6 +253,7 @@ class _GoogleCalendarView:
         self.name = name
 
     def date_search(self, start, end):
+        # num_retries: googleapiclient herprobeert dan zelf 5xx/429/rateLimitExceeded met backoff
         resp = self._service.events().list(
             calendarId=self._id,
             timeMin=_rfc3339_day_start(start),
@@ -245,8 +261,14 @@ class _GoogleCalendarView:
             singleEvents=True,
             orderBy="startTime",
             maxResults=250,
-        ).execute()
-        return [_google_event_to_simple(item) for item in resp.get("items", [])]
+        ).execute(num_retries=2)
+        out = []
+        for item in (resp.get("items") if isinstance(resp, dict) else None) or []:
+            try:
+                out.append(_google_event_to_simple(item))
+            except Exception as exc:  # noqa: BLE001 - een kapot event mag de rest van de agenda niet meenemen
+                print(f"[agenda] event overgeslagen ({type(exc).__name__}: {exc})")
+        return out
 
 
 class GoogleCalendarAccount:
@@ -310,8 +332,10 @@ class GoogleCalendarAccount:
         # 15s als ICloudCalDAVAccount hierboven gebruikt).
         http = AuthorizedHttp(creds, http=httplib2.Http(timeout=15))
         service = build("calendar", "v3", http=http, cache_discovery=False)
-        items = service.calendarList().list().execute().get("items", [])
-        return [_GoogleCalendarView(service, c["id"], c.get("summary") or self.email) for c in items]
+        resp = service.calendarList().list().execute(num_retries=2)
+        items = (resp.get("items") if isinstance(resp, dict) else None) or []
+        return [_GoogleCalendarView(service, c["id"], c.get("summary") or self.email)
+                for c in items if isinstance(c, dict) and c.get("id")]
 
 
 def _build_account(id_key: str, password_key: str, provider_config_key: str, default_provider: str):
@@ -357,6 +381,7 @@ class MultiProviderCalendar:
         self.error = None
         self._failed: list = []          # accounts waarvan de verbinding (nog) niet lukte
         self._last_attempt = 0.0
+        self.fetch_errors: list[str] = []   # fouten van de LAATSTE ophaalronde (per agenda)
         self.calendars = self._connect()
 
     def _connect_accounts(self, accounts):
@@ -420,6 +445,7 @@ class MultiProviderCalendar:
         zelfde per-agenda try/except-patroon als get_all_events()."""
         self._reconnect_if_needed()
         out = []
+        errors = []
         for cal in self.calendars:
             name = getattr(cal, "name", "Agenda") or "Agenda"
             provider = getattr(cal, "provider", "?")
@@ -427,18 +453,26 @@ class MultiProviderCalendar:
                 for ev in cal.date_search(start_date, end_date):
                     out.append(_normalize_event(ev, calendar_name=name, provider=provider))
             except Exception as exc:  # noqa: BLE001
-                print(f"[agenda] fout bij '{name}': {exc}")
+                print(f"[agenda] fout bij '{name}': {describe_calendar_error(exc)}")
+                errors.append(f"{name}: {describe_calendar_error(exc)}")
+        self.fetch_errors = errors
         return out
 
     # ------------------------------------------------------------------ #
     def get_all_events(self, start_date, end_date):
         self._reconnect_if_needed()
         events = []
+        errors = []
         for cal in self.calendars:
             try:
                 events.extend(cal.date_search(start_date, end_date))
             except Exception as exc:  # noqa: BLE001
-                print(f"[agenda] fout bij '{getattr(cal, 'name', '?')}': {exc}")
+                name = getattr(cal, "name", "?")
+                print(f"[agenda] fout bij '{name}': {describe_calendar_error(exc)}")
+                errors.append(f"{name}: {describe_calendar_error(exc)}")
+        # Voorheen werd een mislukte agenda alleen geprint: de UI meldde dan "Geen events vandaag"
+        # (schijnbaar succes) terwijl bv. het Google-token was ingetrokken.
+        self.fetch_errors = errors
         return events
 
     def get_todays_events(self):
