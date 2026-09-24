@@ -1,8 +1,19 @@
 import datetime
 import re
 import threading
+import time
 
 from logic.logger import log
+
+# Een Raspberry Pi 4 heeft geen batterijklok: na een stroomstoring start hij op met de tijd van de laatste
+# sync en springt de klok een paar seconden na de start (NTP) uren of dagen vooruit -- na het instellen
+# van de wekker uit de config. Zonder correctie ging de wekker dan direct af ("07:00" van gisteren is
+# opeens verleden tijd, om 10:00 's ochtends) of juist een dag te laat. Een sprong van de wandklok t.o.v.
+# de monotone klok groter dan dit telt als klokstap.
+_CLOCK_STEP_S = 120.0
+# Na een klokstap gaat een wekker die hooguit zo lang geleden had moeten afgaan alsnog af (het echte
+# uur was net gepasseerd); een oudere wordt naar de eerstvolgende keer verschoven.
+_LATE_TOLERANCE_S = 600.0
 
 
 def parse_alarm_time(text) -> tuple[int, int] | None:
@@ -41,6 +52,8 @@ class AlarmScheduler:
         """Zet een wekker. Geef 'HH:MM' (ook '7 uur 30' / '7.30' werkt) via
         ``time_str``, of een volledige ``datetime`` via ``when``. Retourneert de
         geplande datetime, of None als de tijd niet te lezen is."""
+        clock0 = (time.time(), time.monotonic())
+        tod = None                      # (uur, minuut) van een wekker op een tijdstip; None = vaste datetime
         if when is not None:
             alarm_dt = when
         else:
@@ -53,6 +66,7 @@ class AlarmScheduler:
             if not (0 <= hour < 24 and 0 <= minute < 60):
                 log("Alarm", f"Ongeldige tijd: {hour}:{minute}")
                 return None
+            tod = (hour, minute)
             now = datetime.datetime.now()
             alarm_dt = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
             if alarm_dt <= now:
@@ -72,16 +86,39 @@ class AlarmScheduler:
             stop = self._stop_event = threading.Event()
             self.alarm_time = alarm_dt
             self.alarm_thread = threading.Thread(
-                target=self._wait_for_alarm, args=(stop, alarm_dt), daemon=True
+                target=self._wait_for_alarm, args=(stop, alarm_dt, tod, clock0), daemon=True
             )
             self.alarm_thread.start()
         return alarm_dt
 
-    def _wait_for_alarm(self, stop: threading.Event, alarm_dt: datetime.datetime):
+    @staticmethod
+    def _after_clock_step(tod: tuple[int, int], now: datetime.datetime) -> datetime.datetime:
+        """Wekkertijdstip na een klokstap: vandaag als dat hooguit _LATE_TOLERANCE_S geleden was of nog
+        komt, anders morgen."""
+        today = now.replace(hour=tod[0], minute=tod[1], second=0, microsecond=0)
+        if (now - today).total_seconds() > _LATE_TOLERANCE_S:
+            today += datetime.timedelta(days=1)
+        return today
+
+    def _wait_for_alarm(self, stop: threading.Event, alarm_dt: datetime.datetime,
+                        tod: tuple[int, int] | None = None, clock0: tuple[float, float] | None = None):
         # Efficiënt wachten: slaap tot de wekkertijd (in blokken van max 30s zodat
         # een systeemklok-sprong of lange slaapstand wordt opgevangen), en word
         # meteen wakker bij cancel/vervanging.
+        wall0, mono0 = clock0 or (time.time(), time.monotonic())
         while not stop.is_set():
+            wall, mono = time.time(), time.monotonic()
+            step = (wall - wall0) - (mono - mono0)
+            wall0, mono0 = wall, mono
+            if tod is not None and abs(step) > _CLOCK_STEP_S:
+                new_dt = self._after_clock_step(tod, datetime.datetime.now())
+                log("Alarm", f"Systeemklok sprong {step:+.0f} s; wekker {alarm_dt:%Y-%m-%d %H:%M} -> {new_dt:%Y-%m-%d %H:%M}")
+                with self._lock:
+                    if stop.is_set():
+                        return
+                    if self.alarm_time == alarm_dt:
+                        self.alarm_time = new_dt
+                alarm_dt = new_dt
             remaining = (alarm_dt - datetime.datetime.now()).total_seconds()
             if remaining <= 0:
                 break

@@ -220,3 +220,100 @@ def test_routine_lock_is_released_after_an_exception(client, routines_api, monke
     assert client.post("/api/routines/run", json={"id": "morning"}).status_code == 500
     monkeypatch.setattr(routines_api, "_run_routine_unguarded", lambda rid: None)
     assert client.post("/api/routines/run", json={"id": "morning"}).status_code == 200
+
+
+# --------------------------------------------------------------------------- #
+# Klokstap (Pi zonder batterijklok: NTP springt de tijd na de start vooruit)
+# --------------------------------------------------------------------------- #
+class _Clock:
+    """Nep-klok voor _wait_for_alarm: wandklok + monotone klok in een keer te verschuiven."""
+
+    def __init__(self, wall):
+        import types
+
+        self.wall = wall
+        self.mono = 1000.0
+        clock = self
+
+        class _DT(datetime.datetime):
+            @classmethod
+            def now(cls, tz=None):
+                return clock.wall
+
+        self.datetime = types.SimpleNamespace(datetime=_DT, timedelta=datetime.timedelta)
+        self.time = types.SimpleNamespace(time=lambda: clock.wall.timestamp(), monotonic=lambda: clock.mono)
+
+    def advance(self, seconds, step=0.0):
+        """Echte tijd ``seconds`` verder; ``step`` extra alleen op de wandklok (de klokstap)."""
+        self.mono += seconds
+        self.wall += datetime.timedelta(seconds=seconds + step)
+
+
+class _Stop:
+    def __init__(self, clock, steps, cancel_after):
+        self.clock, self.steps, self.cancel_after, self.calls = clock, list(steps), cancel_after, 0
+
+    def is_set(self):
+        return self.calls > self.cancel_after
+
+    def wait(self, timeout):
+        self.calls += 1
+        self.clock.advance(timeout, self.steps.pop(0) if self.steps else 0.0)
+        return self.calls > self.cancel_after
+
+
+def _run_wait(monkeypatch, start, jump_to=None, cancel_after=6, tod=(7, 0)):
+    """Draai _wait_for_alarm met een nep-klok. ``jump_to``: de wandklok springt bij de eerste wachtronde
+    (30 s echte tijd) naar dit moment, zonder dat de monotone klok meeloopt."""
+    import scheduler.alarm as A
+
+    clock = _Clock(start)
+    monkeypatch.setattr(A, "datetime", clock.datetime)
+    monkeypatch.setattr(A, "time", clock.time)
+    steps = [(jump_to - (start + datetime.timedelta(seconds=30))).total_seconds()] if jump_to else []
+    fired = []
+    a = AlarmScheduler(lambda: fired.append(clock.wall))
+    alarm_dt = start.replace(hour=tod[0], minute=tod[1], second=0, microsecond=0)
+    if alarm_dt <= start:
+        alarm_dt += datetime.timedelta(days=1)
+    a.alarm_time = alarm_dt
+    a._wait_for_alarm(_Stop(clock, steps, cancel_after), alarm_dt, tod, (start.timestamp(), clock.mono))
+    return a, fired, alarm_dt
+
+
+def test_clock_step_far_past_the_alarm_moves_it_to_tomorrow_instead_of_firing_late(monkeypatch):
+    """Pi start om 22:00 (oude tijd), wekker 07:00; NTP zet de klok naar 10:00 de volgende dag."""
+    a, fired, _ = _run_wait(monkeypatch, datetime.datetime(2026, 9, 23, 22, 0),
+                            jump_to=datetime.datetime(2026, 9, 24, 10, 0))
+    assert fired == [], "wekker ging om 10:00 af omdat de klok sprong"
+    assert a.alarm_time == datetime.datetime(2026, 9, 25, 7, 0)
+
+
+def test_clock_step_just_after_the_alarm_time_still_fires(monkeypatch):
+    """Hooguit 10 minuten te laat (klok springt naar 07:04): dan is de wekker alsnog welkom."""
+    a, fired, _ = _run_wait(monkeypatch, datetime.datetime(2026, 9, 23, 22, 0),
+                            jump_to=datetime.datetime(2026, 9, 24, 7, 4))
+    assert len(fired) == 1 and (fired[0].hour, fired[0].minute) == (7, 4)
+    assert a.alarm_time is None
+
+
+def test_clock_step_backwards_keeps_todays_alarm(monkeypatch):
+    a, fired, _ = _run_wait(monkeypatch, datetime.datetime(2026, 9, 24, 6, 0),
+                            jump_to=datetime.datetime(2026, 9, 24, 3, 0))
+    assert fired == []
+    assert a.alarm_time == datetime.datetime(2026, 9, 24, 7, 0)
+
+
+def test_no_step_means_no_change_and_it_fires_on_time(monkeypatch):
+    a, fired, dt = _run_wait(monkeypatch, datetime.datetime(2026, 9, 24, 6, 59), cancel_after=50)
+    assert len(fired) == 1 and dt <= fired[0] < dt + datetime.timedelta(seconds=31)
+    assert a.alarm_time is None
+
+
+def test_after_clock_step_rules():
+    step = AlarmScheduler._after_clock_step
+    d = datetime.datetime
+    assert step((7, 0), d(2026, 9, 24, 6, 0)) == d(2026, 9, 24, 7, 0)      # nog te komen: vandaag
+    assert step((7, 0), d(2026, 9, 24, 7, 4)) == d(2026, 9, 24, 7, 0)      # 4 min te laat: alsnog vandaag
+    assert step((7, 0), d(2026, 9, 24, 7, 11)) == d(2026, 9, 25, 7, 0)     # >10 min te laat: morgen
+    assert step((7, 0), d(2026, 9, 24, 10, 0)) == d(2026, 9, 25, 7, 0)
