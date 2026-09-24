@@ -1,7 +1,6 @@
 """ICS-parsing: gevouwen regels, geneste VALARM/VTIMEZONE, escapes, UTC -> lokale tijd."""
 import datetime
 
-import pytest
 
 from scheduler import agenda as A
 
