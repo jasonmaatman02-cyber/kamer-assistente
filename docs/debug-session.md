@@ -31,6 +31,13 @@ requirements-dashboard.txt` voor de nieuwe `zeroconf`-dependency).
 - 4879a9f systemd-watchdog (S2-21)
 - **Alles t/m ce1eec4 staat sinds 2026-09-24 14:32 op de Pi** (S2-22).
 
+### Samenvatting sessie 2 (bijgewerkt 2026-09-24, na de deploy)
+Cijfers bij benadering (een item bevat vaak meerdere bevindingen): **40 commits, 78 bestanden, ~7000 regels erbij** (t.o.v. de Pi-versie `9c30f40`); testsuite **546 geslaagd / 1 overgeslagen** lokaal (ook volledig groen op de Pi); ~60 afzonderlijke bevindingen, waarvan 3 P1 (hele dashboard bevriest: offline lamp, trage externe dienst, AI-flood).
+- **Belangrijkste fixes**: P1-bevriezingen (S2-4/5/6) + systemd-watchdog voor het geval het toch gebeurt (S2-21); camera/presence: backoff, bevroren frame, "falende detector = lege kamer" (S2-3/11), verse frames (S2-17); wekker/routines: blokkerende `set_alarm`, verkeerde callback, her-armen na herstart, dubbele runs, eerlijke uitkomsten, begrensde LLM-groet (S2-9/13/24); spraak: 24/7 cloud-upload van kamergeluid bij falend lokaal model, hangende opname (S2-10); API-hardening: 38 crashes via een fuzz, CSRF-lacune op `chat_stream`, dummy-successen (radio, routines, AI-tools), settings-typecontrole (S2-12/15/18); agenda/ICS-parsing + zelfherstel + Google-koppeling (S2-14/23); begrensde groei/lekken (S2-16); kapotte `settings.json`/`notes.json` worden bewaard i.p.v. overschreven (S2-13/16).
+- **Prestatiewinst (Pi, gemeten)**: dashboard-CPU ~40-53% -> ~11-15% van een core, RSS 289 -> 230 MB, threads 42 -> 34; `/api/overview` p50 205 ms -> ms (gecachete `system_stats`); `/api/notifications` leest een staartje i.p.v. 4 volledige logbestanden.
+- **Niet (volledig) testbaar / open**: SIGSTOP-vriestest van de watchdog (geen toestemming); echte USB-replug van de camera; V4L2-gedrag van de "verse frames"-aanpassing alleen indirect (frame_age 0,5-1,9 s op de Pi); kleurkiezer HSV op echte lamp niet visueel getoetst; Spotify-afspelen (geluid) niet getest.
+- **Voor Jason**: (1) Google OAuth-app op 'In productie' zetten (anders na 7 dagen weer verlopen); (2) `llama-server`/`room-assistant`-units die crash-loopen opruimen (S2-25); (3) beslissen of automatisch AAN ook na middernacht tot 07:00 geblokkeerd moet zijn (S2-24); (4) `data/notes.json` staat in git (runtime-data): eenmalig untracken met een migratiestap in `update-pi.sh` (nu bewust niet gedaan vanwege het risico op een `stash pop`-conflict op de Pi).
+
 ### Items
 
 #### S2-1 TTS: argument-injectie, overlappende spraak, hangende afspeellus, temp-lek
@@ -233,6 +240,11 @@ Pi 4B (192.168.2.34), Debian 13, Python 3.13.5; was `9c30f40`, nu `ce1eec4`+ (`b
 - **Stress op de Pi (Python 3.13, geïsoleerde kopie, nepdiensten die 20 s hangen, 3 'tabs')**: spotify en ollama: 0 canary-timeouts, worst-case 0,1 s; de live service bleef onaangetast (`NRestarts=0`, health 200 in 2 ms).
 - **Vondst buiten de repo (niet gewijzigd)**: op de Pi crash-loopen twee overgebleven systemd-units van een oud project: `llama-server.service` (143.148 herstarts) en `room-assistant.service`; beide wijzen naar `/home/pi/room-assistant/...`, die map bestaat niet meer (`No such file or directory`, `Restart=on-failure`, `RestartSec=5`, `enabled`). Gevolg: elke 5 s twee mislukte `exec`'s en ~4800 journalregels per uur (journal 70 MB, SD-schrijfslijtage). Advies (Jason beslist): `sudo systemctl disable --now llama-server room-assistant` (en eventueel de unit-bestanden in `/etc/systemd/system/` verwijderen + `sudo systemctl daemon-reload`). Heeft niets met Kamer-AI te maken, maar kost onnodig CPU-wakeups en journal-ruimte.
 - **Kernel/USB**: `dmesg` toont alleen het laden van `uvcvideo` (15 sep); geen USB-resets/disconnects, geen under-voltage/throttling (`throttled=0x0`); camera = Microdia Defender G-Lens 2577 HD720p op `/dev/video0`.
+
+#### S2-26 Deploy-script zelfvervangend-veilig, UI-polling, Pi-status (2026-09-24 ~15:06)
+- **`update-pi.sh` wordt door zijn eigen `git merge` vervangen**; bash leest scripts incrementeel, dus een gewijzigd script kon halverwege op verkeerde offsets doorlezen. Alles staat nu in `main()` (eerst volledig geparsed, dan uitgevoerd); test bewaakt de structuur; op de Pi uitgevoerd tijdens een echte overgang (`2627835` -> `93aa002`) zonder problemen.
+- `notifications.js`/`environment.js` pollen niet meer voor een verborgen tabblad (de overige pagina's deden dat al).
+- **Pi-status na alle deploys**: service `active`, `NRestarts=0`, `WatchdogUSec=3min`, systeem 96% idle (dashboard ~11% van een core, load 0,33, 50 C), agenda `ok`, health 200 in 2 ms.
 
 #### Statische analyse (uitgevoerd, geen verdere bevindingen)
 - ruff F: schoon na S2-2. bandit: 0 High, 1 Medium (`0.0.0.0` bind in `rundashboard.py`, bewust: LAN-dashboard achter optioneel wachtwoord), 21 Low (vaste-argv-subprocess, `try/except/pass`; beoordeeld, alleen tts-argv was echt).
