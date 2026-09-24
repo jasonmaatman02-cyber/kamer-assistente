@@ -9,6 +9,10 @@ import pytest
     ("07:30", "07:30"), ("7:30", "07:30"), ("7.30", "07:30"),
     ("7 uur 30", "07:30"), ("7uur30", "07:30"), ("om 07:30 uur", "07:30"),
     ("0730", "07:30"), ("7h30", "07:30"),
+    # een LLM geeft soms extra tekst mee; het losse 4-cijferpatroon las "2026-09-24 07:30" als 20:26
+    ("2026-09-24 07:30", "07:30"), ("Het is 7:30 uur", "07:30"), ("7 uur", "07:00"),
+    ("Wekker om 6.45 uur graag", "06:45"), ("op 24-09-2026 om 08:15", "08:15"),
+    ("24.09.2026 om 08:15", "08:15"), ("25:99", None),
     ("kwart voor 8", None), ("half 9", None), ("", None), ("onzin", None),
 ])
 def test_alarm_parse(txt, expect):

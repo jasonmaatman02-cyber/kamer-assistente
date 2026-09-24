@@ -375,10 +375,11 @@ def test_presence_tick_passes_clamped_detect_scale_and_reports_timing(monkeypatc
     w._tick()
     assert seen["scale"] == 0.6
 
-    for wild, expected in ((0.0, 1.0), (5.0, 1.0), (0.01, 0.25), (-2, 1.0)):
+    for wild, expected in ((0.0, 1.0), (5.0, 1.0), (0.01, 0.25), (-2, 0.25)):
         config.set("presence.detect_scale", wild)
         w._tick()
         assert 0.25 <= seen["scale"] <= 1.0, f"{wild} -> {seen['scale']}"
+        assert seen["scale"] == expected, f"{wild} -> {seen['scale']}"
     assert isinstance(w.status()["detect_ms"], float)
 
 

@@ -17,11 +17,19 @@ import threading
 import time
 from pathlib import Path
 
-try:
-    from dotenv import load_dotenv
-    load_dotenv()
-except Exception:  # pragma: no cover - dotenv is optional
-    pass
+def load_env(path=None, override: bool = False) -> None:
+    """Lees ``.env`` (of ``path``) in ``os.environ``. ``interpolate=False``: python-dotenv vervangt anders
+    ``${NAAM}`` in een WAARDE door de omgevingsvariabele of leeg -- een wachtwoord met ``${...}`` erin
+    veranderde zo stilzwijgend na de eerstvolgende herstart (Tapo/dashboard-login stuk)."""
+    try:
+        from dotenv import load_dotenv
+
+        load_dotenv(path, override=override, interpolate=False)
+    except Exception:  # pragma: no cover - dotenv is optional
+        pass
+
+
+load_env()
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 SETTINGS_FILE = BASE_DIR / "settings.json"

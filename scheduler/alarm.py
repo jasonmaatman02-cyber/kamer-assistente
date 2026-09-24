@@ -5,6 +5,25 @@ import threading
 from logic.logger import log
 
 
+def parse_alarm_time(text) -> tuple[int, int] | None:
+    """(uur, minuut) uit een tekst, of None. De tijd komt ook uit een LLM ("zet dit om naar uur:minuut"),
+    dat soms extra tekst meegeeft: de eerste, losse ``\\d{1,2}\\d{2}`` in "2026-09-24 07:30" gaf 20:26. Daarom
+    eerst de duidelijkste vormen (met ':' of '.', dan 'uur'/'u'/'h'), pas daarna het losse 4-cijferpatroon."""
+    t = str(text)
+    strict = [
+        r"(?<![\d:.])(\d{1,2})[:.](\d{2})(?![\d])",                 # 07:30, 7.30
+        r"(?<!\d)(\d{1,2})\s*(?:uur|u|h)\s*(\d{2})(?!\d)",          # 7 uur 30, 7u30, 7h30
+        r"(?<!\d)(\d{1,2})\s*(?:uur|u|h)(?![a-z0-9])",                # 7 uur  -> 07:00
+    ]
+    for pat in strict + [r"(?<!\d)(\d{1,2})(\d{2})(?!\d)"]:                  # laatste: 0730, 730
+        for m in re.finditer(pat, t, re.IGNORECASE):
+            hour = int(m.group(1))
+            minute = int(m.group(2)) if m.lastindex and m.lastindex >= 2 else 0
+            if 0 <= hour < 24 and 0 <= minute < 60:              # "24.09.2026 om 08:15": de datum overslaan
+                return hour, minute
+    return None
+
+
 class AlarmScheduler:
     def __init__(self, callback=None):
         self.alarm_time = None
@@ -25,12 +44,12 @@ class AlarmScheduler:
         if when is not None:
             alarm_dt = when
         else:
-            m = re.search(r"(\d{1,2})\s*(?:[:.hu]|uur)?\s*(\d{2})", str(time_str))
-            if not m:
+            parsed = parse_alarm_time(time_str)
+            if parsed is None:
                 log("Alarm", f"Kon tijd niet lezen: {time_str!r}")
                 print(f"Kon tijd niet lezen: {time_str!r}")
                 return None
-            hour, minute = int(m.group(1)), int(m.group(2))
+            hour, minute = parsed
             if not (0 <= hour < 24 and 0 <= minute < 60):
                 log("Alarm", f"Ongeldige tijd: {hour}:{minute}")
                 return None

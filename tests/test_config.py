@@ -122,3 +122,36 @@ def test_only_the_last_three_corrupt_copies_are_kept(monkeypatch):
     kept = _corrupt_files(cs.SETTINGS_FILE)
     assert len(kept) == 3
     assert [p.read_text(encoding="utf-8") for p in kept] == ["{kapot 2", "{kapot 3", "{kapot 4"]
+
+
+def test_env_values_with_dollar_braces_survive_a_restart(monkeypatch, tmp_path):
+    """python-dotenv interpoleert ${NAAM} standaard: een wachtwoord als 'pa${SS}word' kwam na een herstart
+    als 'paword' uit .env (lamp-/dashboard-login stuk zonder foutmelding)."""
+    import os
+
+    import config.settings as cs
+
+    env = tmp_path / ".env"
+    env.write_text("TAPO_PASSWORD='pa${SS}word $HOME #geen-commentaar'\nEMAIL_ADDRESS=a@b.c\n", encoding="utf-8")
+    monkeypatch.delenv("TAPO_PASSWORD", raising=False)
+    monkeypatch.delenv("EMAIL_ADDRESS", raising=False)
+    cs.load_env(env, override=True)
+    assert os.environ["TAPO_PASSWORD"] == "pa${SS}word $HOME #geen-commentaar"
+    assert os.environ["EMAIL_ADDRESS"] == "a@b.c"
+
+
+@pytest.mark.parametrize("value", [
+    "gewoon", "met spatie en #hekje", "it's \"quoted\"", "$HOME ${X} `cmd`", "unicode-éü€", "=gelijk=",
+    "x" * 300, "regel1\nregel2",
+])
+def test_set_secret_roundtrips_awkward_values_through_env_and_a_restart(monkeypatch, value):
+    import os
+
+    import config
+    import config.settings as cs
+
+    config.set_secret("TAPO_PASSWORD", value)
+    assert os.environ["TAPO_PASSWORD"] == value
+    monkeypatch.delenv("TAPO_PASSWORD", raising=False)
+    cs.load_env(cs.ENV_FILE, override=True)            # zoals bij een herstart van de service
+    assert os.environ["TAPO_PASSWORD"] == value
