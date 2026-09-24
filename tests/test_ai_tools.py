@@ -218,3 +218,53 @@ def test_huge_tool_results_are_truncated(monkeypatch):
     assert len(out) < gh._MAX_TOOL_RESULT_CHARS + 40 and out.endswith("(ingekort)")
     monkeypatch.setitem(gh.functies_dispatcher, "klein", lambda: "kort")
     assert gh._dispatch({"name": "klein", "arguments": {}}) == "kort"
+
+
+# --------------------------------------------------------------------------- #
+# Spotify-quirks: null-items, tracks zonder artiest
+# --------------------------------------------------------------------------- #
+def _dj_with(monkeypatch, search_result):
+    from Dashboard.backend import services
+    from sound_system.muziek import SpotifyDJ
+
+    started = {}
+    monkeypatch.setattr(services, "active_device_id", lambda sp: "dev-1")
+    monkeypatch.setattr(services, "wake_device", lambda sp, d: None)
+
+    class SP:
+        def search(self, **kw):
+            return search_result
+
+        def start_playback(self, **kw):
+            started.update(kw)
+
+    dj = object.__new__(SpotifyDJ)
+    dj.last_error = None
+    dj.sp = SP()
+    return dj, started
+
+
+def test_speel_muziek_skips_a_null_first_result(monkeypatch):
+    dj, started = _dj_with(monkeypatch, {"tracks": {"items": [None, {"uri": "spotify:track:9", "name": "Echt", "artists": []}]}})
+    assert dj.speel_muziek("iets") is True                 # ook zonder artiest: geen IndexError NA de start
+    assert started["uris"] == ["spotify:track:9"] and started["device_id"] == "dev-1"
+
+
+@pytest.mark.parametrize("result", [{"tracks": {"items": [None]}}, {"tracks": None}, {}, None])
+def test_speel_muziek_with_only_unusable_results_is_a_clean_false(monkeypatch, result):
+    dj, started = _dj_with(monkeypatch, result)
+    assert dj.speel_muziek("iets") is False and "Geen resultaat" in dj.last_error and not started
+
+
+def test_laatst_afgespeeld_survives_partial_items():
+    from sound_system.muziek import SpotifyDJ
+
+    dj = object.__new__(SpotifyDJ)
+
+    class SP:
+        def current_user_recently_played(self, limit=5):
+            return {"items": [None, {"track": None}, {"track": {"name": "A", "artists": []}},
+                              {"track": {"name": "B", "artists": [{"name": "X"}]}}]}
+
+    dj.sp = SP()
+    assert dj.laatst_afgespeeld() == ["A", "B van X"]

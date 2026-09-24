@@ -39,8 +39,13 @@ def main():
         # eerste token binnenkomt; in die stille periode stuurt de SSE-stream
         # nog niks, en waitress kapt een kanaal zonder dataverkeer anders af
         # (live gemeten op de Pi: één 1407-token bericht duurde 3m45s totaal).
+        #
+        # connection_limit: waitress accepteert standaard maar 100 gelijktijdige verbindingen; daarboven
+        # antwoordt het dashboard NIETS meer (ook de watchdog-probe niet) tot de stille verbindingen na
+        # channel_timeout (5 min) zijn opgeruimd. Lokaal gereproduceerd met 150 lege verbindingen. Dat kan
+        # een lekkende client/script op het LAN zijn; 250 kost een paar honderd fd's en enkele MB.
         serve(app, host=HOST, port=PORT, threads=16, channel_timeout=300, ident="kamer-dashboard",
-              max_request_body_size=MAX_BODY_BYTES)
+              max_request_body_size=MAX_BODY_BYTES, connection_limit=250)
     except ImportError:
         app.run(host=HOST, port=PORT, threaded=True, use_reloader=False)
 

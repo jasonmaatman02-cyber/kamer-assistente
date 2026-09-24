@@ -54,7 +54,8 @@ def playlists():
 @media_bp.route("/api/last_played_playlists")
 def last_played_playlists():
     try:
-        return jsonify(S.sp_dj().laatste_playlists(limit=30))
+        sp = S.sp_dj()         # (tot 30 API-aanroepen per keer: 60 s bewaren, single-flight)
+        return jsonify(S._cached("spotify:last_playlists", 60, lambda: sp.laatste_playlists(limit=30), fallback=[]))
     except Exception:  # noqa: BLE001
         return jsonify([]), 503
 
@@ -151,13 +152,22 @@ def search_spotify():
     try:
         results = S.sp_dj().sp.search(q=query, type="track", limit=10,
                                       market=config.get("spotify.market", "NL"))
-        return jsonify({"tracks": [{
-            "id": it["id"], "name": it["name"],
-            "artist": ", ".join(a["name"] for a in it["artists"]),
-            "album": it["album"]["name"],
-            "thumbnail": it["album"]["images"][0]["url"] if it["album"]["images"] else "",
-            "uri": it["uri"],
-        } for it in results["tracks"]["items"]]})
+        # Spotify laat in de items soms een `null` staan (of een track zonder id/uri, bv. lokale
+        # bestanden of niet beschikbaar in de markt): die overslaan i.p.v. de hele zoekopdracht te laten falen.
+        tracks = []
+        for it in (results.get("tracks") or {}).get("items") or []:
+            if not isinstance(it, dict) or not it.get("id") or not it.get("uri"):
+                continue
+            album = it.get("album") or {}
+            imgs = album.get("images") or []
+            tracks.append({
+                "id": it["id"], "name": it.get("name", "?"),
+                "artist": ", ".join(a["name"] for a in it.get("artists") or [] if isinstance(a, dict) and a.get("name")),
+                "album": album.get("name", ""),
+                "thumbnail": imgs[0].get("url", "") if imgs and isinstance(imgs[0], dict) else "",
+                "uri": it["uri"],
+            })
+        return jsonify({"tracks": tracks})
     except Exception as exc:  # noqa: BLE001
         return jsonify({"tracks": [], "error": str(exc)}), 503
 

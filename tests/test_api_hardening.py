@@ -442,3 +442,63 @@ def test_http_errors_are_left_alone(boom_app):
     assert c.get("/api/bestaat-niet").status_code == 404
     assert c.delete("/api/_boom").status_code == 405
     assert not m.unhandled                    # een 404/405 is geen onverwachte fout
+
+
+# --------------------------------------------------------------------------- #
+# Spotify-zoekresultaten met `null`-items / ontbrekende velden
+# --------------------------------------------------------------------------- #
+def test_search_skips_null_and_partial_items_instead_of_failing(client, monkeypatch):
+    from Dashboard.backend import services as S
+
+    good = {"id": "t1", "uri": "spotify:track:t1", "name": "Nummer", "artists": [{"name": "A"}, {"name": "B"}],
+            "album": {"name": "Album", "images": [{"url": "http://x/1.jpg"}]}}
+    items = [None, good, {"id": None, "uri": "spotify:local:x"}, "rommel",
+             {"id": "t2", "uri": "spotify:track:t2", "name": "Kaal", "artists": None, "album": None}]
+
+    class SP:
+        def search(self, **kw):
+            return {"tracks": {"items": items}}
+
+    class DJ:
+        sp = SP()
+
+    monkeypatch.setattr(S, "sp_dj", lambda: DJ())
+    r = client.get("/api/search_spotify?query=abc")
+    assert r.status_code == 200
+    tracks = r.get_json()["tracks"]
+    assert [t["id"] for t in tracks] == ["t1", "t2"]
+    assert tracks[0]["artist"] == "A, B" and tracks[0]["thumbnail"] == "http://x/1.jpg"
+    assert tracks[1] == {"id": "t2", "name": "Kaal", "artist": "", "album": "", "thumbnail": "", "uri": "spotify:track:t2"}
+
+
+def test_search_without_tracks_key_is_an_empty_list(client, monkeypatch):
+    from Dashboard.backend import services as S
+
+    class SP:
+        def search(self, **kw):
+            return {}
+
+    class DJ:
+        sp = SP()
+
+    monkeypatch.setattr(S, "sp_dj", lambda: DJ())
+    r = client.get("/api/search_spotify?query=abc")
+    assert r.status_code == 200 and r.get_json() == {"tracks": []}
+
+
+def test_last_played_playlists_is_cached_so_a_poller_cannot_fan_out_api_calls(client, monkeypatch):
+    from Dashboard.backend import services as S
+
+    S.reset_services()
+    calls = {"n": 0}
+
+    class DJ:
+        def laatste_playlists(self, limit=5):
+            calls["n"] += 1                       # in het echt: tot 30 Spotify-aanroepen per keer
+            return [{"naam": "P", "id": "p1"}]
+
+    monkeypatch.setattr(S, "sp_dj", lambda: DJ())
+    for _ in range(5):
+        r = client.get("/api/last_played_playlists")
+        assert r.status_code == 200 and r.get_json()[0]["id"] == "p1"
+    assert calls["n"] == 1

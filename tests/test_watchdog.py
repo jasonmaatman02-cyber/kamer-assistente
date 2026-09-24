@@ -161,10 +161,12 @@ def test_rundashboard_starts_the_watchdog_and_the_unit_enables_it(monkeypatch):
             pass
 
     monkeypatch.setattr(presence_mod, "worker", FakeWorker())
-    monkeypatch.setattr(waitress, "serve", lambda app, **kw: None)
+    monkeypatch.setattr(waitress, "serve", lambda app, **kw: started.setdefault("serve", kw))
     monkeypatch.setattr(W, "start", lambda port: started.setdefault("port", port))
     rundashboard.main()
     assert started["port"] == rundashboard.PORT
+    assert started["serve"]["connection_limit"] >= 250      # de waitress-standaard (100) is snel vol
+    assert started["serve"]["max_request_body_size"] == rundashboard.MAX_BODY_BYTES
 
     unit = (os.path.join(os.path.dirname(__file__), "..", "deploy", "kamer-dashboard.service"))
     text = open(unit, encoding="utf-8").read()

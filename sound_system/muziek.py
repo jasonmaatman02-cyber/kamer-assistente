@@ -81,7 +81,9 @@ class SpotifyDJ:
             log("Muziek", f"zoeken mislukt: {exc}")
             self.last_error = f"Spotify onbereikbaar: {exc}"
             return False
-        items = result.get("tracks", {}).get("items") or []
+        # Spotify laat in de items soms een `null` staan of een track zonder uri: pak de eerste bruikbare
+        items = [t for t in ((result or {}).get("tracks") or {}).get("items") or []
+                 if isinstance(t, dict) and t.get("uri")]
         if not items:
             self.last_error = f"Geen resultaat voor '{zoekterm}'"
             return False
@@ -95,7 +97,9 @@ class SpotifyDJ:
 
         ok = self._call("afspelen", S.start_playback, self.sp, uris=[track["uri"]])
         if ok:
-            print(f"Afspelen gestart: {track['name']} van {track['artists'][0]['name']}")
+            artists = track.get("artists") or []
+            artist = artists[0].get("name", "?") if artists and isinstance(artists[0], dict) else "?"
+            print(f"Afspelen gestart: {track.get('name', '?')} van {artist}")   # nooit een exceptie NA een geslaagde start
         return ok
 
     def pauze(self):
@@ -117,10 +121,15 @@ class SpotifyDJ:
             results = self.sp.current_user_recently_played(limit=limit)
         except Exception:  # noqa: BLE001
             return []
-        return [
-            f"{it['track']['name']} van {it['track']['artists'][0]['name']}"
-            for it in results.get("items", [])
-        ]
+        out = []
+        for it in (results or {}).get("items") or []:
+            t = it.get("track") if isinstance(it, dict) else None
+            if not isinstance(t, dict) or not t.get("name"):
+                continue
+            artists = t.get("artists") or []
+            artist = artists[0].get("name") if artists and isinstance(artists[0], dict) else None
+            out.append(f"{t['name']} van {artist}" if artist else t["name"])
+        return out
 
     def laatste_playlists(self, limit=5):
         try:
