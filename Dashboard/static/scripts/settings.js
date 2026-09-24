@@ -93,6 +93,8 @@ const SCHEMA = [
       { path: "interval_s", label: "Detectie-interval (s)", type: "number", step: "0.5", min: 0.5, max: 30,
         hint: "Hoger = minder CPU-gebruik op de Pi." },
       { path: "consecutive_required", label: "Opeenvolgende detecties voor 'bezet'", type: "number", min: 1, max: 10 },
+      { path: "detect_scale", label: "Detectie-schaal", type: "number", step: "0.05", min: 0.25, max: 1,
+        hint: "Beeld verkleinen vóór detectie. 1 = ongewijzigd. Lager (bv. 0.6) scheelt veel CPU op de Pi, maar kleine/verre personen worden mogelijk gemist -- test het eerst live (zie detect_ms in /api/presence)." },
       { path: "empty_grace_s", label: "Wachttijd voor 'leeg' (s)", type: "number", min: 0, max: 300,
         hint: "Eén gemist frame maakt de kamer nog niet meteen leeg." },
       { path: "auto_light_enabled", label: "Automatische lamp op aanwezigheid", type: "bool",

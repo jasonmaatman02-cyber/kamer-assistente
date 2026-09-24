@@ -114,6 +114,10 @@ DEFAULTS: dict = {
         "enabled": False,
         "interval_s": 3.0,             # PEOPLE_DETECTION_INTERVAL: hoe vaak een frame checken
         "consecutive_required": 2,     # zoveel opeenvolgende positieve detecties voor OCCUPIED
+        # Frame verkleinen vóór HOG-detectie (0.25-1.0). 1.0 = ongewijzigd. Lager
+        # = veel minder CPU (dev-meting: 0.6 ~10x sneller) maar mogelijk minder
+        # gevoelig voor verre/kleine personen -- eerst op het echte beeld toetsen.
+        "detect_scale": 1.0,
         "empty_grace_s": 20.0,         # zo lang wachten met EMPTY na de laatste detectie
         "auto_light_enabled": False,   # AUTO_LIGHT_ENABLED
         "lamp": 0,                     # welke lamp (index/naam) de presence-logica bedient

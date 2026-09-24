@@ -223,6 +223,7 @@ def health():
         "camera": {
             "error": camera.error,
             "viewers": camera._viewers,
+            "frame_age_s": camera.frame_age_s(),
             "thread_alive": bool(camera._thread and camera._thread.is_alive()),
         },
         "alarm": {"set": dt is not None, "when": dt.strftime("%Y-%m-%d %H:%M") if dt else None},

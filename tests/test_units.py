@@ -1567,7 +1567,7 @@ def test_presence_get_frame_calls_keep_alive_every_tick(monkeypatch):
     fake_camera = type("FakeCam", (), {})()
     fake_camera.acquire = lambda: (calls.__setitem__("acquire", calls["acquire"] + 1) or (lambda: None))
     fake_camera.keep_alive = lambda on: calls["keep_alive"].append(on)
-    fake_camera.latest_jpeg = lambda: None
+    fake_camera.latest_jpeg = lambda **kw: None
 
     import Dashboard.backend.camera_api as camera_api
     monkeypatch.setattr(camera_api, "camera", fake_camera)
@@ -1590,7 +1590,7 @@ def test_presence_get_frame_handles_camera_full(monkeypatch):
     fake_camera = type("FakeCam", (), {})()
     fake_camera.acquire = lambda: None    # camera vol
     fake_camera.keep_alive = lambda on: None
-    fake_camera.latest_jpeg = lambda: None
+    fake_camera.latest_jpeg = lambda **kw: None
 
     import Dashboard.backend.camera_api as camera_api
     monkeypatch.setattr(camera_api, "camera", fake_camera)

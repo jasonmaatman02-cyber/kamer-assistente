@@ -88,6 +88,7 @@ class PresenceWorker:
 
         self.room_state = "EMPTY"
         self.last_count = 0
+        self.last_detect_ms: float | None = None   # duur van de laatste HOG-detectie (performance-meting)
         self.last_change: float | None = None   # time.time() van de laatste EMPTY<->OCCUPIED-overgang
         self._positive_streak = 0
         self._last_positive_at: float | None = None
@@ -116,6 +117,11 @@ class PresenceWorker:
         self._pending_light: bool | None = None
         self._light_retries = 0
 
+        # Herhaalde identieke onverwachte fout niet elke tick (3s) opnieuw
+        # loggen: ~29k regels/dag op een Pi zonder logrotatie.
+        self._last_loop_error: str | None = None
+        self._last_loop_error_at = 0.0
+
     # ------------------------------------------------------------------ #
     # Lifecycle
     # ------------------------------------------------------------------ #
@@ -127,24 +133,35 @@ class PresenceWorker:
             self._thread = threading.Thread(target=self._loop, name="presence", daemon=True)
             self._thread.start()
 
+    def _run_once(self) -> float:
+        """Eén ronde van de worker; geeft de wachttijd tot de volgende terug.
+        Vangt alles af: deze thread mag nooit doodgaan."""
+        interval = 5.0
+        try:
+            if config.get("presence.enabled", False):
+                interval = max(0.5, float(config.get("presence.interval_s", 3.0)))
+                self._tick()
+            else:
+                self._release_camera()
+                self.room_state = "EMPTY"
+                self._positive_streak = 0
+                self._pending_light = None
+                self._light_retries = 0
+                self._sensor_unknown = False
+                self._mode = "AUTO"
+            self._last_loop_error = None
+        except Exception as exc:  # noqa: BLE001 - deze thread mag nooit doodgaan
+            msg = f"{type(exc).__name__}: {exc}"
+            now = time.time()
+            if msg != self._last_loop_error or now - self._last_loop_error_at > 600:
+                log("PEOPLE", f"Onverwachte fout in aanwezigheids-worker: {msg}")
+                self._last_loop_error = msg
+                self._last_loop_error_at = now
+        return interval
+
     def _loop(self):
         while not self._stop.is_set():
-            interval = 5.0
-            try:
-                if config.get("presence.enabled", False):
-                    interval = max(0.5, float(config.get("presence.interval_s", 3.0)))
-                    self._tick()
-                else:
-                    self._release_camera()
-                    self.room_state = "EMPTY"
-                    self._positive_streak = 0
-                    self._pending_light = None
-                    self._light_retries = 0
-                    self._sensor_unknown = False
-                    self._mode = "AUTO"
-            except Exception as exc:  # noqa: BLE001 - deze thread mag nooit doodgaan
-                log("PEOPLE", f"Onverwachte fout in aanwezigheids-worker: {exc}")
-            self._stop.wait(interval)
+            self._stop.wait(self._run_once())
         self._release_camera()
 
     # ------------------------------------------------------------------ #
@@ -171,7 +188,12 @@ class PresenceWorker:
         # (reset_services()) stopt de capture-thread altijd, ook al houden wij
         # 'm 'levend' — dit herstart 'm dan vanzelf i.p.v. voorgoed op 0 te blijven.
         camera.keep_alive(True)
-        jpeg = camera.latest_jpeg()
+        # Een frame dat ouder is dan dit telt als "geen beeld" (sensor ONBEKEND):
+        # een vastgelopen camera-lees liet anders het laatste frame eeuwig 'vers'
+        # lijken -- een bevroren beeld mét persoon hield de kamer voor altijd
+        # bezet (lamp ging nooit uit), een bevroren leeg beeld idem andersom.
+        interval = max(0.5, float(config.get("presence.interval_s", 3.0)))
+        jpeg = camera.latest_jpeg(max_age_s=max(10.0, 4 * interval))
         if not jpeg:
             return None
         try:
@@ -213,6 +235,13 @@ class PresenceWorker:
             return
         if self._sensor_unknown:
             log("PEOPLE", "Sensor available again")
+            if self.room_state == "OCCUPIED":
+                # De storing was geen meting: de grace-periode telt vanaf NU, niet
+                # vanaf de laatste positieve detectie van vóór de storing. Anders
+                # flipte één enkel negatief frame direct na een lange storing de
+                # kamer naar EMPTY (lamp uit) zonder dat er ooit een geldige
+                # "leeg"-periode van empty_grace_s is doorlopen.
+                self._last_positive_at = time.time()
         self._sensor_unknown = False
         self._sensor_unknown_warned = False
 
@@ -223,7 +252,15 @@ class PresenceWorker:
         # aanstuurt (alleen voor de client-side browser-preview, zie
         # system_api.py::public_config()).
         threshold = float(config.get("camera.detect_threshold", 0.5) or 0.0)
-        count = count_people(frame, hit_threshold=threshold)
+        # Optionele verkleining vóór de (zware) HOG-detector: gemeten op een
+        # dev-machine kost 640x360 ~190ms/frame en 0.6x (384x216) ~20ms --
+        # op een Pi 4B is dat het grootste deel van de presence-CPU. Default
+        # 1.0 (ongewijzigd gedrag): de nauwkeurigheid op het echte camerabeeld
+        # moet eerst live getoetst worden voordat dit omlaag gaat.
+        scale = min(1.0, max(0.25, float(config.get("presence.detect_scale", 1.0) or 1.0)))
+        t0 = time.perf_counter()
+        count = count_people(frame, scale=scale, hit_threshold=threshold)
+        self.last_detect_ms = round((time.perf_counter() - t0) * 1000, 1)
         self.last_count = count
         now = time.time()
 
@@ -344,6 +381,7 @@ class PresenceWorker:
             "enabled": presence_enabled,
             "room_state": self.room_state,
             "last_count": self.last_count,
+            "detect_ms": self.last_detect_ms,
             "auto_light_enabled": auto_light_enabled,
             "auto_light_blocked": is_auto_light_blocked(),
             # Rijkere, provider-onafhankelijke vorm voor de Kalender/Settings-UI:

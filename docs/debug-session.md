@@ -26,6 +26,17 @@ requirements-dashboard.txt` voor de nieuwe `zeroconf`-dependency).
 #### S2-2 Opruiming: 3 ongebruikte imports
 `logic/logger.py` (os), `main.py` (config), `voice/Whisper_short.py` (config). ruff F-klasse nu schoon.
 
+#### S2-3 Camera/presence: backoff, bevroren frame, CPU, herstel-grace, log-spam
+Reproductie lokaal met een gescripte nep-`cv2` (`tests/test_camera.py`, 12 tests, 10 falen tegen de oude code, 5/5 stabiel op de nieuwe).
+- **Backoff ontbrak**: een ontbrekende/losgetrokken USB-camera werd door presence (elke ~3s `keep_alive` -> `_ensure_running`) elke tick opnieuw geopend (V4L2-waarschuwing per poging, CPU). Nu: 1e mislukking direct opnieuw (USB-hikje), daarna 5/10/20/40/max 60s; een echt frame reset de teller.
+- **Bevroren frame**: `_latest` bleef na een vastgelopen `read()` het laatste frame 'vers' tonen -> een bevroren beeld met persoon = kamer voor altijd bezet (lamp gaat nooit uit). Frames dragen nu een tijdstempel; presence vraagt `latest_jpeg(max_age_s=max(10, 4*interval))`, ouder = sensor ONBEKEND (bestaande hold-logica). `frame_age_s` zichtbaar in `/api/health` en `/api/camera_status`.
+- **CPU (gemeten)**: de capture-thread draaide op de volle `camera.fps` (resize+JPEG-encode per frame) terwijl presence er maar 1 per 3s gebruikt. Nu: als alleen presence meekijkt (`_viewers <= 1`, geen snapshot in 30s) een frame per `presence.interval_s/2` (0.5-2s), met `Event`-wake zodat een nieuwe browser-kijker meteen de volle framerate krijgt en `release()` niet de hele slaap uitwacht. Dev-meting: 3.07 ms/frame -> 4.6% vs 0.2% van 1 core bij 15 vs 0.67 fps (Pi ~5-10x meer).
+- **HOG is de echte CPU-verbruiker**: dev-meting 640x360 ~190-270 ms/frame; met verkleining 0.6x ~20 ms (~10x). Nieuwe **opt-in** instelling `presence.detect_scale` (default 1.0 = ongewijzigd gedrag, want detectie-nauwkeurigheid op het echte beeld moet live getoetst worden) + `detect_ms` in `/api/presence` om dat op de Pi te meten.
+- **Herstel-grace**: na een lange camerastoring maakte 1 negatief frame de kamer direct EMPTY (grace liep vanaf vóór de storing). Grace start nu bij herstel van de sensor.
+- **Log-spam**: identieke onverwachte worker-fout werd elke 3s gelogd (~29k regels/dag); nu 1x per 10 min per unieke fout.
+- **Bestanden**: `Dashboard/backend/camera_api.py`, `presence.py`, `system_api.py`, `config/settings.py`, `Dashboard/static/scripts/settings.js`, `tests/test_camera.py`, `tests/test_units.py` (2 camera-fakes accepteren nu `max_age_s`).
+- **Resterend risico / niet testbaar zonder hardware**: echt USB-gedrag (device-index verandert na replug, `read()` dat langer dan de OpenCV-select-timeout blokkeert); HOG kan een zittend/liggend persoon missen (bekende beperking van de HOG-mensdetector); of `detect_scale=0.6` op het echte beeld genoeg detecteert. Bewust niet gedaan: `time.monotonic()` voor de grace-klok (NTP-sprong bij boot op een Pi zonder RTC is eenmalig en onschadelijk; zou 3 tests op een klok-seam laten herschrijven).
+
 #### Statische analyse (uitgevoerd, geen verdere bevindingen)
 - ruff F: schoon na S2-2. bandit: 0 High, 1 Medium (`0.0.0.0` bind in `rundashboard.py`, bewust: LAN-dashboard achter optioneel wachtwoord), 21 Low (vaste-argv-subprocess, `try/except/pass`; beoordeeld, alleen tts-argv was echt).
 - vulture: `devices/Lights.py:65` ongebruikte parameters `stappen`/`vertraging` (`zet_helderheid`) -- API-compat, laten staan.

@@ -13,6 +13,20 @@ from Dashboard.backend.auth import require_password
 
 camera_bp = Blueprint("camera", __name__)
 
+_mono = time.monotonic   # seam voor tests (backoff/staleness zonder echt wachten)
+
+# Herstart-backoff na opeenvolgende mislukte opens/reads (USB-camera eruit,
+# libcamera weg): 1e mislukking -> direct opnieuw (USB-hikje), daarna 5s,
+# 10s, 20s, 40s, max 60s. Zonder dit startte presence (elke ~3s
+# keep_alive -> _ensure_running) elke tick opnieuw een open-poging met een
+# V4L2-waarschuwing in het journaal per poging.
+_BACKOFF_BASE_S = 5.0
+_BACKOFF_MAX_S = 60.0
+# Als alleen de aanwezigheidsdetectie meekijkt: zoveel s tussen frames
+# (presence.interval_s/2, begrensd) i.p.v. de volle camera.fps.
+_PRESENCE_ONLY_MIN_S = 0.5
+_PRESENCE_ONLY_MAX_S = 2.0
+
 
 class _Camera:
     def __init__(self):
@@ -25,6 +39,9 @@ class _Camera:
         self._last_grab = 0.0        # laatste losse snapshot-aanvraag
         self._keep_alive = False     # bv. aanwezigheidsdetectie: blijf draaien zonder kijkers
         self.error = None
+        self._wake = threading.Event()   # maakt de capture-loop meteen wakker (nieuwe kijker/stop)
+        self._consec_fail = 0            # opeenvolgende mislukte open/read-pogingen
+        self._retry_at = 0.0             # _mono()-tijdstip waarvoor een herstart wordt uitgesteld
 
     def keep_alive(self, on: bool) -> None:
         """Voorkom dat de capture-thread stopt als er geen MJPEG-kijkers of
@@ -45,6 +62,7 @@ class _Camera:
             if self._viewers >= self._max_viewers():
                 return None
             self._viewers += 1
+        self._wake.set()   # een echte kijker -> meteen de volle framerate
         released = [False]
 
         def release():
@@ -55,6 +73,7 @@ class _Camera:
                 self._viewers = max(0, self._viewers - 1)
                 if self._viewers == 0:
                     self._stop.set()
+                    self._wake.set()
 
         return release
 
@@ -99,6 +118,31 @@ class _Camera:
 
         raise RuntimeError("; ".join(errs) or f"onbekende camera.backend {backend!r}")
 
+    def _note_failure(self) -> None:
+        """Registreer een mislukte open/read en plan de vroegst mogelijke
+        herstart (backoff, zie _BACKOFF_*)."""
+        self._consec_fail += 1
+        n = self._consec_fail
+        delay = 0.0 if n <= 1 else min(_BACKOFF_MAX_S, _BACKOFF_BASE_S * 2 ** (n - 2))
+        self._retry_at = _mono() + delay
+
+    def _presence_only(self) -> bool:
+        """True als geen mens/browser meekijkt en alleen de aanwezigheids-
+        detectie (die zelf precies één kijkerplek vasthoudt) frames nodig heeft
+        -- dan is de volle camera.fps (resize + JPEG-encode per frame) puur
+        verspilde CPU op een Pi: presence gebruikt er maar één per ~3s."""
+        return (
+            self._keep_alive
+            and self._viewers <= 1
+            and time.time() - self._last_grab > 30
+        )
+
+    def _frame_delay(self) -> float:
+        if self._presence_only():
+            interval = float(config.get("presence.interval_s", 3.0) or 3.0)
+            return min(_PRESENCE_ONLY_MAX_S, max(_PRESENCE_ONLY_MIN_S, interval / 2))
+        return 1.0 / max(1, config.get("camera.fps", 10))
+
     def _run(self):
         try:
             import cv2
@@ -110,8 +154,10 @@ class _Camera:
             read, close = self._open_source(w, h, config.get("camera.fps", 10))
         except Exception as exc:  # noqa: BLE001
             self.error = f"camera kan niet worden geopend ({exc})"
+            self._note_failure()
             return
         self.error = None
+        got_frame = False
         try:
             while not self._stop.is_set():
                 # niemand kijkt (geen MJPEG-viewer), geen snapshot in 30s, en niemand
@@ -119,18 +165,22 @@ class _Camera:
                 if not self._keep_alive and self._viewers == 0 and time.time() - self._last_grab > 30:
                     break
                 q = int(config.get("camera.jpeg_quality", 55))
-                delay = 1.0 / max(1, config.get("camera.fps", 10))
                 ok, frame = read()
                 if not ok or frame is None:
                     self.error = "geen beeld van camera"
+                    self._note_failure()
                     break
+                if not got_frame:   # een echt frame: de bron is gezond, backoff terug op nul
+                    got_frame = True
+                    self._consec_fail = 0
                 frame = cv2.resize(frame, (w, h))
                 ok, buf = cv2.imencode(".jpg", frame, [int(cv2.IMWRITE_JPEG_QUALITY), q])
                 if ok:
                     with self._lock:
                         self._seq += 1
-                        self._latest = (buf.tobytes(), self._seq)
-                time.sleep(delay)
+                        self._latest = (buf.tobytes(), self._seq, _mono())
+                self._wake.wait(self._frame_delay())
+                self._wake.clear()
         finally:
             try:
                 close()
@@ -142,17 +192,33 @@ class _Camera:
     def _ensure_running(self):
         with self._lock:
             if self._thread is None or not self._thread.is_alive():
+                if _mono() < self._retry_at:
+                    return   # backoff na herhaalde mislukkingen, zie _note_failure()
                 self._stop.clear()
-                self._thread = threading.Thread(target=self._run, daemon=True)
+                self._thread = threading.Thread(target=self._run, name="camera", daemon=True)
                 self._thread.start()
 
-    def latest_jpeg(self) -> bytes | None:
-        """Het nieuwste frame als JPEG-bytes, of ``None`` als er nog niks is."""
+    def latest_jpeg(self, max_age_s: float | None = None) -> bytes | None:
+        """Het nieuwste frame als JPEG-bytes, of ``None`` als er nog niks is.
+
+        Met ``max_age_s`` ook ``None`` als dat frame ouder is: een vastgelopen
+        camera-lees (USB-brownout, device dat blijft hangen) laat anders het
+        LAATSTE frame eeuwig 'vers' lijken -- een bevroren beeld met een persoon
+        erin zou de kamer voor altijd bezet houden (lamp gaat nooit uit)."""
         with self._lock:
-            return self._latest[0] if self._latest else None
+            if not self._latest:
+                return None
+            if max_age_s is not None and _mono() - self._latest[2] > max_age_s:
+                return None
+            return self._latest[0]
+
+    def frame_age_s(self) -> float | None:
+        with self._lock:
+            return None if not self._latest else round(_mono() - self._latest[2], 2)
 
     def release(self):
         self._stop.set()
+        self._wake.set()
 
     def frames(self, on_exit=lambda: None):
         """Aanroeper doet eerst acquire(); ``on_exit`` is de release-functie
@@ -206,6 +272,7 @@ def camera_snapshot():
     if not config.get("camera.enabled", True):
         return Response("camera uit", status=503)
     camera._last_grab = time.time()
+    camera._wake.set()
     camera._ensure_running()
     latest = camera._latest
     if not latest:
@@ -219,4 +286,5 @@ def camera_status():
         "enabled": bool(config.get("camera.enabled", True)),
         "error": camera.error,
         "viewers": camera._viewers,
+        "frame_age_s": camera.frame_age_s(),
     })
