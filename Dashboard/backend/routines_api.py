@@ -83,6 +83,8 @@ def _run_step(step):
     kind = step.get("action")
     if kind == "lamp":
         ip = S.lamp_ip(step.get("lamp", 0))
+        if not ip:
+            raise RuntimeError("geen lamp geconfigureerd")       # i.p.v. een verbinding naar 'None'
         lamp = S.lamp(ip)
         mode = step.get("mode", "on")
         coro = {"on": lamp.aan, "off": lamp.uit, "desk": lamp.bureau,
@@ -167,7 +169,10 @@ def _run_routine_unguarded(rid):
     elif rid in ("party", "desk"):
         result = RoutineResult(total=1)
         try:
-            lamp = S.lamp(S.lamp_ip(0))
+            ip = S.lamp_ip(0)
+            if not ip:
+                raise RuntimeError("geen lamp geconfigureerd")
+            lamp = S.lamp(ip)
             asyncio.run(lamp.party() if rid == "party" else lamp.bureau())
         except Exception as exc:  # noqa: BLE001
             log("ROUTINE", f"Light action failed: {exc}")
@@ -199,6 +204,8 @@ def _run_routine_unguarded(rid):
 @require_password
 def routines_run():
     rid = json_body().get("id")
+    if not isinstance(rid, str) or not rid:
+        return jsonify({"success": False, "error": "routine-id (tekst) ontbreekt"}), 400
     try:
         result = _run_routine(rid)
         if result is not None and result.failed:

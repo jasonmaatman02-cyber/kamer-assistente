@@ -34,6 +34,13 @@ def _settings_type_errors(patch: dict, defaults: dict, path: str = "") -> list[s
     gerepareerd was. Onbekende sleutels (eigen routines, ...) blokkeren we niet."""
     errors: list[str] = []
     for key, val in patch.items():
+        if not path and key == "routines":
+            # eigen routines staan niet in DEFAULTS; de routine-code leest r["id"]/r.get(...), dus een
+            # element dat geen object is (of een lijst van duizenden) gaf overal fouten
+            if not isinstance(val, list) or len(val) > 50 or not all(
+                    isinstance(e, dict) and isinstance(e.get("id", ""), str) for e in val):
+                errors.append("routines: max 50 routines, elk een object met een tekst-id")
+            continue
         if key not in defaults:
             continue
         p = f"{path}{key}"
@@ -287,7 +294,8 @@ def health():
     from Dashboard.backend.camera_api import camera
 
     dt = routines_api._alarm.alarm_time
-    on_disk = _git_sha()
+    # `git rev-parse` is een subprocess (~30 ms op de Pi): niet bij elke aanroep van een poller/script
+    on_disk = S._cached("health:git", 30.0, _git_sha, fallback="?")
     return jsonify({
         "ok": True,
         "time": time.strftime("%Y-%m-%d %H:%M:%S"),

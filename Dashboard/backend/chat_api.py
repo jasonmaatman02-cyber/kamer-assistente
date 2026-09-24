@@ -19,6 +19,19 @@ def _sid(raw) -> str:
     return f"{base}:{tab}"
 
 
+MAX_MESSAGE_CHARS = 8000     # een prompt van MB's laat het lokale model op een Pi minutenlang rekenen
+
+
+def _message(raw):
+    """(tekst, foutmelding): een bericht is een niet-lege tekst van hooguit MAX_MESSAGE_CHARS."""
+    if raw is not None and not isinstance(raw, str):
+        return "", "bericht moet tekst zijn"
+    text = (raw or "").strip()
+    if len(text) > MAX_MESSAGE_CHARS:
+        return "", f"bericht te lang (max {MAX_MESSAGE_CHARS} tekens)"
+    return text, None
+
+
 @chat_bp.route("/api/chat/reset", methods=["POST"])
 @require_password
 def chat_reset():
@@ -32,7 +45,9 @@ def chat_reset():
 @require_password
 def send_message():
     body = json_body()
-    text = (body.get("message") or "").strip()
+    text, error = _message(body.get("message"))
+    if error:
+        return jsonify({"reply": error, "error": error}), 400
     if not text:
         return jsonify({"reply": "Typ iets alsjeblieft."})
     from logic.gpt_handler import verwerk_input
@@ -43,7 +58,9 @@ def send_message():
 @chat_bp.route("/api/chat_stream")
 @require_password
 def chat_stream():
-    text = (request.args.get("message") or "").strip()
+    text, error = _message(request.args.get("message"))
+    if error:
+        return jsonify({"error": error}), 400
     if not text:
         return jsonify({"error": "leeg bericht"}), 400
     sid = _sid(request.args.get("sid"))

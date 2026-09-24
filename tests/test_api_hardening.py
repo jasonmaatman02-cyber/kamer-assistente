@@ -502,3 +502,63 @@ def test_last_played_playlists_is_cached_so_a_poller_cannot_fan_out_api_calls(cl
         r = client.get("/api/last_played_playlists")
         assert r.status_code == 200 and r.get_json()[0]["id"] == "p1"
     assert calls["n"] == 1
+
+
+def test_settings_reject_a_routines_list_with_non_objects(client):
+    assert client.post("/api/settings", json={"routines": [1, "x"]}).status_code == 400
+    assert client.post("/api/settings", json={"routines": [{"id": 5}]}).status_code == 400
+    assert client.post("/api/settings", json={"routines": "geen lijst"}).status_code == 400
+    ok = client.post("/api/settings", json={"routines": [{"id": "avond", "name": "Avond", "steps": []}]})
+    assert ok.status_code == 200
+    assert client.get("/api/routines").status_code == 200        # en de lijst blijft leesbaar
+
+
+def test_health_runs_git_at_most_once_per_30_seconds(client, monkeypatch):
+    from Dashboard.backend import services as S
+    from Dashboard.backend import system_api as api
+
+    S.reset_services()
+    calls = {"n": 0}
+
+    def fake_sha():
+        calls["n"] += 1
+        return "abc1234"
+
+    monkeypatch.setattr(api, "_git_sha", fake_sha)
+    for _ in range(6):
+        assert client.get("/api/health").get_json()["git"] == "abc1234"
+    assert calls["n"] == 1
+
+
+@pytest.mark.parametrize("rid", [None, 5, ["morning"], {"a": 1}, ""])
+def test_routine_run_with_a_non_text_id_is_a_400(client, rid):
+    r = client.post("/api/routines/run", json={"id": rid})
+    assert r.status_code == 400 and r.get_json()["success"] is False
+
+
+def test_lamp_routines_without_a_configured_lamp_say_so(client):
+    config.set("devices.lamps", [])
+    r = client.post("/api/routines/run", json={"id": "party"})
+    assert r.status_code == 502 and "geen lamp" in r.get_json()["error"]
+    config.set("routines", [{"id": "l", "name": "L", "steps": [{"action": "lamp", "mode": "on"}]}])
+    r = client.post("/api/routines/run", json={"id": "l"})
+    assert r.status_code == 502 and "geen lamp" in r.get_json()["error"]
+
+
+@pytest.mark.parametrize("bad", [5, ["a"], {"x": 1}, True])
+def test_chat_message_must_be_text(client, bad):
+    r = client.post("/api/send_message", json={"message": bad})
+    assert r.status_code == 400 and "tekst" in r.get_json()["error"]
+
+
+def test_chat_message_length_is_capped(client, monkeypatch):
+    import logic.gpt_handler as gh
+
+    seen = []
+    monkeypatch.setattr(gh, "verwerk_input", lambda text, session="voice": seen.append(text) or "ok")
+    big = "x" * 8001
+    assert client.post("/api/send_message", json={"message": big}).status_code == 400
+    assert client.get("/api/chat_stream?message=" + big).status_code == 400
+    assert seen == []                                          # het model is nooit aangeroepen
+    ok = client.post("/api/send_message", json={"message": "x" * 8000})
+    assert ok.status_code == 200 and ok.get_json()["reply"] == "ok" and len(seen[0]) == 8000
