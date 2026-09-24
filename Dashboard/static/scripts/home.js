@@ -109,16 +109,27 @@ function renderNowPlaying(d) {
 }
 
 // ---------- fetchers ----------
+let overviewFails = 0;
 async function refreshAll() {
   try {
     const d = await jget("/api/overview");
+    overviewFails = 0;
     renderSystem(d.system);
     renderServices(d.services);
     renderWeather(d.weather);
     renderAgenda(d.calendar);
     renderNotes(d.notes);
     renderNowPlaying(d.now_playing);
-  } catch (e) { console.error("overview:", e); }
+  } catch (e) {
+    console.error("overview:", e);
+    // Bij een onbereikbare server bleef de pagina de laatste waarden tonen alsof er niets aan de hand was.
+    if (++overviewFails >= 2) {
+      const conn = $("conn-status");
+      if (conn) { conn.className = "status offline"; conn.innerHTML = '<i class="fa fa-circle"></i> Server niet bereikbaar'; }
+      $("sys-stats")?.classList.add("stale");
+    }
+  }
+  if (overviewFails === 0) $("sys-stats")?.classList.remove("stale");
 }
 async function refreshNowPlaying() {
   try { renderNowPlaying(await jget("/api/current_playing")); }

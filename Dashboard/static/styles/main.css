@@ -453,3 +453,6 @@ a.card-link { text-decoration: none; color: inherit; }
 }
 .toast.show { opacity: 1; transform: translateY(0); }
 .toast.err { border-color: #e74c3c; box-shadow: 0 0 16px rgba(231,76,60,.4); }
+
+/* verouderde gegevens (server niet bereikbaar): gedempt tonen i.p.v. alsof ze actueel zijn */
+.stale { opacity: .45; filter: grayscale(.6); }
