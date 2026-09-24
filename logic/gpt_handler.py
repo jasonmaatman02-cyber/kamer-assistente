@@ -237,14 +237,28 @@ def haal_wind_op(stad=None):
     return _get("weer").get_wind(stad or config.get("weather.city"))
 
 
+def _afspraken(cal, events, dag: str) -> str:
+    """Tekst voor de AI. Een agenda die niet kon worden opgehaald (Google weg, token verlopen) is GEEN lege
+    dag: ``return_*_events()`` geeft dan ook "Geen events ...", en het model zei dan gerust "je hebt niets
+    gepland" terwijl het niet wist. De fout wordt erbij gemeld (het dashboard doet dat al)."""
+    real = [e for e in events if not str(e).startswith("Geen events")]
+    errors = list(getattr(cal, "fetch_errors", None) or [])
+    if errors and not real:
+        return f"Ik kon de agenda niet ophalen ({'; '.join(errors)}), dus ik weet niet wat er {dag} gepland staat."
+    if not real:
+        return f"Geen afspraken voor {dag}."
+    note = f"\n(Let op, niet alles kon worden opgehaald: {'; '.join(errors)})" if errors else ""
+    return f"Afspraken voor {dag}:\n" + "\n".join(real) + note
+
+
 def afspraken_vandaag():
-    events = _get("agenda").return_todays_events()
-    return "Afspraken voor vandaag:\n" + "\n".join(events) if events else "Geen afspraken voor vandaag."
+    cal = _get("agenda")
+    return _afspraken(cal, cal.return_todays_events(), "vandaag")
 
 
 def afspraken_morgen():
-    events = _get("agenda").return_tomorrows_events()
-    return "Afspraken voor morgen:\n" + "\n".join(events) if events else "Geen afspraken voor morgen."
+    cal = _get("agenda")
+    return _afspraken(cal, cal.return_tomorrows_events(), "morgen")
 
 
 def voeg_notitie_toe(inhoud):

@@ -268,3 +268,45 @@ def test_laatst_afgespeeld_survives_partial_items():
 
     dj.sp = SP()
     assert dj.laatst_afgespeeld() == ["A", "B van X"]
+
+
+# --------------------------------------------------------------------------- #
+# Agenda-tools: een agenda die niet kon worden opgehaald is geen lege dag
+# --------------------------------------------------------------------------- #
+class _Cal:
+    def __init__(self, events, errors=None):
+        self._events, self.fetch_errors = events, errors or []
+
+    def return_todays_events(self):
+        return self._events or ["Geen events vandaag!"]
+
+    def return_tomorrows_events(self):
+        return self._events or ["Geen events morgen!"]
+
+
+def _with_cal(monkeypatch, cal):
+    monkeypatch.setattr(gh, "_get", lambda name: cal if name == "agenda" else pytest.fail(name))
+
+
+def test_agenda_tool_lists_events(monkeypatch):
+    _with_cal(monkeypatch, _Cal(["Lunch om 12:00", "Tandarts om 15:00"]))
+    out = gh.afspraken_vandaag()
+    assert out.startswith("Afspraken voor vandaag") and "Lunch om 12:00" in out and "Tandarts om 15:00" in out
+    assert "Let op" not in out
+
+
+def test_agenda_tool_says_so_for_a_truly_empty_day(monkeypatch):
+    _with_cal(monkeypatch, _Cal([]))
+    assert gh.afspraken_morgen() == "Geen afspraken voor morgen."
+
+
+def test_agenda_tool_does_not_call_a_failed_fetch_an_empty_day(monkeypatch):
+    _with_cal(monkeypatch, _Cal([], ["Google Agenda: toegang verlopen, koppel opnieuw"]))
+    out = gh.afspraken_vandaag()
+    assert "niet ophalen" in out and "toegang verlopen" in out and "Geen afspraken" not in out
+
+
+def test_agenda_tool_reports_partial_failures_next_to_the_events(monkeypatch):
+    _with_cal(monkeypatch, _Cal(["Lunch om 12:00"], ["iCloud: time-out"]))
+    out = gh.afspraken_vandaag()
+    assert "Lunch om 12:00" in out and "Let op" in out and "iCloud: time-out" in out

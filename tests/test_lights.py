@@ -73,3 +73,24 @@ def test_missing_tapo_account_is_a_clear_message_at_the_api(client, monkeypatch)
     r = client.put("/api/lamp/on", json={"lamp": 0})
     assert r.status_code == 500
     assert "Tapo-account niet ingesteld" in r.get_json()["message"]
+
+
+def test_hex_accepts_the_short_form_and_rejects_garbage():
+    from devices.Lights import hex_to_hue_saturation
+
+    assert hex_to_hue_saturation("#f00") == hex_to_hue_saturation("#ff0000") == (0, 100)
+    assert hex_to_hue_saturation("  #0F0 ") == (120, 100)
+    for bad in ("#zzzzzz", "#12", "#1234567", "", "#"):
+        with pytest.raises(ValueError):
+            hex_to_hue_saturation(bad)
+
+
+def test_zet_kleur_with_a_bad_hex_is_a_message_not_an_exception():
+    import asyncio
+
+    from devices.Lights import SlimmeLamp
+
+    lamp = SlimmeLamp("u", "p", "192.0.2.1")
+    lamp.lamp = object()                                  # mag niet aangeraakt worden
+    out = asyncio.run(lamp.zet_kleur("#nietgeldig"))
+    assert "ongeldig" in out

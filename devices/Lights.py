@@ -52,7 +52,11 @@ def hex_to_hue_saturation(hex_color):
     net als de Tapo-app). hex_to_hsl() gaf HLS-saturatie terug: bij een pastelkleur
     (bv. #ff9999) is die 100 i.p.v. 40, dus elke niet-volle kleur uit de kleurkiezer
     werd op de lamp volledig verzadigd."""
-    hex_color = hex_color.lstrip('#')
+    hex_color = hex_color.strip().lstrip('#')
+    if len(hex_color) == 3:                      # "#f00" -> "#ff0000" (modellen geven graag de korte vorm)
+        hex_color = "".join(c * 2 for c in hex_color)
+    if not re.fullmatch(r"[0-9a-fA-F]{6}", hex_color):
+        raise ValueError(f"ongeldige kleurcode: {hex_color[:12]!r}")
     r, g, b = (int(hex_color[i:i + 2], 16) / 255.0 for i in (0, 2, 4))
     h, s, _v = colorsys.rgb_to_hsv(r, g, b)
     return int(round(h * 360)) % 360, int(round(s * 100))
@@ -116,7 +120,10 @@ class SlimmeLamp:
         
     async def zet_kleur(self, kleur_naam):
         if "#" in kleur_naam:
-            hue, saturation = hex_to_hue_saturation(kleur_naam)
+            try:
+                hue, saturation = hex_to_hue_saturation(kleur_naam)
+            except ValueError:
+                return f"Kleurcode '{kleur_naam}' is ongeldig (gebruik #rrggbb)"
         elif kleur_naam in kleuren:
             hue, saturation = kleuren[kleur_naam]
         else:
