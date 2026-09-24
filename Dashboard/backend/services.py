@@ -195,15 +195,20 @@ def reconnect_lamp(ip: str):
 
 
 def lamp_ip(name_or_index):
-    lamps = config.get("devices.lamps", [])
-    if isinstance(name_or_index, int) or (isinstance(name_or_index, str) and name_or_index.isdigit()):
+    """IP van een lamp op index of (deel van de) naam. Een index buiten de lijst geeft ``None``
+    (voorheen: stilzwijgend de EERSTE lamp -- ``{"lamp": 5}`` of een verouderde
+    ``presence.lamp`` bediende dan de verkeerde lamp); een niet-passende naam valt terug op de
+    eerste lamp, zoals altijd."""
+    lamps = [e for e in (config.get("devices.lamps", []) or []) if isinstance(e, dict)]
+    if isinstance(name_or_index, bool):
+        name_or_index = 0
+    if isinstance(name_or_index, int) or (isinstance(name_or_index, str) and name_or_index.strip().isdigit()):
         idx = int(name_or_index)
-        if 0 <= idx < len(lamps):
-            return lamps[idx]["ip"]
+        return (lamps[idx].get("ip") or None) if 0 <= idx < len(lamps) else None
     for entry in lamps:
-        if str(name_or_index).lower() in entry.get("name", "").lower():
-            return entry["ip"]
-    return lamps[0]["ip"] if lamps else None
+        if str(name_or_index).lower() in str(entry.get("name", "")).lower():
+            return entry.get("ip") or None
+    return (lamps[0].get("ip") or None) if lamps else None
 
 
 # --------------------------------------------------------------------------- #

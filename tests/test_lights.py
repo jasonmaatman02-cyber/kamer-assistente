@@ -1,6 +1,8 @@
 """Lamp-kleuren: de automatiek kiest nooit paars ("geen paarse verlichting")."""
 import asyncio
 
+import pytest
+
 from devices.Lights import PARTY_KLEUREN, SlimmeLamp, kleuren
 
 
@@ -50,3 +52,24 @@ def test_explicit_purple_request_still_works():
     lamp.lamp = _RecordingLamp()
     assert "paars" in asyncio.run(lamp.zet_kleur("paars"))
     assert lamp.lamp.hues == [kleuren["paars"]]
+
+
+def test_connect_without_tapo_account_fails_clearly_without_touching_the_network(monkeypatch):
+    import devices.Lights as L
+
+    def boom(*a, **kw):
+        raise AssertionError("er mag geen ApiClient/netwerkpoging zijn zonder account")
+
+    monkeypatch.setattr(L, "ApiClient", boom)
+    for creds in (("", ""), (None, None), ("a@b.c", ""), ("", "pw")):
+        with pytest.raises(RuntimeError, match="Tapo-account niet ingesteld"):
+            asyncio.run(SlimmeLamp(*creds, "192.0.2.1").connect())
+
+
+def test_missing_tapo_account_is_a_clear_message_at_the_api(client, monkeypatch):
+    import config
+
+    config.set("devices.lamps", [{"name": "A", "ip": "192.0.2.1"}])
+    r = client.put("/api/lamp/on", json={"lamp": 0})
+    assert r.status_code == 500
+    assert "Tapo-account niet ingesteld" in r.get_json()["message"]

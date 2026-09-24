@@ -25,7 +25,8 @@ requirements-dashboard.txt` voor de nieuwe `zeroconf`-dependency).
 - 3c04aac AI-tools melden echte uitkomst (S2-15)
 - e4da17f begrensde groei, calendar-API auth, key-redactie (S2-16)
 - b22ae23 verse presence-frames + chaos-test (S2-17)
-- (volgende commit) settings-typecontrole (S2-18)
+- 6e34d24 settings-typecontrole (S2-18)
+- (volgende commit) lamp-adressering, Tapo-account-check (S2-19)
 
 ### Items
 
@@ -178,6 +179,13 @@ Langlopende stabiliteit: alles wat een client kan laten groeien moet een bovengr
 - **Fix**: `_settings_type_errors()` toetst de patch tegen `config.DEFAULTS` (bool/getal/tekst/lijst/object; bool geldt niet als getal; NaN/inf niet; tekst max 5000; `devices.lamps` max 20 met tekst-`name`/`ip`); onbekende sleutels (eigen routines, ...) blijven vrij; een lege patch is een 400. De Settings-pagina stuurt lege getal-velden al niet mee, en een round-trip van de hele huidige boom wordt geaccepteerd (test).
 - **Environment-pagina**: de knop "Stad opslaan" meldde altijd "Opgeslagen ✓", ook bij 401 (wachtwoord-slot) of 400 -> nu de echte uitkomst.
 - **Bestanden**: `Dashboard/backend/system_api.py`, `Dashboard/static/scripts/environment.js`, `tests/test_api_hardening.py` (+17).
+
+#### S2-19 Lamp-adressering en ontbrekend Tapo-account
+- **Verkeerde lamp bediend**: `services.lamp_ip()` gaf bij een index buiten de lijst stilzwijgend de EERSTE lamp terug: `{"lamp": 5}` (API), of een verouderde `presence.lamp` na het verwijderen van een lamp, bediende dan lamp 0. Nu `None` -> "geen lamp geconfigureerd" (400) resp. de bestaande "Geen lamp geconfigureerd voor aanwezigheidsautomatisering" in presence. Niet-passende *namen* vallen (ongewijzigd) terug op de eerste lamp; lampen zonder `ip` geven `None` i.p.v. een `KeyError`.
+- **Geen Tapo-account ingevuld**: `SlimmeLamp.connect()` liet de tapo-library toch verbinden (onduidelijke Unauthorized/time-out, elke poll opnieuw): een verse installatie toonde "lamp onbereikbaar". Nu direct "Tapo-account niet ingesteld -- vul TAPO_USER en TAPO_PASSWORD in bij Settings > Inloggegevens", zonder netwerkpoging (dekt dashboard, presence, routines en AI-tool).
+- **Regressiecheck stress**: alle vijf hang-scenario's (`tools/stress_dashboard.py` spotify/weer/agenda/ollama/radio) opnieuw: 0 canary-timeouts, worst-case 0,1 s. (Een eenmalige uitschieter van 33 s in een reeks viel samen met een pauze van de machine/sessie; herhaling schoon.)
+- **UI-kleurcontrole**: geen paars/violet/magenta (hex, rgb, hsl, kleurnamen) in `Dashboard/static` of de HTML-pagina's.
+- **Bestanden**: `Dashboard/backend/services.py`, `devices/Lights.py`, `tests/test_lights.py`, `tests/test_api_hardening.py`.
 
 #### Statische analyse (uitgevoerd, geen verdere bevindingen)
 - ruff F: schoon na S2-2. bandit: 0 High, 1 Medium (`0.0.0.0` bind in `rundashboard.py`, bewust: LAN-dashboard achter optioneel wachtwoord), 21 Low (vaste-argv-subprocess, `try/except/pass`; beoordeeld, alleen tts-argv was echt).

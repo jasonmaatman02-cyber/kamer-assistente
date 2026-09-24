@@ -244,3 +244,27 @@ def test_roundtrip_of_all_current_settings_is_accepted(client):
     r = client.post("/api/settings", json=current)
     assert r.status_code == 200, r.get_json()
     assert client.get("/api/settings").get_json()["settings"] == current
+
+
+def test_lamp_ip_resolution():
+    from Dashboard.backend import services as S
+
+    config.set("devices.lamps", [{"name": "Bureau", "ip": "192.0.2.1"}, {"name": "Slaapkamer", "ip": "192.0.2.2"}, {"name": "Leeg"}])
+    assert S.lamp_ip(0) == "192.0.2.1" and S.lamp_ip("1") == "192.0.2.2" and S.lamp_ip(1) == "192.0.2.2"
+    assert S.lamp_ip("slaap") == "192.0.2.2"
+    assert S.lamp_ip("onbekende naam") == "192.0.2.1"          # niet-passende naam: eerste lamp (ongewijzigd)
+    assert S.lamp_ip(5) is None and S.lamp_ip("9") is None and S.lamp_ip(-1) is None
+    assert S.lamp_ip(2) is None                               # lamp zonder ip
+    config.set("devices.lamps", [])
+    assert S.lamp_ip(0) is None and S.lamp_ip("x") is None
+
+
+def test_lamp_endpoint_with_an_index_that_does_not_exist_does_not_act_on_lamp_zero(client, monkeypatch):
+    from Dashboard.backend import services as S
+
+    config.set("devices.lamps", [{"name": "A", "ip": "192.0.2.1"}])
+    touched = []
+    monkeypatch.setattr(S, "lamp", lambda ip: touched.append(ip) or pytest.fail("lamp mag niet gebruikt worden"))
+    r = client.put("/api/lamp/on", json={"lamp": 5})
+    assert r.status_code == 400 and r.get_json()["message"] == "geen lamp geconfigureerd"
+    assert touched == []

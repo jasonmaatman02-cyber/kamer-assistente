@@ -84,6 +84,12 @@ class SlimmeLamp:
         self.lamp = None
 
     async def connect(self):
+        if not (self.email and self.wachtwoord):
+            # Zonder account probeert de tapo-library toch te verbinden (en faalt dan met een
+            # onduidelijke Unauthorized/time-out); een verse installatie toonde zo "lamp
+            # onbereikbaar" terwijl er alleen nog geen Tapo-account is ingevuld.
+            raise RuntimeError("Tapo-account niet ingesteld -- vul TAPO_USER en TAPO_PASSWORD in "
+                               "bij Settings > Inloggegevens")
         # tapo's timeout_s is een integer (een float geeft TypeError -- dat
         # viel eerst stilzwijgend terug op GEEN timeout, gevonden met een
         # echte-bibliotheek-test tegen een onbereikbaar adres).
