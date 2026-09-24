@@ -21,5 +21,29 @@ NotifyAccess=main
 MemoryMax=1200M
 Nice=5
 
+# --- OPTIONELE hardening (uitgeschakeld; NIET op de Pi getest met camera/geluid/radio) -----------------
+# `systemd-analyze security --offline=true` geeft met onderstaande set 3.7 (OK) i.p.v. 9.0 (UNSAFE); de
+# unit blijft geldig (`systemd-analyze verify`). Zet ze pas aan na een test van: camera (/api/health ->
+# camera.frame_age_s), radio/TTS (geluid), Tapo-lampen, Spotify-mDNS (/api/devices) en Ollama. VLC kan
+# `RestrictRealtime` als waarschuwing loggen. Voer na aanpassing `sudo systemctl daemon-reload` en een
+# herstart uit; terugdraaien = de regels weer uitcommentariëren.
+#NoNewPrivileges=true
+#PrivateTmp=true
+#ProtectKernelTunables=true
+#ProtectKernelModules=true
+#ProtectKernelLogs=true
+#ProtectControlGroups=true
+#ProtectClock=true
+#ProtectHostname=true
+#RestrictSUIDSGID=true
+#RestrictRealtime=true
+#LockPersonality=true
+#SystemCallArchitectures=native
+#RestrictNamespaces=true
+#RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
+#RemoveIPC=true
+#CapabilityBoundingSet=
+#AmbientCapabilities=
+
 [Install]
 WantedBy=multi-user.target
