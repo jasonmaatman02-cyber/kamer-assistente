@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import time
 
-import config
 from ai import stt
 from voice.Whisper import _is_wake, _record, _use_porcupine, NoMicError, SAMPLERATE
 

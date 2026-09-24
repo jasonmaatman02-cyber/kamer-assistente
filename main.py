@@ -8,7 +8,6 @@
 import sys
 import threading
 
-import config
 from logic.logger import log
 
 
