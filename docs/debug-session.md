@@ -120,6 +120,12 @@ Formaat per item: **ID | subsystem | probleem | oorzaak | oplossing | tests | re
 - **Start tijdens aanwezigheid** (`_baseline`, S3-3): na een herstart terwijl de kamer al bezet is gaat de lamp alleen aan als hij uit staat én de tijd niet geblokkeerd is (`test_baseline_start_respects_the_2130_rule`: dan zelfs geen `status`-aanroep).
 - **Tests**: `test_units.py::test_auto_light_block_*` (21:29/21:30/21:31/23:59, seconde-precisie, 00:00/00:05, 06:59:59/07:00:00, uitgeschakeld bij lege waarde) + `test_presence_baseline.py`. **Resterend risico**: naive lokale tijd; op de dag van de DST-wissel verspringt alleen het uur 02:00-03:00, dus geen effect op 21:30.
 
+### S3-19 | security | restant van het oude `keys/API_keys.py` op de Pi (gevonden, NIET verwijderd)
+- **Bevinding**: `/home/pi/kamer-assistente/keys/__pycache__/API_keys.cpython-313.pyc` (1442 bytes, modus **664**, 2026-09-08) is de gecompileerde kopie van het oude `keys/API_keys.py`; het bronbestand is uit de repo verwijderd, maar het `.pyc` staat nog op de Pi en niets importeert het (`grep` op `API_keys`/`from keys`: alleen de README-waarschuwing). Volgens de README bevatte dat bestand echte wachtwoorden/API-sleutels in platte tekst; een `.pyc` bewaart die tekenreeksen.
+- **Wat ik wel/niet deed**: alleen metadata bekeken (modus/grootte/datum). Ik heb de inhoud **niet** uitgelezen (een poging daartoe werd door de toestemmingscontrole geweigerd, terecht: het valt buiten wat nodig is voor de audit) en ik heb niets verwijderd (destructief; geen toestemming).
+- **Voor Jason**: (1) de secrets uit de README-tabel moeten geroteerd zijn/worden (ze staan ook in de git-geschiedenis van de openbare repo, commits vóór `e562430`); (2) opruimen op de Pi kan zonder gevolgen voor de app: `rm -r /home/pi/kamer-assistente/keys` (de map is leeg op dit `.pyc` na). Verder bekeken: `.env`, `.cache` (Spotify) en `google_calendar_token.json` zijn `0600`; `settings.json` (644) bevat geen geheimen (alleen sleutelnamen/waarden voor camera, presence, lampen, routines); `data/notes.json` is 664 (persoonlijke notities, `pi`-groep) -- laag risico, niet gewijzigd.
+- **Tests**: n.v.t. (systeeminspectie). **Resterend risico**: zolang het `.pyc` er staat en de oude sleutels niet zijn ingetrokken, is een lokale gebruiker op de Pi of iemand met een back-up van de SD-kaart in staat ze te lezen.
+
 ## Sessie 2 (2026-09-24, Pi tijdelijk onbereikbaar -> alles lokaal getest)
 
 Omgeving: Windows 11 dev-machine, Python 3.12. Geen SSH/deploy mogelijk;
