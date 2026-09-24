@@ -25,6 +25,10 @@ config.reload()
 import os as _os
 for _k in config.SECRET_KEYS:
     _os.environ.pop(_k, None)
+import logic.logger as _logger
+import logic.notes as _notes
+_logger.BASE_LOG_DIR = tmp / "logs"            # de echte data/logs blijft onaangeraakt
+_notes.NOTES_FILE = tmp / "notes.json"         # idem data/notes.json
 config.set("camera.enabled", False)
 config.set("presence.enabled", False)
 config.set("tts.backend", "none")

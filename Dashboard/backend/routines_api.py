@@ -7,6 +7,7 @@ from flask import Blueprint, jsonify
 
 import config
 from Dashboard.backend import services as S
+from devices.Lights import describe_lamp_error
 from Dashboard.backend.auth import require_password
 from logic.logger import log
 from scheduler.alarm_manager import alarm as _alarm
@@ -85,9 +86,11 @@ def _run_step(step):
         if r:
             r.play(step.get("station", "radio538"))
     elif kind == "spotify":
-        dj = S.svc("spotify")
-        if dj and step.get("playlist_id"):
-            dj.sp.start_playback(context_uri=f"spotify:playlist:{step['playlist_id']}")
+        if step.get("playlist_id"):
+            # sp_dj() gooit een duidelijke fout als Spotify niet is ingesteld (voorheen
+            # stilzwijgend niets doen = 'gelukt'), en start_playback() kiest het
+            # standaard-apparaat (de Pi) i.p.v. te falen met NO_ACTIVE_DEVICE.
+            S.start_playback(S.sp_dj().sp, context_uri=f"spotify:playlist:{step['playlist_id']}")
     elif kind == "say":
         from voice.tts_output import speak
 
@@ -111,52 +114,74 @@ _running_lock = threading.Lock()
 
 def _run_routine(rid):
     """Zie :func:`_run_routine_unguarded`; gooit :class:`RoutineBusy` als deze
-    routine al loopt."""
+    routine al loopt. Geeft een :class:`RoutineResult` terug."""
     with _running_lock:
         if rid in _running_routines:
             raise RoutineBusy(f"routine '{rid}' is al bezig")
         _running_routines.add(rid)
     try:
-        _run_routine_unguarded(rid)
+        return _run_routine_unguarded(rid)
     finally:
         with _running_lock:
             _running_routines.discard(rid)
 
 
+class RoutineResult:
+    """Uitkomst van een routine: mislukte stappen (``failed``) en, als bekend, het
+    totaal aantal stappen (``total``). ``everything_failed`` = er is niets gelukt."""
+
+    def __init__(self, failed=None, total=None):
+        self.failed = list(failed or [])
+        self.total = total
+
+    @property
+    def everything_failed(self) -> bool:
+        return bool(self.failed) and self.total is not None and len(self.failed) >= self.total
+
+
 def _run_routine_unguarded(rid):
     """Voer een routine uit (ingebouwd of custom). Gooit alleen bij een
     onbekende id — een fout in één stap van een custom routine wordt hier
-    afgevangen zodat de rest van de routine gewoon doorgaat (zie _run_step)."""
+    afgevangen zodat de rest van de routine gewoon doorgaat (zie _run_step),
+    maar wordt wel in het :class:`RoutineResult` gemeld (geen dummy-succes)."""
     log("ROUTINE", f"Starting routine '{rid}'")
     if rid == "morning":
         from scheduler.routines import morning_routine
 
-        morning_routine()
+        result = RoutineResult(morning_routine())
     elif rid == "bedtime":
         from scheduler.routines import bedtime_routine
 
-        bedtime_routine()
+        result = RoutineResult(bedtime_routine())
     elif rid in ("party", "desk"):
+        result = RoutineResult(total=1)
         try:
             lamp = S.lamp(S.lamp_ip(0))
             asyncio.run(lamp.party() if rid == "party" else lamp.bureau())
         except Exception as exc:  # noqa: BLE001
             log("ROUTINE", f"Light action failed: {exc}")
+            result.failed.append(describe_lamp_error(exc))
     else:
         custom = {r["id"]: r for r in (config.get("routines", []) or [])}
         if rid not in custom:
             raise ValueError(f"onbekende routine: {rid}")
-        for i, step in enumerate(custom[rid].get("steps", []), 1):
+        steps = custom[rid].get("steps", [])
+        if not isinstance(steps, list):
+            steps = []
+        result = RoutineResult(total=len(steps))
+        for i, step in enumerate(steps, 1):
             try:
-                _run_step(step)
+                _run_step(step if isinstance(step, dict) else {})
             except Exception as exc:  # noqa: BLE001 - one bad step mag de rest niet stoppen
-                kind = step.get("action", "?")
+                kind = step.get("action", "?") if isinstance(step, dict) else "?"
                 label = "Light action failed" if kind == "lamp" else f"Step {i} ({kind}) failed"
                 log("ROUTINE", f"{label}: {exc}")
+                result.failed.append(f"Stap {i} ({kind}): {describe_lamp_error(exc) if kind == 'lamp' else exc}")
             else:
                 continue
             log("ROUTINE", "Continuing with next action")
     log("ROUTINE", f"Finished routine '{rid}'")
+    return result
 
 
 @routines_bp.route("/api/routines/run", methods=["POST"])
@@ -164,7 +189,11 @@ def _run_routine_unguarded(rid):
 def routines_run():
     rid = json_body().get("id")
     try:
-        _run_routine(rid)
+        result = _run_routine(rid)
+        if result is not None and result.failed:
+            if result.everything_failed:
+                return jsonify({"success": False, "error": "; ".join(result.failed)}), 502
+            return jsonify({"success": True, "warnings": result.failed})     # deels gelukt
         return jsonify({"success": True})
     except RoutineBusy as exc:
         return jsonify({"success": False, "error": str(exc)}), 409

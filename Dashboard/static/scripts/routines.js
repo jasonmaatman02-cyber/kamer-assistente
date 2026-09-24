@@ -30,7 +30,9 @@ async function load() {
           method: "POST", headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ id: btn.dataset.run }),
         });
-        toast(r.success ? "Routine uitgevoerd" : `Mislukt: ${r.error || "?"}`, !r.success);
+        toast(!r.success ? `Mislukt: ${r.error || "?"}`
+              : (r.warnings && r.warnings.length ? `Routine deels uitgevoerd: ${r.warnings.join("; ")}` : "Routine uitgevoerd"),
+             !r.success || !!(r.warnings && r.warnings.length));
       } catch (e) { toast("Netwerkfout", true); }
       btn.disabled = false;
       btn.innerHTML = original;

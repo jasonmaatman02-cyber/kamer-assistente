@@ -6,6 +6,7 @@ from flask import Blueprint, jsonify, request
 
 import config
 from Dashboard.backend import services as S
+from devices.Lights import describe_lamp_error
 from Dashboard.backend.util import json_body
 
 devices_bp = Blueprint("devices", __name__)
@@ -43,7 +44,7 @@ def _lamp_action(coro_factory, lamp_ref=None):
         message = asyncio.run(coro_factory(S.lamp(ip)))
     except Exception as exc:  # noqa: BLE001
         S.drop_lamp(ip)
-        return jsonify({"status": "error", "message": str(exc)}), 500
+        return jsonify({"status": "error", "message": describe_lamp_error(exc)}), 500
     _note_manual_lamp_action(ip)
     return jsonify({"status": "ok", "message": message})
 
@@ -112,7 +113,7 @@ def lamp_state():
         return jsonify({"ok": True, "state": asyncio.run(S.lamp(ip).status())})
     except Exception as exc:  # noqa: BLE001
         S.drop_lamp(ip)
-        return jsonify({"ok": False, "error": str(exc)}), 503
+        return jsonify({"ok": False, "error": describe_lamp_error(exc)}), 503
 
 
 @devices_bp.route("/api/lamps")

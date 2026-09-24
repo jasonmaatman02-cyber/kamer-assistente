@@ -7,7 +7,7 @@ from logic.notes import get_notes
 from voice.tts_output import speak
 from voice.Whisper_short import shortwhisper
 from sound_system.radio import RadioPlayer
-from devices.Lights import SlimmeLamp
+from devices.Lights import SlimmeLamp, describe_lamp_error
 
 
 def _all_lamps():
@@ -16,7 +16,7 @@ def _all_lamps():
         yield SlimmeLamp(*creds, entry["ip"])
 
 
-def _for_each_lamp(coro_name: str):
+def _for_each_lamp(coro_name: str, failures: list | None = None):
     for lamp in _all_lamps():
         try:
             asyncio.run(lamp.connect())
@@ -24,29 +24,37 @@ def _for_each_lamp(coro_name: str):
         except Exception as exc:  # noqa: BLE001
             log("ROUTINE", f"Light action failed: {exc}")
             log("ROUTINE", "Continuing with next action")
+            if failures is not None:
+                failures.append(describe_lamp_error(exc, getattr(lamp, 'ip', None)))
 
 
-def _step(what: str, fn) -> None:
+def _step(what: str, fn, failures: list | None = None) -> None:
     """Eén routine-stap draaien; een fout mag de rest van de routine niet
-    stoppen (spec: 'Tapo werkt niet' mag niet 'hele routine stopt' betekenen)."""
+    stoppen (spec: 'Tapo werkt niet' mag niet 'hele routine stopt' betekenen).
+    Een mislukte stap wordt wel in ``failures`` gemeld, zodat de aanroeper
+    (dashboard-knop, AI-tool) niet 'gelukt' meldt terwijl er iets niet gebeurde."""
     try:
         fn()
     except Exception as exc:  # noqa: BLE001
         log("ROUTINE", f"{what} failed: {exc}")
         log("ROUTINE", "Continuing with next action")
+        if failures is not None:
+            failures.append(f"{what}: {exc}")
 
 
-def morning_routine():
+def morning_routine() -> list[str]:
+    """Voert de ochtend-routine uit; geeft de lijst mislukte stappen terug (leeg = alles gelukt)."""
     from logic.ask_gpt import vraag_aan_gpt
 
     log("ROUTINE", "Starting morning routine")
+    failures: list[str] = []
 
     _step("Greeting", lambda: speak(vraag_aan_gpt(
         "Bedenk een kort, grappig zinnetje om te zeggen bij het wakker worden. Max 3 zinnen."
-    )))
+    )), failures)
 
     if config.get("features.radio", True):
-        _step("Radio", lambda: RadioPlayer().play("radio538"))
+        _step("Radio", lambda: RadioPlayer().play("radio538"), failures)
 
     def _notes():
         notes = get_notes("default")
@@ -57,20 +65,23 @@ def morning_routine():
         else:
             speak("Je hebt geen notities voor vandaag.")
 
-    _step("Notes", _notes)
+    _step("Notes", _notes, failures)
     log("ROUTINE", "Finished morning routine")
+    return failures
 
 
-def bedtime_routine():
+def bedtime_routine() -> list[str]:
+    """Voert de bedtijd-routine uit; geeft de lijst mislukte stappen terug (leeg = alles gelukt)."""
     from logic.ask_gpt import vraag_aan_gpt
 
     log("ROUTINE", "Starting bedtime routine")
+    failures: list[str] = []
 
     _step("Greeting", lambda: speak(vraag_aan_gpt(
         "Bedenk een kort, grappig zinnetje om welterusten te wensen bij het slapengaan."
-    )))
+    )), failures)
 
-    _for_each_lamp("uit")
+    _for_each_lamp("uit", failures)
 
     # Vanaf het dashboard (geen microfoon) heeft de vraag-en-antwoord geen zin.
     from voice.Whisper import mic_available
@@ -78,7 +89,7 @@ def bedtime_routine():
     if not mic_available():
         speak("Slaap lekker!")
         log("ROUTINE", "Finished bedtime routine")
-        return
+        return failures
 
     try:
         speak("Zal ik ook een wekker voor je instellen?")
@@ -86,14 +97,14 @@ def bedtime_routine():
         if not any(w in response.lower() for w in ("ja", "graag", "zeker")):
             speak("Oké, slaap lekker!")
             log("ROUTINE", "Finished bedtime routine")
-            return
+            return failures
 
         speak("Hoe laat wil je wakker worden?")
         time_response = (shortwhisper() or "").replace("om", "").strip()
         if not time_response:
             speak("Ik heb geen tijd gehoord. Geen wekker gezet. Slaap lekker!")
             log("ROUTINE", "Finished bedtime routine")
-            return
+            return failures
 
         wake_time = vraag_aan_gpt(
             f"Zet dit om naar uur:minuut en geef ALLEEN uur:minuut terug, niks anders: {time_response}"
@@ -108,4 +119,6 @@ def bedtime_routine():
             log("ROUTINE", f"Alarm set for {hhmm}")
     except Exception as exc:  # noqa: BLE001 - de mic-Q&A mag de rest niet meeslepen
         log("ROUTINE", f"Alarm Q&A failed: {exc}")
+        failures.append(f"Wekker instellen: {exc}")
     log("ROUTINE", "Finished bedtime routine")
+    return failures

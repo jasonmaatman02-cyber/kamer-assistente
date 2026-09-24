@@ -147,7 +147,8 @@ document.querySelectorAll(".actions button[data-routine]").forEach(btn => {
     btn.disabled = true;
     try {
       const r = await jpost("/api/routines/run", { id: btn.dataset.routine });
-      msg.textContent = r.success ? "Klaar." : `Mislukt: ${r.error || "?"}`;
+      msg.textContent = !r.success ? `Mislukt: ${r.error || "?"}`
+        : (r.warnings && r.warnings.length ? `Deels gelukt: ${r.warnings.join("; ")}` : "Klaar.");
     } catch (e) { msg.textContent = "Mislukt."; }
     btn.disabled = false;
     setTimeout(() => (msg.textContent = ""), 4000);

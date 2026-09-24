@@ -74,20 +74,25 @@ def zoek_internet(query):
     return websearch.search_and_summarise(query)
 
 
+def _failures_suffix(failures) -> str:
+    """Zodat het model (en dus de gebruiker) hoort dat een stap niet lukte i.p.v. 'gestart'."""
+    return f" (maar niet alles lukte: {'; '.join(failures)})" if failures else ""
+
+
 def start_bedtime_routine():
     from scheduler.routines import bedtime_routine
 
-    bedtime_routine()
+    failures = bedtime_routine()
     log("Routine", "Bedtijd-routine gestart")
-    return "Bedtijd-routine gestart"
+    return "Bedtijd-routine gestart" + _failures_suffix(failures)
 
 
 def start_morning_routine():
     from scheduler.routines import morning_routine
 
-    morning_routine()
+    failures = morning_routine()
     log("Routine", "Ochtend-routine gestart")
-    return "Ochtend-routine gestart"
+    return "Ochtend-routine gestart" + _failures_suffix(failures)
 
 
 def start_party_mode(locatie="kamer"):

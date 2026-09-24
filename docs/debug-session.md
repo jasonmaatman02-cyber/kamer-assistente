@@ -19,7 +19,8 @@ requirements-dashboard.txt` voor de nieuwe `zeroconf`-dependency).
 - aded680 deploy-scripts + 0600-rechten (S2-8)
 - 408ccba wekker/routines + spraakpijplijn (S2-9, S2-10)
 - e45b475 detectiefout-als-onbekend + notifications (S2-11)
-- (volgende commit) API-invoer/CSRF/radio/kleuren + fuzz/soak (S2-12)
+- dd228cf API-invoer/CSRF/radio/kleuren + fuzz/soak (S2-12)
+- (volgende commit) routine-uitkomsten, settings.json-quarantaine, lamp-fouten (S2-13)
 
 ### Items
 
@@ -126,6 +127,15 @@ Aanleiding: een fuzz over alle routes (774 requests met kapotte/verkeerd getypee
 - **Soak (`tools/soak_dashboard.py`, 10 min, 8 req/s, 4 clients, presence AAN zonder camera, twee onbereikbare lampen, geen Spotify/weer/agenda)**: threads 26-28 stabiel, handles vlak (~1730), RSS zaagtand 310-330 MB zonder trend, `/api/config`-canary mediaan 2 ms / 0 timeouts (>5 s); alle lamp/Spotify-fouten waren JSON-fouten.
 - **Bestanden**: `Dashboard/backend/{util,auth,chat_api,devices_api,main,media_api,routines_api,secrets_api,services,system_api}.py`, `devices/Lights.py`, `sound_system/radio.py`, `weer/weer.py`, `Dashboard/static/scripts/{devices,media,camera,routines}.js`, `tools/soak_dashboard.py`, tests: `test_fuzz_api.py`, `test_api_hardening.py`, `test_security.py`, `test_lights.py`.
 - **Bewust niet gedaan / advies**: DNS-rebinding-bescherming (Host-header-allowlist): zou toegang via eigen hostnames (DDNS, `*.fritz.box`, VPN-naam) kunnen blokkeren en is niet testbaar zonder de Pi -- voorstel: opt-in `security.allowed_hosts`. Login-lockout is globaal (5 fouten = 60 s voor iedereen; een LAN-aanvaller kan de eigenaar buitensluiten) -- afweging brute-force-tempo vs. beschikbaarheid, laat ik zo.
+
+#### S2-13 Routines: eerlijke uitkomst, Spotify-stap, kapotte settings.json, leesbare lamp-fouten
+- **Dummy-success in routines**: `/api/routines/run` meldde `success: true` ("Routine uitgevoerd") ook als de lamp niet reageerde/de radio niet startte: `_step()`/`_run_routine` slikten de fout (alleen gelogd). Nu geven `morning_routine()`/`bedtime_routine()` de lijst mislukte stappen terug, en de API antwoordt: alles mislukt (single-action `party`/`desk`, of custom routine waarvan elke stap faalt) -> 502 `success: false` met de reden; deels mislukt -> `success: true` + `warnings` (UI toont "deels uitgevoerd: ..."). De AI-tool `start_morning_routine`/`start_bedtime_routine` noemt mislukte stappen zodat het model het niet als "gestart" afdoet. Bevestigd in de browser (dev-server, offline lamp): "Mislukt: Lamp 192.0.2.1 is niet bereikbaar (time-out)".
+- **Spotify-stap in custom routine**: `dj.sp.start_playback(context_uri=...)` zonder `device_id` (negeert het standaard-Pi-apparaat, faalt met NO_ACTIVE_DEVICE) en deed bij niet-ingesteld Spotify (`dj is None`) stilzwijgend niets = "gelukt". Nu `S.start_playback(S.sp_dj().sp, ...)` (zelfde apparaat-logica als de Media-pagina en spraak) en een duidelijke fout als Spotify ontbreekt. Kapotte stappen (`1`, `null`, `"x"`) in een opgeslagen routine crashen niet meer.
+- **Lamp-fouten leesbaar**: de tapo-library (Rust) geeft tekst als `Http(reqwest::Error { kind: Request, url: "http://192.0.2.1/app", source: TimedOut })`; dat kwam rechtstreeks in toasts. `devices.Lights.describe_lamp_error()` vertaalt time-out / verbinding geweigerd / sessie verlopen / inloggen mislukt (log houdt de ruwe tekst).
+- **`settings.json` kapot**: een onleesbaar bestand werd bij de eerstvolgende `config.set()` overschreven met alleen het verschil t.o.v. DEFAULTS (alle eigen instellingen voorgoed weg), en een geldig-maar-geen-object bestand (`[]`, `"x"`, `null`) liet `_deep_merge` crashen -> app start niet. Nu wordt het naar `settings.json.corrupt-<tijd>` verplaatst (laatste 3 bewaard) en draaien de defaults. 7 + 2 tests.
+- **Bestanden**: `scheduler/routines.py`, `Dashboard/backend/routines_api.py`, `logic/gpt_handler.py`, `devices/Lights.py`, `Dashboard/backend/devices_api.py`, `config/settings.py`, `Dashboard/static/scripts/{routines,home}.js`, `tools/dev_server.py` (isoleert nu ook notes/logs), tests: `test_routine_results.py`, `test_config.py`.
+- **Idle-CPU-meting (lokaal)**: presence AAN + echte webcam = ~10% van 1 core op Windows, maar verdeeld over native MSMF-driverthreads (geen Python-thread in de top); presence UIT = 0,0%. Op de Pi (V4L2) moet dit live gemeten worden (`/api/presence.detect_ms`).
+- **Resterend risico**: `speak()` geeft geen succes/mislukt terug (faalt stil), dus een mislukte TTS telt niet als mislukte routinestap.
 
 #### Statische analyse (uitgevoerd, geen verdere bevindingen)
 - ruff F: schoon na S2-2. bandit: 0 High, 1 Medium (`0.0.0.0` bind in `rundashboard.py`, bewust: LAN-dashboard achter optioneel wachtwoord), 21 Low (vaste-argv-subprocess, `try/except/pass`; beoordeeld, alleen tts-argv was echt).

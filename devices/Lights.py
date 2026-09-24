@@ -1,6 +1,7 @@
 import asyncio
 import colorsys
 import random
+import re
 import time
 from tapo import ApiClient
 
@@ -16,6 +17,27 @@ def _lamp_timeout_s() -> float:
         return min(60.0, max(1.0, float(config.get("devices.lamp_timeout_s", 6) or 6)))
     except Exception:  # noqa: BLE001 - nooit crashen op een configfout
         return 6.0
+
+
+def describe_lamp_error(exc, ip: str | None = None) -> str:
+    """Leesbare melding voor een Tapo-fout. De tapo-library is Rust/PyO3 en geeft
+    alleen tekst zoals ``Http(reqwest::Error { kind: Request, url: "http://192.0.2.1/app",
+    source: TimedOut })`` of ``Tapo(Unauthorized { kind: "SESSION_TIMEOUT", ... })`` --
+    niet iets om aan een gebruiker te tonen (het log houdt de ruwe tekst)."""
+    msg = str(exc) or exc.__class__.__name__
+    low = msg.lower()
+    m = re.search(r'url: "https?://([^/"]+)', msg)
+    who = f"Lamp {m.group(1)}" if m else (f"Lamp {ip}" if ip else "Lamp")
+    if "session_timeout" in low:
+        return f"{who}: sessie verlopen (opnieuw proberen)"
+    if "unauthorized" in low or ("credential" in low and "invalid" in low):
+        return f"{who}: inloggen mislukt, controleer het Tapo-account in Settings"
+    if any(k in low for k in ("timedout", "timed out", "timeout")):
+        return f"{who} is niet bereikbaar (time-out)"
+    if any(k in low for k in ("connection refused", "connectionrefused", "no route to host",
+                              "unreachable", "tcp connect error", "connecterror", "dns error")):
+        return f"{who} is niet bereikbaar (verbinding mislukt)"
+    return f"{who}: {msg}" if ip and not m else msg
 
 
 def hex_to_hsl(hex_color):
