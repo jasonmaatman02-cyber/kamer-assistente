@@ -9,18 +9,24 @@ weggegooid (privacy — zie Dashboard.backend.presence).
 """
 from __future__ import annotations
 
+import threading
+
 _hog = None
+_hog_lock = threading.Lock()
 
 
 def _get_detector():
-    """Lazy singleton — de detector maak je maar één keer aan."""
+    """Lazy singleton — de detector maak je maar één keer aan (achter een lock:
+    de presence-worker en een handmatige detectie kunnen tegelijk de eerste zijn)."""
     global _hog
     if _hog is None:
-        import cv2
+        with _hog_lock:
+            if _hog is None:
+                import cv2
 
-        hog = cv2.HOGDescriptor()
-        hog.setSVMDetector(cv2.HOGDescriptor_getDefaultPeopleDetector())
-        _hog = hog
+                hog = cv2.HOGDescriptor()
+                hog.setSVMDetector(cv2.HOGDescriptor_getDefaultPeopleDetector())
+                _hog = hog
     return _hog
 
 
@@ -57,12 +63,32 @@ def non_max_suppression(boxes, scores, overlap_thresh: float = 0.45):
     return keep
 
 
-def count_people(frame_bgr, *, scale: float = 1.0, hit_threshold: float = 0.0) -> int:
+_last_error: tuple[str, float] | None = None
+_ERROR_PRINT_EVERY_S = 600.0
+
+
+def _print_error_once(msg: str) -> None:
+    """Dezelfde detectiefout niet elke tick (3s) naar journald: 1x per 10 min."""
+    import time
+
+    global _last_error
+    now = time.monotonic()
+    if _last_error is None or _last_error[0] != msg or now - _last_error[1] >= _ERROR_PRINT_EVERY_S:
+        _last_error = (msg, now)
+        print(f"[PEOPLE] detectiefout: {msg}")
+
+
+def count_people(frame_bgr, *, scale: float = 1.0, hit_threshold: float = 0.0, error_value=0):
     """Tel het aantal mensen in een BGR-frame (numpy array, zoals opencv ze
-    levert). Geeft 0 bij een leeg/ongeldig frame of een detectiefout — telt
-    NOOIT als een crash, dit draait onbeheerd op een achtergrond-thread."""
+    levert). Gooit NOOIT: dit draait onbeheerd op een achtergrond-thread.
+
+    Bij een leeg/ongeldig frame of een detectiefout wordt ``error_value``
+    teruggegeven. De default 0 is het oude (backwards-compatibele) gedrag; de
+    aanwezigheids-worker geeft ``error_value=None`` mee, want "detectie faalde"
+    is GEEN bevestigde "0 personen": als een kapotte detector als 'leeg' telt,
+    gaat de lamp uit terwijl er iemand zit (en nooit meer vanzelf aan)."""
     if frame_bgr is None or getattr(frame_bgr, "size", 0) == 0:
-        return 0
+        return error_value
     try:
         import cv2
 
@@ -78,5 +104,5 @@ def count_people(frame_bgr, *, scale: float = 1.0, hit_threshold: float = 0.0) -
         keep = non_max_suppression(_to_xyxy(rects), list(weights), overlap_thresh=0.45)
         return len(keep)
     except Exception as exc:  # noqa: BLE001 - detectie mag nooit de worker slopen
-        print(f"[PEOPLE] detectiefout: {exc}")
-        return 0
+        _print_error_once(f"{type(exc).__name__}: {exc}")
+        return error_value

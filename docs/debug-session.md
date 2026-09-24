@@ -17,7 +17,8 @@ requirements-dashboard.txt` voor de nieuwe `zeroconf`-dependency).
 - dafa087 begrensde AI-concurrency, eindige Ollama-timeout, OpenAI-key-herlaad (S2-6)
 - 84e3fcf UI-fixes (lamp-schakelaar, vriendelijke meldingen), dev-server (S2-7)
 - aded680 deploy-scripts + 0600-rechten (S2-8)
-- (volgende commit) wekker/routines + spraakpijplijn (S2-9, S2-10)
+- 408ccba wekker/routines + spraakpijplijn (S2-9, S2-10)
+- (volgende commit) detectiefout-als-onbekend + notifications (S2-11)
 
 ### Items
 
@@ -103,6 +104,13 @@ Tests: `tests/test_voice.py` (14 tests). Niet uitvoerbaar zonder hardware: echte
 - **Log-spam**: elke mislukte ronde schreef een regel (mic weg: 30s -> 2880/dag; generieke fout 2s -> 43k/dag). Nu dezelfde melding 1x per 10 min (+ "ronde N op rij"), generieke fouten met verdubbelende pauze (2->30s), en een ronde zonder fout (ook "geen wake-woord gehoord") reset de teller. Porcupine-fallback-melding idem.
 - **Bestanden**: `ai/stt.py`, `voice/Whisper.py`, `voice/Whisper_short.py`, `tests/test_voice.py`.
 - **Resterend risico**: `sd._terminate()` is privé-API van sounddevice; getest tegen een nep-module, niet tegen een echte hot-plug. De voice-lus draait niet in de systemd-service (alleen `main.py assistant/all` en de bedtijd-routine).
+
+#### S2-11 (P2) Falende detector telde als "lege kamer"; Meldingen-endpoint las alle logs
+- **Probleem**: `logic.people_detect.count_people()` gaf bij een detectiefout (kapotte cv2-build, geheugentekort, ...) `0` terug. De presence-worker kan een `0` niet onderscheiden van een echte lege meting en telde die mee voor de EMPTY-kant: na `empty_grace_s` ging de lamp UIT terwijl er iemand zat, en bleef uit (AAN vereist juist een geslaagde detectie). Bewezen: end-to-end test met kapotte HOG -> oude code `EMPTY`, nieuwe code `OCCUPIED` + status `unknown`.
+- **Fix**: `count_people(..., error_value=0)` (default = oud contract, ook voor ongeldige frames); presence roept 'm met `error_value=None` aan en behandelt `None` als sensor ONBEKEND (zelfde hold-logica als "geen frame": toestand vast, geen lampactie, grace start pas na herstel, 1 logregel i.p.v. per tick). "Sensor available again" wordt nu pas gelogd na een geslaagde detectie (anders flapte het per tick). Detectiefout-print gededupliceerd (1x/10 min i.p.v. elke 3s naar journald). HOG-singleton achter een lock (eerste aanroep uit twee threads).
+- **`/api/notifications`**: las per poll (30s, alleen als de pagina open staat) de volledige laatste 4 logbestanden (`rglob` + `read_text`); nu alleen het staartje (achterwaarts lezen in blokken, gemeten < 200 kB uit een 3,4 MB-bestand), `?limit=abc` gaf een 500 (ongevangen `ValueError`) -> default 40, begrensd 1..500, en gebruikt dezelfde logmap als `log()` (`logic.logger.BASE_LOG_DIR`).
+- **Bestanden**: `logic/people_detect.py`, `Dashboard/backend/presence.py`, `Dashboard/backend/system_api.py`, `tests/test_presence_detection.py` (6), `tests/test_notifications.py` (9).
+- **Resterend risico**: HOG-detectie zelf blijft de zwakke schakel (zittend/liggend); een permanent falende detector laat de kamer eeuwig 'onbekend' (lamp blijft in de laatste stand) -- zichtbaar in `/api/presence` (`state: unknown`) en in het log.
 
 #### Statische analyse (uitgevoerd, geen verdere bevindingen)
 - ruff F: schoon na S2-2. bandit: 0 High, 1 Medium (`0.0.0.0` bind in `rundashboard.py`, bewust: LAN-dashboard achter optioneel wachtwoord), 21 Low (vaste-argv-subprocess, `try/except/pass`; beoordeeld, alleen tts-argv was echt).

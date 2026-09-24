@@ -239,18 +239,44 @@ def health():
     })
 
 
+def _tail_lines(path, n: int, block: int = 64 * 1024) -> list[str]:
+    """De laatste ``n`` regels van een tekstbestand, zonder het hele bestand te
+    lezen (een logbestand van een dag kan na een fout-storm MB's groot zijn, en
+    de Meldingen-pagina pollt elke 30s)."""
+    if n <= 0:
+        return []
+    with open(path, "rb") as f:
+        f.seek(0, 2)
+        pos = f.tell()
+        buf = b""
+        while pos > 0 and buf.count(b"\n") <= n:   # > n: de eerste (mogelijk halve) regel valt buiten de laatste n
+            step = min(block, pos)
+            pos -= step
+            f.seek(pos)
+            buf = f.read(step) + buf
+    return buf.decode("utf-8", errors="replace").splitlines()[-n:]
+
+
 @system_bp.route("/api/notifications")
 def notifications():
     from datetime import datetime
     from pathlib import Path
 
-    limit = int(request.args.get("limit", 40))
-    base = Path(__file__).resolve().parent.parent.parent / "data" / "logs"
+    try:
+        limit = max(1, min(int(request.args.get("limit", 40)), 500))
+    except (TypeError, ValueError):
+        limit = 40      # '?limit=abc' gaf een 500 (ongevangen ValueError)
+    from logic import logger
+
+    base = Path(logger.BASE_LOG_DIR)      # dezelfde map als log() schrijft (en die tests omleiden)
     lines: list[str] = []
     if base.is_dir():
-        for fp in sorted(base.rglob("*.txt"))[-4:]:
+        for fp in sorted(base.rglob("*.txt"), reverse=True)[:4]:     # nieuwste eerst
+            need = limit - len(lines)
+            if need <= 0:
+                break
             try:
-                lines.extend(fp.read_text(encoding="utf-8", errors="replace").splitlines())
+                lines = _tail_lines(fp, need) + lines
             except OSError:
                 pass
     parsed = []

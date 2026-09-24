@@ -238,18 +238,6 @@ class PresenceWorker:
                 self._sensor_unknown_warned = True
             self._retry_light()   # los van detectie, mag gewoon doorgaan
             return
-        if self._sensor_unknown:
-            log("PEOPLE", "Sensor available again")
-            if self.room_state == "OCCUPIED":
-                # De storing was geen meting: de grace-periode telt vanaf NU, niet
-                # vanaf de laatste positieve detectie van vóór de storing. Anders
-                # flipte één enkel negatief frame direct na een lange storing de
-                # kamer naar EMPTY (lamp uit) zonder dat er ooit een geldige
-                # "leeg"-periode van empty_grace_s is doorlopen.
-                self._last_positive_at = time.time()
-        self._sensor_unknown = False
-        self._sensor_unknown_warned = False
-
         # camera.detect_threshold stond al in Settings ("hoger = minder valse
         # alarmen"), maar werd nooit doorgegeven -- count_people() draaide
         # hierdoor altijd op de meest permissieve hitThreshold (0.0), de
@@ -264,8 +252,30 @@ class PresenceWorker:
         # moet eerst live getoetst worden voordat dit omlaag gaat.
         scale = min(1.0, max(0.25, float(config.get("presence.detect_scale", 1.0) or 1.0)))
         t0 = time.perf_counter()
-        count = count_people(frame, scale=scale, hit_threshold=threshold)
+        count = count_people(frame, scale=scale, hit_threshold=threshold, error_value=None)
         self.last_detect_ms = round((time.perf_counter() - t0) * 1000, 1)
+        if count is None:
+            # De detector zelf faalde (kapotte cv2-build, geheugentekort, ...). Dat is
+            # net als "geen beeld" GEEN bevestigde "0 personen": anders telde elke
+            # mislukte detectie mee voor de EMPTY-kant (lamp uit terwijl er iemand
+            # zit, en nooit meer vanzelf aan). Status ONBEKEND, toestand vasthouden.
+            self._sensor_unknown = True
+            if not self._sensor_unknown_warned:
+                log("PEOPLE", "Detection failed -- presence state held (unknown)")
+                self._sensor_unknown_warned = True
+            self._retry_light()
+            return
+        if self._sensor_unknown:
+            log("PEOPLE", "Sensor available again")
+            if self.room_state == "OCCUPIED":
+                # De storing was geen meting: de grace-periode telt vanaf NU, niet
+                # vanaf de laatste positieve detectie van vóór de storing. Anders
+                # flipte één enkel negatief frame direct na een lange storing de
+                # kamer naar EMPTY (lamp uit) zonder dat er ooit een geldige
+                # "leeg"-periode van empty_grace_s is doorlopen.
+                self._last_positive_at = time.time()
+        self._sensor_unknown = False
+        self._sensor_unknown_warned = False
         self.last_count = count
         now = time.time()
 
