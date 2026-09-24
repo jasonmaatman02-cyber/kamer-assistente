@@ -113,3 +113,13 @@ def test_google_token_refresh_keeps_the_token_file_owner_only(monkeypatch, tmp_p
 
     agenda_mod.GoogleCalendarAccount("a@b.c", "cid", "cs")._credentials()
     assert ("google_calendar_token.json.tmp", 0o600) in calls, calls
+
+
+def test_update_script_body_lives_in_a_function_so_a_self_replacing_pull_is_safe():
+    """bash leest een script incrementeel; 'git merge' vervangt update-pi.sh tijdens de uitvoering."""
+    text = (ROOT / "deploy" / "update-pi.sh").read_text(encoding="utf-8")
+    assert re.search(r"^main\(\) \{$", text, re.M)
+    assert re.search(r'^main "\$@"\nexit \$\?\s*$', text, re.M)
+    # alles wat iets doet staat tussen 'main() {' en de afsluitende '}' (inspringend)
+    before_main = " ".join(l for l in text.split("main() {", 1)[0].splitlines() if not l.lstrip().startswith("#"))
+    assert "git merge" not in before_main and "systemctl" not in before_main
