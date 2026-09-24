@@ -103,6 +103,17 @@ def _restrict_token_file(path) -> None:
         pass
 
 
+def describe_calendar_error(exc) -> str:
+    """Leesbare melding voor een agenda-fout. Google geeft bij een verlopen/ingetrokken token
+    ``invalid_grant: Token has been expired or revoked`` (in 'Testing'-modus van de OAuth-app
+    verloopt het refresh-token na 7 dagen); dat verdient een duidelijke aanwijzing."""
+    msg = str(exc)
+    if "invalid_grant" in msg:
+        return ("Google-koppeling verlopen of ingetrokken -- koppel opnieuw via Settings > Google Agenda "
+                "(tip: zet de OAuth-app in Google Cloud op 'In productie', in testmodus verloopt het token na 7 dagen)")
+    return msg
+
+
 def _rfc3339_day_start(d) -> str:
     return datetime(d.year, d.month, d.day, tzinfo=timezone.utc).isoformat()
 
@@ -356,7 +367,7 @@ class MultiProviderCalendar:
                 # nooit het wachtwoord/token (caldav's AuthorizationError geeft
                 # alleen url+reason; onze eigen RuntimeErrors bevatten geen
                 # secrets), dus veilig om te loggen/tonen.
-                errors.append(f"{acc.email}: {exc}")
+                errors.append(f"{acc.email}: {describe_calendar_error(exc)}")
         # Ook zichtbaar maken als één account faalt terwijl een ander wel lukt --
         # anders verdwijnt een kapot account geruisloos zodra er nog een
         # werkend account is (agenda leek dan "ok").

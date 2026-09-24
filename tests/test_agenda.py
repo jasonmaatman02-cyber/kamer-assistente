@@ -423,3 +423,27 @@ def test_google_token_refresh_writes_atomically(monkeypatch, tmp_path):
     assert token_path.read_text(encoding="utf-8") == original, \
         "een mislukte tokenverversing mag het bestaande token-bestand niet aanraken"
     assert not token_path.with_suffix(".json.tmp").exists()
+
+
+def test_expired_google_token_gives_an_actionable_message():
+    from scheduler.agenda import MultiProviderCalendar, describe_calendar_error
+
+    raw = ("('invalid_grant: Token has been expired or revoked.', "
+           "{'error': 'invalid_grant', 'error_description': 'Token has been expired or revoked.'})")
+    msg = describe_calendar_error(RuntimeError(raw))
+    assert "koppel opnieuw" in msg and "7 dagen" in msg
+    assert "invalid_grant" not in msg
+    assert describe_calendar_error(RuntimeError("iets anders")) == "iets anders"
+
+    class Broken:
+        email = "a@b.c"
+        provider = "google"
+
+        def calendars(self):
+            raise RuntimeError(raw)
+
+    cal = object.__new__(MultiProviderCalendar)
+    cal._accounts = [Broken()]
+    cal.error = None
+    cal._connect()
+    assert "koppel opnieuw" in cal.error and cal.error.startswith("a@b.c:")
