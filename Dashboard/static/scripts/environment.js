@@ -65,4 +65,4 @@ thermo.addEventListener("input", () => {
 initThermo();
 loadCity();
 loadWeather();
-setInterval(loadWeather, 600000);
+setInterval(() => { if (!document.hidden) loadWeather(); }, 600000);   // niet pollen voor een verborgen tabblad

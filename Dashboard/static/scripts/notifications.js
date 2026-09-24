@@ -70,4 +70,5 @@ $("mark-read").addEventListener("click", () => {
 });
 
 load();
-setInterval(load, 30000);
+setInterval(() => { if (!document.hidden) load(); }, 30000);   // niet pollen voor een verborgen tabblad
+document.addEventListener("visibilitychange", () => { if (!document.hidden) load(); });
