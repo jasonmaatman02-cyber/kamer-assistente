@@ -28,6 +28,33 @@ _PRESENCE_ONLY_MIN_S = 0.5
 _PRESENCE_ONLY_MAX_S = 2.0
 
 
+_DRAIN_GRABS = 3
+
+
+def _cv2_reader(cap):
+    """``read(fresh=False) -> (ok, frame)`` voor een cv2.VideoCapture.
+
+    V4L2 houdt een rij van ~4 buffers vast. Bij een lage leesfrequentie (presence-only:
+    1 frame per ~0,5-2 s) is ``cap.read()`` het OUDSTE frame uit die rij: tot ~4
+    leesintervallen (secondes) oud, dus een persoon werd pas seconden later "gezien".
+    Met ``fresh=True`` trekken een paar goedkope ``grab()``'s (geen decode) de rij leeg,
+    zodat het teruggegeven frame het nieuwste is. Zonder ``grab`` (of bij een mislukte
+    grab) valt het terug op een gewone ``read()``."""
+    grab = getattr(cap, "grab", None)
+
+    def read(fresh: bool = False):
+        if fresh and grab is not None:
+            for _ in range(_DRAIN_GRABS):
+                try:
+                    if not grab():
+                        break
+                except Exception:  # noqa: BLE001 - een falende grab mag de gewone read niet verhinderen
+                    break
+        return cap.read()
+
+    return read
+
+
 class _Camera:
     def __init__(self):
         self._lock = threading.Lock()
@@ -98,7 +125,7 @@ class _Camera:
                 if not cap.isOpened():
                     cap.release()
                     raise RuntimeError(f"opencv: camera {idx} gaat niet open")
-                return cap.read, cap.release
+                return _cv2_reader(cap), cap.release
             except Exception as exc:  # noqa: BLE001
                 errs.append(str(exc))
 
@@ -112,7 +139,7 @@ class _Camera:
                 pc.configure(pc.create_video_configuration(
                     main={"size": (w, h), "format": "RGB888"}))
                 pc.start()
-                return (lambda: (True, pc.capture_array())), (lambda: (pc.stop(), pc.close()))
+                return (lambda fresh=False: (True, pc.capture_array())), (lambda: (pc.stop(), pc.close()))
             except Exception as exc:  # noqa: BLE001
                 errs.append(str(exc))
 
@@ -165,7 +192,7 @@ class _Camera:
                 if not self._keep_alive and self._viewers == 0 and time.time() - self._last_grab > 30:
                     break
                 q = int(config.get("camera.jpeg_quality", 55))
-                ok, frame = read()
+                ok, frame = read(fresh=self._presence_only())
                 if not ok or frame is None:
                     self.error = "geen beeld van camera"
                     self._note_failure()

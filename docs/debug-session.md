@@ -23,7 +23,8 @@ requirements-dashboard.txt` voor de nieuwe `zeroconf`-dependency).
 - fc33b02 routine-uitkomsten, settings.json-quarantaine, lamp-fouten (S2-13)
 - c8a6ac6 agenda/ICS-parsing (S2-14)
 - 3c04aac AI-tools melden echte uitkomst (S2-15)
-- (volgende commit) begrensde groei, calendar-API auth, key-redactie (S2-16)
+- e4da17f begrensde groei, calendar-API auth, key-redactie (S2-16)
+- (volgende commit) verse presence-frames + chaos-test (S2-17)
 
 ### Items
 
@@ -164,6 +165,12 @@ Langlopende stabiliteit: alles wat een client kan laten groeien moet een bovengr
 - **Consistentie**: `/api/calendar/events` (alle afspraken van elk bereik) volgt nu het wachtwoord van de Kalender-pagina (de pagina was beschermd, de API niet). Bewust ongewijzigd: `/api/overview` (home toont de agenda van vandaag) en de overige LAN-bediening.
 - **API-keys in journald**: `requests`-fouten bevatten de volledige URL incl. `?key=`/`?appid=`; nu geredigeerd in de weer-foutprint.
 - **Bestanden**: `Dashboard/backend/{services,system_api,routines_api,calendar_api,main}.py`, `weer/weer.py`, `logic/{gpt_handler,notes}.py`, `rundashboard.py`, tests in `test_swr.py`, `test_llm.py`, `test_notes.py`, `test_security.py`.
+
+#### S2-17 Presence: verse frames (V4L2-bufferrij) en eigenschappen-test
+- **Probleem (theoretisch, op basis van hoe V4L2 werkt)**: OpenCV/V4L2 houdt een rij van ~4 buffers vast. In presence-only-modus (1 frame per 0,5-2 s) is `cap.read()` het OUDSTE frame uit die rij: tot ~4 leesintervallen (3-6 s) oud, dus een binnenkomend persoon werd pas seconden later "gezien" (bovenop `consecutive_required` x `interval_s`). De staleness-guard telt vanaf het moment van lezen, niet van vastleggen.
+- **Fix**: `_cv2_reader(cap).read(fresh=True)` trekt de rij eerst leeg met 3 goedkope `grab()`'s (dequeue, geen decode) en doet dan `read()`. Alleen in presence-only-modus (`_presence_only()`); de volle framerate (kijkers) blijft ongewijzigd; zonder `grab` of bij een falende grab valt het terug op een gewone `read()`; picamera2 ongewijzigd. Getest met een nep-cap en live op de dev-webcam (frames < 0,6 s oud). **Niet op V4L2/Pi getest** (dev-machine gebruikt MSMF): meten via `/api/health` -> `camera.frame_age_s` en de tijd tot lamp-AAN na binnenkomen.
+- **Eigenschappen-test** `tests/test_presence_chaos.py` (60 seeds x 400 ticks; persoon/leeg/geen beeld/falende detector): R1 lamp nooit UIT binnen de grace na een persoon, R2 niet binnen de grace na herstel van een storing, R3 geen lamp-actie tijdens een storing, R4 liveness. Mutatie-check: de oude "fout = 0 personen" wordt in 59/60 seeds gevangen.
+- **Bestanden**: `Dashboard/backend/camera_api.py`, `tests/test_camera.py` (+3), `tests/test_presence_chaos.py`.
 
 #### Statische analyse (uitgevoerd, geen verdere bevindingen)
 - ruff F: schoon na S2-2. bandit: 0 High, 1 Medium (`0.0.0.0` bind in `rundashboard.py`, bewust: LAN-dashboard achter optioneel wachtwoord), 21 Low (vaste-argv-subprocess, `try/except/pass`; beoordeeld, alleen tts-argv was echt).

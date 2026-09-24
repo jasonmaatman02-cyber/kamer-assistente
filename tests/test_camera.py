@@ -582,3 +582,79 @@ def test_auto_light_skips_command_if_user_acts_while_connecting(monkeypatch):
 
     assert w._auto_light(True) is True     # bewust niks doen is geen fout -> geen retry
     assert sent == [], "auto-commando overschreef een handmatige actie"
+
+
+# --------------------------------------------------------------------------- #
+# 6. Verse frames bij lage leesfrequentie (V4L2-bufferrij)
+# --------------------------------------------------------------------------- #
+class _GrabCap(_Cap):
+    def __init__(self, src, opened):
+        super().__init__(src, opened)
+        self.grabs = 0
+
+    def grab(self):
+        self.grabs += 1
+        return True
+
+
+def test_cv2_reader_drains_stale_buffers_only_when_asked(cam_mod):
+    src = FakeSource()
+    cap = _GrabCap(src, True)
+    read = cam_mod._cv2_reader(cap)
+
+    read()                                   # volle framerate: gewoon lezen
+    assert cap.grabs == 0 and src.reads == 1
+
+    read(fresh=True)                         # presence-only: eerst de rij leegtrekken
+    assert cap.grabs == cam_mod._DRAIN_GRABS and src.reads == 2
+
+
+def test_cv2_reader_survives_missing_or_failing_grab(cam_mod):
+    src = FakeSource()
+    plain = _Cap(src, True)                  # geen grab() (bv. andere backend)
+    assert cam_mod._cv2_reader(plain)(fresh=True)[0] is True
+
+    class Failing(_GrabCap):
+        def grab(self):
+            self.grabs += 1
+            raise RuntimeError("select timeout")
+
+    failing = Failing(src, True)
+    ok, frame = cam_mod._cv2_reader(failing)(fresh=True)
+    assert ok is True and failing.grabs == 1  # één poging, daarna gewoon read()
+
+    class NoFrame(_GrabCap):
+        def grab(self):
+            self.grabs += 1
+            return False
+
+    nf = NoFrame(src, True)
+    assert cam_mod._cv2_reader(nf)(fresh=True)[0] is True and nf.grabs == 1
+
+
+def test_presence_only_capture_asks_for_fresh_frames(monkeypatch, cam_mod):
+    import config
+
+    src = FakeSource()
+    grabbed = []
+    real_make = src.make_cap
+
+    def make(idx):
+        cap = real_make(idx)
+        cap.__class__ = _GrabCap
+        cap.grabs = 0
+        grabbed.append(cap)
+        return cap
+
+    src.make_cap = make
+    _install_fake_cv2(monkeypatch, src)
+    config.set("presence.interval_s", 1.0)
+    cam = cam_mod._Camera()
+    hold = cam.acquire()                     # één kijker (= presence)
+    cam.keep_alive(True)
+    cam._last_grab = 0                       # geen recente snapshot -> presence-only
+    assert _wait(lambda: src.reads >= 2)
+    cam.release()
+    hold()
+    _join(cam)
+    assert grabbed and grabbed[0].grabs >= cam_mod._DRAIN_GRABS
