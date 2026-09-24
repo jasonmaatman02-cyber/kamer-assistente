@@ -445,25 +445,7 @@ def _begin_turn(s):
     return release, None
 
 
-def friendly_ai_error(exc: BaseException) -> str:
-    """Leesbare melding voor een AI-fout. De ruwe tekst (bv. ``HTTPConnectionPool(host=
-    'localhost', port=11434): Max retries exceeded with url: /api/chat ...``) kwam
-    rechtstreeks in de chat en werd door de spraakassistent HARDOP voorgelezen; het log
-    houdt de volledige fout."""
-    msg = str(exc).lower()
-    if isinstance(exc, (ConnectionError, TimeoutError)) or any(k in msg for k in (
-            "connection refused", "connecterror", "max retries", "connection error", "failed to connect",
-            "name or service not known", "network is unreachable", "nameresolution")):
-        if "timed out" in msg or "timeout" in msg or isinstance(exc, TimeoutError):
-            return "De AI reageert te traag; probeer het zo nog eens."
-        return "De AI is nu niet bereikbaar (draait Ollama, of is er internet?)."
-    if "timed out" in msg or "timeout" in msg:
-        return "De AI reageert te traag; probeer het zo nog eens."
-    if "api key" in msg or "incorrect api" in msg or "authentication" in msg or "401" in msg:
-        return "De AI-sleutel (OpenAI) ontbreekt of is ongeldig -- controleer Settings > Inloggegevens."
-    if "not found" in msg and "model" in msg:
-        return f"Het AI-model '{config.get('ai.ollama_model')}' is niet geinstalleerd (ollama pull)."
-    return "Er ging iets mis bij de AI; de details staan in het logboek."
+friendly_ai_error = llm.friendly_error      # bewaard voor bestaande aanroepers/tests
 
 
 def _dispatch(call) -> str:
@@ -506,6 +488,11 @@ def _phrase_prompt(results: list[tuple[str, str]]) -> dict:
     )}
 
 
+def _drop_last_user(hist: list, text: str) -> None:
+    if hist and hist[-1].get("role") == "user" and hist[-1].get("content") == text:
+        hist.pop()
+
+
 def verwerk_input(text: str, session: str = "voice") -> str:
     s = _session(session)
     release, busy = _begin_turn(s)
@@ -517,6 +504,11 @@ def verwerk_input(text: str, session: str = "voice") -> str:
             hist.append({"role": "user", "content": text})
             _trim(hist)
             result = llm.chat(hist, tools=functions)
+            if result.get("error"):
+                # geen foutmelding als 'antwoord' in de geschiedenis (het model zou 'm daarna als eigen
+                # tekst zien) en de mislukte vraag weer weg, zodat een nieuwe poging niet dubbel staat
+                _drop_last_user(hist, text)
+                return f"Fout bij verwerken input: {result['error']}"
             calls = result.get("tool_calls") or []
             if not calls:
                 answer = result.get("content") or "Ik heb daar geen antwoord op."
@@ -527,7 +519,7 @@ def verwerk_input(text: str, session: str = "voice") -> str:
             answer = ""
             try:  # één natuurlijke afronding; lukt dat niet, geef de rauwe uitkomst
                 followup = llm.chat(hist + [_phrase_prompt(results)])
-                answer = (followup.get("content") or "").strip()
+                answer = "" if followup.get("error") else (followup.get("content") or "").strip()
             except Exception as exc:  # noqa: BLE001
                 log("ERROR", f"Afronding na tool-call mislukt: {exc}")
             answer = answer or "  ".join(r for _, r in results)
@@ -535,6 +527,7 @@ def verwerk_input(text: str, session: str = "voice") -> str:
             return answer
         except Exception as exc:  # noqa: BLE001
             log("ERROR", f"Fout bij verwerken input: {exc}")
+            _drop_last_user(hist, text)
             return f"Fout bij verwerken input: {friendly_ai_error(exc)}"
     finally:
         release()
@@ -557,6 +550,10 @@ def verwerk_input_stream(text: str, session: str = "voice"):
         try:
             calls = None
             for ev in llm.chat_stream(hist, tools=functions):
+                if ev["type"] == "error":
+                    _drop_last_user(hist, text)
+                    yield f"\n[fout: {ev['message']}]"
+                    return
                 if ev["type"] == "chunk":
                     answer += ev["text"]
                     yield ev["text"]
@@ -573,6 +570,8 @@ def verwerk_input_stream(text: str, session: str = "voice"):
                 phrased = ""
                 try:
                     for ev in llm.chat_stream(hist + [_phrase_prompt(results)]):
+                        if ev["type"] == "error":
+                            break          # afronding mislukt: gewoon de tool-uitkomsten tonen
                         if ev["type"] == "chunk":
                             phrased += ev["text"]
                             yield ev["text"]
@@ -586,6 +585,7 @@ def verwerk_input_stream(text: str, session: str = "voice"):
                     yield answer
         except Exception as exc:  # noqa: BLE001
             log("ERROR", f"Fout bij streamen: {exc}")
+            _drop_last_user(hist, text)
             yield f"\n[fout: {friendly_ai_error(exc)}]"
             return
         if answer:

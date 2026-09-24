@@ -277,3 +277,144 @@ def test_chat_failure_message_is_friendly_for_voice_and_stream(monkeypatch):
     monkeypatch.setattr(gh.llm, "chat_stream", boom)
     text = "".join(gh.verwerk_input_stream("hoi", session="friendly2"))
     assert "niet bereikbaar" in text and "HTTPConnectionPool" not in text
+
+
+# --------------------------------------------------------------------------- #
+# Een mislukte LLM-aanroep is GEEN antwoord (mail, spraak, gespreksgeschiedenis)
+# --------------------------------------------------------------------------- #
+RAW = "HTTPConnectionPool(host='localhost', port=11434): Max retries exceeded with url: /api/chat"
+
+
+@pytest.fixture()
+def ollama_down(monkeypatch):
+    import config
+
+    config.set("ai.backend", "ollama")
+
+    def boom(messages, tools):
+        raise ConnectionError(RAW)
+
+    monkeypatch.setattr(llm, "_chat_ollama", boom)
+
+
+def test_chat_failure_is_flagged_and_never_contains_the_raw_exception(ollama_down):
+    res = llm.chat([{"role": "user", "content": "hoi"}])
+    assert res["error"] and res["content"] == res["error"] and res["tool_calls"] == []
+    assert "HTTPConnectionPool" not in res["error"] and "11434" not in res["error"]
+    assert "niet bereikbaar" in res["error"]
+
+
+def test_complete_raises_instead_of_returning_the_error_text_as_an_answer(ollama_down):
+    """Voorheen gaf complete() "AI niet bereikbaar (HTTPConnectionPool ...)" terug als gewone tekst:
+    de wekker las dat hardop voor en de mail-tool verstuurde het als e-mail."""
+    with pytest.raises(llm.LLMError, match="niet bereikbaar"):
+        llm.complete("schrijf iets")
+
+
+def test_complete_returns_the_text_when_the_model_answers(monkeypatch):
+    monkeypatch.setattr(llm, "_chat_ollama", lambda m, t: {"content": "hallo", "tool_calls": [], "raw": None, "error": None})
+    assert llm.complete("hoi") == "hallo"
+
+
+def test_email_tool_does_not_send_the_error_text_as_an_email(ollama_down, monkeypatch):
+    import logic.gpt_handler as gh
+    import logic.mail_sender as ms
+
+    sent = []
+    monkeypatch.setattr(ms, "send_email_message", lambda *a, **k: sent.append(a) or "E-mail verzonden")
+    out = gh._dispatch({"name": "verzend_email_op_basis_van_prompt", "arguments": {"prompt": "schrijf naar mama"}})
+    assert sent == []                                   # er is NIETS verstuurd
+    assert "niet bereikbaar" in out and "HTTPConnectionPool" not in out
+    assert "E-mail verzonden" not in out
+
+
+def test_alarm_greeting_speaks_the_fixed_line_when_ollama_is_down(ollama_down, monkeypatch):
+    import scheduler.routines as R
+
+    spoken = []
+    monkeypatch.setattr(R, "speak", lambda text: spoken.append(text) or True)
+    with pytest.raises(llm.LLMError):
+        R._say_generated("bedenk een groet", "Goedemorgen!")
+    assert spoken == ["Goedemorgen!"]                  # niet: "De AI is nu niet bereikbaar ..."
+
+
+def test_failed_turn_leaves_no_trace_in_the_history(ollama_down):
+    from logic import gpt_handler as gh
+
+    gh._sessions.clear()
+    out = gh.verwerk_input("zet de lamp aan", session="fout1")
+    assert out.startswith("Fout bij verwerken input") and "niet bereikbaar" in out and "HTTPConnectionPool" not in out
+    hist = gh.history("fout1")
+    assert [m["role"] for m in hist] == ["system"]      # geen 'user' zonder antwoord, geen fout als 'assistant'
+
+
+def test_a_failed_tool_summary_falls_back_to_the_raw_tool_result(monkeypatch):
+    from logic import gpt_handler as gh
+
+    gh._sessions.clear()
+    calls = {"n": 0}
+
+    def fake_chat(messages, tools=None):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return {"content": None, "tool_calls": [{"name": "lees_notities", "arguments": {}}], "raw": None, "error": None}
+        return {"content": "AI niet bereikbaar", "tool_calls": [], "raw": None, "error": "De AI is nu niet bereikbaar."}
+
+    monkeypatch.setattr(gh.llm, "chat", fake_chat)
+    monkeypatch.setitem(gh.functies_dispatcher, "lees_notities", lambda: "Notities: melk kopen")
+    out = gh.verwerk_input("wat staat er in mijn notities", session="fout2")
+    assert out == "Notities: melk kopen"                # de uitkomst van de tool, niet de foutmelding
+    assert gh.history("fout2")[-1] == {"role": "assistant", "content": "Notities: melk kopen"}
+
+
+def test_stream_error_event_is_shown_but_not_stored(ollama_down):
+    from logic import gpt_handler as gh
+
+    gh._sessions.clear()
+    text = "".join(gh.verwerk_input_stream("hoi", session="fout3"))
+    assert "[fout:" in text and "niet bereikbaar" in text and "HTTPConnectionPool" not in text
+    assert [m["role"] for m in gh.history("fout3")] == ["system"]
+
+
+def test_stream_falls_back_to_the_raw_tool_result_when_the_summary_stream_fails(monkeypatch):
+    from logic import gpt_handler as gh
+
+    gh._sessions.clear()
+    calls = {"n": 0}
+
+    def fake_stream(messages, tools=None):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            yield {"type": "tool_calls", "calls": [{"name": "lees_notities", "arguments": {}}]}
+        else:
+            yield {"type": "error", "message": "De AI is nu niet bereikbaar."}
+
+    monkeypatch.setattr(gh.llm, "chat_stream", fake_stream)
+    monkeypatch.setitem(gh.functies_dispatcher, "lees_notities", lambda: "Notities: melk kopen")
+    text = "".join(gh.verwerk_input_stream("notities?", session="fout4"))
+    assert "Notities: melk kopen" in text and "niet bereikbaar" not in text
+    assert gh.history("fout4")[-1] == {"role": "assistant", "content": "Notities: melk kopen"}
+
+
+def test_chat_stream_reports_an_error_event_when_the_backend_is_down(ollama_down, monkeypatch):
+    import ollama
+
+    class Boom:
+        def __init__(self, *a, **k):
+            pass
+
+        def chat(self, *a, **k):
+            raise ConnectionError(RAW)
+
+    monkeypatch.setattr(ollama, "Client", Boom)
+    events = list(llm.chat_stream([{"role": "user", "content": "hoi"}]))
+    assert [e["type"] for e in events] == ["error"]
+    assert "niet bereikbaar" in events[0]["message"] and "HTTPConnectionPool" not in events[0]["message"]
+
+
+def test_web_search_failure_is_an_error_not_a_summary(ollama_down, monkeypatch):
+    import logic.websearch as ws
+
+    monkeypatch.setattr(ws, "search", lambda q: ["een snippet"])
+    with pytest.raises(llm.LLMError):
+        ws.search_and_summarise("weer morgen")

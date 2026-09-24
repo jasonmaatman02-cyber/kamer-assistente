@@ -7,8 +7,12 @@ Backends (``config: ai.backend``):
 
 Public API::
 
-    chat(messages, tools=None)  -> {"content": str|None, "tool_calls": [ {name, arguments} ]}
-    complete(prompt, system=None) -> str
+    chat(messages, tools=None)  -> {"content": str|None, "tool_calls": [ {name, arguments} ], "error": str|None}
+    complete(prompt, system=None) -> str            (gooit LLMError als het model niet kon antwoorden)
+
+``chat()`` gooit nooit: een mislukking komt terug als ``{"error": <leesbare melding>, "content": <zelfde
+melding>}``. Aanroepers die de tekst gebruiken alsof het een antwoord is (mail versturen, uitspreken,
+in de gespreksgeschiedenis bewaren) MOETEN ``error`` controleren -- ``complete()`` doet dat voor je.
 """
 from __future__ import annotations
 
@@ -19,6 +23,32 @@ import config
 
 _openai_client = None
 _openai_key = None
+
+
+class LLMError(RuntimeError):
+    """Het model kon niet antwoorden. De tekst is een leesbare melding (geen ruwe exceptie/URL)."""
+
+
+def friendly_error(exc: BaseException) -> str:
+    """Leesbare melding voor een AI-fout. De ruwe tekst (bv. ``HTTPConnectionPool(host=
+    'localhost', port=11434): Max retries exceeded with url: /api/chat ...``) kwam rechtstreeks in de
+    chat, in e-mails die de assistent verstuurde en werd door wekker/spraakassistent HARDOP voorgelezen;
+    het log houdt de volledige fout."""
+    msg = str(exc).lower()
+    if isinstance(exc, (ConnectionError, TimeoutError)) or any(k in msg for k in (
+            "connection refused", "connecterror", "max retries", "connection error", "failed to connect",
+            "name or service not known", "network is unreachable", "nameresolution")):
+        if "timed out" in msg or "timeout" in msg or isinstance(exc, TimeoutError):
+            return "De AI reageert te traag; probeer het zo nog eens."
+        return "De AI is nu niet bereikbaar (draait Ollama, of is er internet?)."
+    if "timed out" in msg or "timeout" in msg:
+        return "De AI reageert te traag; probeer het zo nog eens."
+    if "api key" in msg or "incorrect api" in msg or "authentication" in msg or "401" in msg:
+        return "De AI-sleutel (OpenAI) ontbreekt of is ongeldig -- controleer Settings > Inloggegevens."
+    if "not found" in msg and "model" in msg:
+        model = config.get("ai.ollama_model")
+        return f"Het AI-model '{model}' is niet geinstalleerd -- draai eerst: ollama pull {model}"
+    return "Er ging iets mis bij de AI; de details staan in het logboek."
 
 
 def _salvage_tool_calls(content: str):
@@ -63,7 +93,7 @@ def _as_openai_tools(tools):
 
 
 def _empty():
-    return {"content": None, "tool_calls": [], "raw": None}
+    return {"content": None, "tool_calls": [], "raw": None, "error": None}
 
 
 # --------------------------------------------------------------------------- #
@@ -180,7 +210,6 @@ def chat(messages, tools=None) -> dict:
         # "model not found" is een configfout, geen storing — OpenAI lost dat
         # niet op en kost alleen tijd + een tweede verwarrende foutmelding.
         model_missing = backend == "ollama" and "not found" in str(exc).lower()
-        hint = f" — draai eerst 'ollama pull {config.get('ai.ollama_model')}'" if model_missing else ""
         if not model_missing:
             try:
                 if backend != "openai" and config.secret("OPENAI_API_KEY"):
@@ -189,7 +218,8 @@ def chat(messages, tools=None) -> dict:
             except Exception as exc2:  # noqa: BLE001
                 print(f"[llm] fallback faalde ook: {exc2}")
         out = _empty()
-        out["content"] = f"AI niet bereikbaar ({exc}){hint}"
+        out["error"] = friendly_error(exc)
+        out["content"] = out["error"]
         return out
 
 
@@ -198,7 +228,10 @@ def complete(prompt: str, system: str | None = None) -> str:
     if system:
         messages.append({"role": "system", "content": system})
     messages.append({"role": "user", "content": prompt})
-    return chat(messages).get("content") or ""
+    res = chat(messages)
+    if res.get("error"):
+        raise LLMError(res["error"])
+    return res.get("content") or ""
 
 
 def chat_stream(messages, tools=None):
@@ -207,10 +240,16 @@ def chat_stream(messages, tools=None):
     text was meant for the user) or ``{"type": "done", "content": str}``.
 
     Only Ollama streams token-by-token; OpenAI / errors fall back to one chunk.
+    Kan het model niet antwoorden, dan volgt precies een ``{"type": "error", "message": str}``
+    (leesbare melding) en geen chunk/done: de aanroeper beslist wat de gebruiker ziet en bewaart
+    de foutmelding niet als antwoord.
     """
     backend = (config.get("ai.backend") or "ollama").lower()
     if backend != "ollama":
         res = chat(messages, tools)
+        if res.get("error"):
+            yield {"type": "error", "message": res["error"]}
+            return
         if res.get("tool_calls"):
             yield {"type": "tool_calls", "calls": res["tool_calls"]}
         else:
@@ -220,6 +259,7 @@ def chat_stream(messages, tools=None):
             yield {"type": "done", "content": text}
         return
 
+    content = ""      # vóór de try: bij een direct falende verbinding werd 'content' in de except nog niet gezet
     try:
         import ollama
 
@@ -231,7 +271,6 @@ def chat_stream(messages, tools=None):
             options={"temperature": config.get("ai.temperature", 0.6)},
             stream=True,
         )
-        content = ""
         raw_calls = []
         for part in stream:
             msg = part.get("message", {}) if isinstance(part, dict) else getattr(part, "message", {})
@@ -271,9 +310,11 @@ def chat_stream(messages, tools=None):
             yield {"type": "done", "content": content}
             return
         res = chat(messages, tools)  # niet-streamende fallback (met OpenAI-fallback erin)
-        if res.get("tool_calls"):
+        if res.get("error"):
+            yield {"type": "error", "message": res["error"]}
+        elif res.get("tool_calls"):
             yield {"type": "tool_calls", "calls": res["tool_calls"]}
         else:
-            text = res.get("content") or f"AI-fout: {exc}"
+            text = res.get("content") or friendly_error(exc)
             yield {"type": "chunk", "text": text}
             yield {"type": "done", "content": text}
