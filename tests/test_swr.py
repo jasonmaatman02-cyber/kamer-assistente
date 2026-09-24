@@ -192,3 +192,11 @@ def test_service_status_cold_start_placeholder_is_bounded(monkeypatch):
     assert out["weer"] == {"ok": False, "error": "wordt gecontroleerd"}
     release.set()
     refresher.join(3)
+
+
+def test_spotify_without_credentials_gives_a_friendly_dutch_message():
+    """De Media-UI toonde spotipy's kale 'No client_id. Pass it or set a
+    SPOTIPY_CLIENT_ID environment variable.'"""
+    assert S.svc("spotify") is None
+    msg = S.errors()["spotify"]
+    assert "Settings" in msg and "client_id" not in msg.lower().replace("client id", "")

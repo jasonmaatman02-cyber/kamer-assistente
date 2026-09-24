@@ -63,6 +63,14 @@ Reproductie lokaal met een gescripte nep-`cv2` (`tests/test_camera.py`, 12 tests
 - **Bestanden**: `logic/gpt_handler.py`, `ai/llm.py`, `config/settings.py`, `tests/test_llm.py` (+7 tests).
 - **Resterend / niet testbaar zonder Pi**: echte Ollama-koude-start; of 330s ook bij trage generatie van lange antwoorden volstaat (per chunk bij streaming).
 
+#### S2-7 UI-controle in een echte browser (lokale, geisoleerde dev-server)
+`tools/dev_server.py` (temp-config, camera/presence/TTS uit, lampen op TEST-NET, **echte geheimen uit `.env` gescrubd** -- `config` laadt `.env` bij import; mijn eerdere stress-runs hadden 17 echte sleutels in de process-omgeving) + `.claude/launch.json` (lokaal, niet gecommit).
+- Alle pagina's geladen (main, devices, media, environment, routines, notes, notifications, chat, settings, calendar): geen JS-excepties; enige console-fouten zijn de verwachte 503's voor niet-geconfigureerd Spotify. Foutstaten renderen netjes: Media "Spotify niet verbonden", Devices beide lampen "offline" (geen freeze), Chat toont de Ollama-fout met `ollama pull`-hint, nieuw `detect_scale`-veld staat in Settings.
+- **Bug**: lamp-aan/uit-schakelaar op Devices had geen zichtbaar spoor: `.toggle` is een `<label>` (inline) waardoor `width/height` genegeerd werden buiten een flex-container (gemeten 4px breed). Fix `display:inline-block` in `main.css`; na de fix 46x24px (DOM-meting + screenshot).
+- **UX**: Media toonde spotipy's kale "No client_id. Pass it or set a SPOTIPY_CLIENT_ID..." -> nu Nederlandse uitleg + verwijzing naar Settings; Kalender-tab toonde zonder gekoppeld account een lege kalender zonder uitleg -> nu "Geen agenda gekoppeld".
+- **Niet gefixt (cosmetisch)**: `chat.js` reset naar een hardcoded "Hey Jason!"-begroeting; `config.DEFAULTS` bevat hardcoded voorbeeld-lamp-IP's (192.168.2.15 / 192.168.3.19).
+- **Bestanden**: `Dashboard/static/styles/main.css`, `services.py`, `tests/test_calendar_api.py`, `tests/test_swr.py`, `tools/dev_server.py`, `tools/*.py` (scrub).
+
 #### Statische analyse (uitgevoerd, geen verdere bevindingen)
 - ruff F: schoon na S2-2. bandit: 0 High, 1 Medium (`0.0.0.0` bind in `rundashboard.py`, bewust: LAN-dashboard achter optioneel wachtwoord), 21 Low (vaste-argv-subprocess, `try/except/pass`; beoordeeld, alleen tts-argv was echt).
 - vulture: `devices/Lights.py:65` ongebruikte parameters `stappen`/`vertraging` (`zet_helderheid`) -- API-compat, laten staan.

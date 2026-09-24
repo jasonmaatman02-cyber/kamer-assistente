@@ -45,6 +45,11 @@ def _named_lock(store: dict, key: str) -> threading.Lock:
 
 def _build(name: str):
     if name == "spotify":
+        if not (config.secret("SPOTIFY_CLIENT_ID") and config.secret("SPOTIFY_CLIENT_SECRET")):
+            # i.p.v. spotipy's kale "No client_id. Pass it or set a
+            # SPOTIPY_CLIENT_ID environment variable." (stond zo in de Media-UI)
+            raise RuntimeError("Spotify is nog niet ingesteld -- vul Client ID en Secret in bij "
+                               "Settings > Inloggegevens en koppel daarna Spotify.")
         from sound_system.muziek import SpotifyDJ
         return SpotifyDJ()
     if name == "radio":
@@ -663,7 +668,10 @@ def calendar_events(start, end) -> dict:
             events = cal.get_normalized_events(start, end)
         except Exception as exc:  # noqa: BLE001 - een onverwachte fout mag de tab niet slopen
             return {"events": [], "error": str(exc)}
-        return {"events": events, "error": cal.error}
+        # Geen accounts gekoppeld gaf een lege kalender zonder enige uitleg
+        err = cal.error or (None if getattr(cal, "calendars", None) else
+                            "Geen agenda gekoppeld -- stel een account in via Settings.")
+        return {"events": events, "error": err}
 
     return _cached(key, 300, fetch,
                    fallback={"events": [], "error": "agenda wordt opgehaald"})   # 5 min

@@ -286,3 +286,20 @@ def test_route_end_to_end_returns_normalized_events(client, monkeypatch):
     assert body["error"] is None
     assert len(body["events"]) == 1
     assert body["events"][0]["title"] == "Route-test"
+
+
+def test_calendar_tab_explains_when_no_account_is_linked(client, monkeypatch):
+    """Zonder gekoppelde agenda gaf de Kalender-tab een lege kalender zonder
+    enige uitleg (cal.error was None)."""
+    from Dashboard.backend import services as S
+
+    class FakeCal:
+        error = None
+        calendars = []
+
+        def get_normalized_events(self, start, end):
+            return []
+
+    monkeypatch.setattr(S, "svc", lambda name: FakeCal() if name == "agenda" else None)
+    body = client.get("/api/calendar/events?start=2026-09-01&end=2026-09-30").get_json()
+    assert body["events"] == [] and "Geen agenda gekoppeld" in body["error"]

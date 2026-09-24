@@ -24,6 +24,11 @@ tmp = Path(tempfile.mkdtemp())
 cs.SETTINGS_FILE = tmp / "settings.json"
 cs.ENV_FILE = tmp / ".env"
 config.reload()
+# config laadt bij import de ECHTE .env in os.environ: scrub de geheimen zodat deze
+# lokale run nooit met echte credentials (Tapo/Spotify/Google/mail) iets aanraakt.
+import os as _os
+for _k in config.SECRET_KEYS:
+    _os.environ.pop(_k, None)
 config.set("devices.lamps", [{"name": "A", "ip": "192.0.2.1"}, {"name": "B", "ip": "192.0.2.2"}])
 if os.environ.get("LAMP_TIMEOUT"):
     config.set("devices.lamp_timeout_s", float(os.environ["LAMP_TIMEOUT"]))
