@@ -10,7 +10,7 @@ wijzigingen worden gecommit en gepusht, **deploy naar de Pi volgt zodra die
 weer bereikbaar is** (`bash deploy/update-pi.sh` + `pip install -r
 requirements-dashboard.txt` voor de nieuwe `zeroconf`-dependency).
 
-### Nog niet op de Pi gedeployed
+### Sinds 2026-09-24 14:32 op de Pi gedeployed (commits in volgorde; details in de items hieronder)
 - 321c094 mDNS-discovery van de Pi in `/api/devices` (nieuwe dependency zeroconf)
 - 81f8415 / 2b66748 camera-backoff, presence-herstel, TTS-hardening, lamp-timeout (S2-1..S2-4)
 - 956db0f single-flight SWR-cache voor trage externe diensten (S2-5)
@@ -28,7 +28,8 @@ requirements-dashboard.txt` voor de nieuwe `zeroconf`-dependency).
 - 6e34d24 settings-typecontrole (S2-18)
 - 70b0d3c lamp-adressering, Tapo-account-check (S2-19)
 - ead88f1 voorgelezen/rauwe foutteksten (S2-20)
-- (volgende commit) systemd-watchdog (S2-21; vereist setup-pi.sh voor de nieuwe unit)
+- 4879a9f systemd-watchdog (S2-21)
+- **Alles t/m ce1eec4 staat sinds 2026-09-24 14:32 op de Pi** (S2-22).
 
 ### Items
 
@@ -201,6 +202,13 @@ Langlopende stabiliteit: alles wat een client kan laten groeien moet een bovengr
 - **Bewust ruim** (180 s / 20 s-probe): een Pi die even door Ollama verzadigd is mag geen valse herstart krijgen; `update-pi.sh` meldt een tip als de draaiende unit nog geen watchdog heeft.
 - **Activeren op de Pi**: `git pull` + `bash deploy/setup-pi.sh` (nieuwe unit) + herstart. Zonder nieuwe unit doet de thread niets (veilig). **Niet op de Pi getest** (o.a. dat `NotifyAccess=main` met `Type=simple` de socket exporteert -- volgens de systemd-documentatie wel); controleren met `systemctl show kamer-dashboard -p WatchdogUSec` en `journalctl -u kamer-dashboard | grep watchdog`.
 - **Bestanden**: `Dashboard/backend/watchdog.py`, `rundashboard.py`, `deploy/kamer-dashboard.service`, `deploy/update-pi.sh`, `README.md`, `tests/test_watchdog.py` (16 tests, 1 platformafhankelijk overgeslagen op Windows).
+
+#### S2-22 Deploy naar de Pi en live-verificatie (2026-09-24, Pi weer bereikbaar)
+Pi 4B (192.168.2.34), Debian 13, Python 3.13.5; was `9c30f40`, nu `ce1eec4`+ (`bash deploy/update-pi.sh`: pull, pip, herstart, health-check OK). Unit handmatig vernieuwd met dezelfde sed als `setup-pi.sh` (`WatchdogUSec=3min`, `NotifyAccess=main`; watchdog-thread "actief (elke 60s)").
+- **Regressie gevangen dankzij echte Pi-data (vóór de release)**: de Pi bewaart `presence.lamp` als tekst (`"0"`, de Settings-pagina heeft daar een tekstveld); de nieuwe typecontrole (S2-18) zou het opslaan van de hele Settings-pagina hebben geweigerd. Gerepareerd (`ce1eec4`) + een test die het UI-schema uit `settings.js` leest en per veld het echte UI-type toetst.
+- **CPU gemeten (Pi, settings: `camera.fps: 15`, presence aan, interval 4 s)**: voor ~40-53% van een core, na **~11-15%** (presence-only capture i.p.v. volle framerate). Threads 42 -> 34 (NLWP), 21 Python-threads; RSS 289 -> 230 MB. `detect_ms` op de Pi: 97-219 ms per HOG-beurt bij `detect_scale` 1.0 (dus `detect_scale` verlagen is niet nodig). `frame_age_s` 0,5-1,9 s.
+- **Live gecontroleerd**: `/api/health` (timezone CET +2, camera frame_age, Ollama bereikbaar), `/api/devices` toont nu "Kamer-AI" (Speaker) naast JASON_LAPTOP4, `/api/lamp/state` voor beide echte Tapo-lampen (uit, bereikbaar), fout-paden (`?limit=abc` 200, te lange stad 400, lamp buiten lijst 400, `/api/calendar/events` 401 achter wachtwoord, cross-site `chat_stream` 403, same-origin zonder login 401, 3 MB body 413), journald schoon (geen warnings/OOM/throttling, `throttled=0x0`).
+- **Bevinding (bestaand, niet door deze release)**: de Google Agenda-koppeling is verlopen: `invalid_grant: Token has been expired or revoked` (refresh-token van 15 sep; in de 'Testing'-modus van een Google OAuth-app verloopt dat na 7 dagen). Het oude proces had de agenda's nog in het geheugen; het nieuwe proces kon niet vernieuwen. **Actie voor Jason**: Settings > Google Agenda > opnieuw verbinden, en in Google Cloud Console de OAuth-app op 'In productie' zetten. De UI meldt dit nu in het Nederlands (`2b8b81d`). Tokenbestand op de Pi naar `chmod 600` gezet.
 
 #### Statische analyse (uitgevoerd, geen verdere bevindingen)
 - ruff F: schoon na S2-2. bandit: 0 High, 1 Medium (`0.0.0.0` bind in `rundashboard.py`, bewust: LAN-dashboard achter optioneel wachtwoord), 21 Low (vaste-argv-subprocess, `try/except/pass`; beoordeeld, alleen tts-argv was echt).
