@@ -158,6 +158,13 @@ Formaat per item: **ID | subsystem | probleem | oorzaak | oplossing | tests | re
 - **Oplossing**: `_message()` (tekst, max 8000 tekens, 400 anders; `maxlength` in de chat-UI), routine-id moet tekst zijn (400), duidelijke melding "geen lamp geconfigureerd", `routines` in de settings-typecontrole (max 50 objecten met tekst-id), git-sha 30 s gecached.
 - **Tests**: `test_api_hardening.py` (+~12), `test_fuzz_api.py`: chat/routine-routes zijn niet meer overgeslagen, en een nieuwe test zet **elke bekende body-sleutel (31) op elk verkeerd type (14) op elke schrijf-route** (~10.000 verzoeken, 26 s) en eist `main.unhandled == []`. Bewezen: met de oude `chat_api.py` falen beide fuzz-tests. **Resterend risico**: query-parameters zijn minder uitputtend gefuzzd dan body-sleutels.
 
+### S3-26 | Pi langetermijnmeting (22 u, procesversie 0594b72) -- bevestigt S3-24 op de echte Pi
+- **Meting** (`/tmp/kamer-monitor.csv`, elke 60 s, dezelfde service-PID 606673 van 2026-09-24 16:26 tot 2026-09-25 14:46, `NRestarts=0`): na de opwarmfase (RSS 100 -> 227 MB in het eerste uur, 30 -> 39 threads, 8 -> 12 fds) bleef alles **10,5 uur lang vlak**: 231,0-231,1 MB, 39 threads, 12 fds, CPU 12,8 %. Dus **geen lek in de idle-modus** (presence, camera, polls, watchdog).
+- **Sprong om 07:00**: RSS 231 -> 262,8 MB (+32), threads 39 -> 42, fds 12 -> 16, CPU 12,8 -> 14,1 %. Logboek: `[07:00:00] Wekker gaat af`, `Starting morning routine`, `[07:00:14] Radio: Speelt nu: radio538`, `[07:00:18] Finished morning routine`; geen fouten. Dat is precies het VLC-lek van S3-24 (de oude code maakte in de ochtendroutine een eigen `RadioPlayer()`).
+- **Gevolg live vastgesteld**: om 14:45 (7 u 45 min later) meldde `/api/current_playing` `{"type":"none"}` terwijl het Python-proces nog een open stream-verbinding naar de radio-CDN had (`ESTAB ...:80`): de radio speelde nog, onzichtbaar voor het dashboard en niet stopbaar met de Stop-knop. De uur-op-uur CPU-stijging (12,8 -> 14,1 %) is de doorlopende stream + extra threads.
+- **Actie**: alle fixes (t/m b3536cd) gedeployed op 2026-09-25 14:46 (`update-pi.sh`); de herstart beeindigde de wees-stream. Na de herstart: geen open `:80`-verbinding, 34 threads, 233 MB, 10 fds, dashboard `ok`. **Te verifieren**: morgenochtend na de wekker moeten threads/RSS/fds gelijk blijven aan de basis en `/api/current_playing` moet `radio` tonen (Stop-knop werkt).
+- **Verbruik**: de oude service verbruikte in 22 u 3 u 10 min CPU-tijd (gemiddeld ~14 % van een core, vrijwel alleen HOG-detectie: vier cv2-threads x ~3,4 %).
+
 ## Sessie 2 (2026-09-24, Pi tijdelijk onbereikbaar -> alles lokaal getest)
 
 Omgeving: Windows 11 dev-machine, Python 3.12. Geen SSH/deploy mogelijk;
