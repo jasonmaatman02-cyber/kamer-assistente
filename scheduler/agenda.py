@@ -62,6 +62,9 @@ class _SimpleEvent:
 
 
 def _ics_escape(text: str) -> str:
+    # eerst CRLF/CR -> LF: een los CR in een beschrijving zou anders (splitlines() knipt ook op CR) als
+    # nieuwe eigenschapsregel worden gelezen ("a\rSUMMARY:x" overschreef zo de titel)
+    text = text.replace("\r\n", "\n").replace("\r", "\n")
     return text.replace("\\", "\\\\").replace(";", "\\;").replace(",", "\\,").replace("\n", "\\n")
 
 
@@ -103,6 +106,24 @@ def _google_event_to_simple(item: dict) -> _SimpleEvent:
         f"SUMMARY:{_ics_escape(summary)}\r\n" + "\r\n".join(l for l in lines if l) + "\r\n"
         "END:VEVENT\r\nEND:VCALENDAR\r\n"
     )
+
+
+_GOOGLE_HTTP_TIMEOUT_S = 15
+
+
+def _timeout_request():
+    """google-auth's ``Request`` wacht standaard 120 s op het token-endpoint: een haperend netwerk (wifi!)
+    hield zo een dashboard-thread (en het bouwen van de agenda-dienst) twee minuten vast. Zelfde 15 s als de
+    rest van de Google-/iCloud-verbindingen."""
+    from google.auth.transport.requests import Request
+
+    class _TimeoutRequest(Request):
+        def __call__(self, *args, **kwargs):
+            if len(args) < 5:                        # timeout niet positioneel meegegeven
+                kwargs["timeout"] = min(kwargs.get("timeout") or _GOOGLE_HTTP_TIMEOUT_S, _GOOGLE_HTTP_TIMEOUT_S)
+            return super().__call__(*args, **kwargs)
+
+    return _TimeoutRequest()
 
 
 def _restrict_token_file(path) -> None:
@@ -300,12 +321,11 @@ class GoogleCalendarAccount:
             raise RuntimeError(
                 "Google Agenda nog niet gekoppeld -- zie Settings -> Google Agenda -> Verbind met Google"
             )
-        from google.auth.transport.requests import Request
         from google.oauth2.credentials import Credentials
 
         creds = Credentials.from_authorized_user_file(str(token_path), GOOGLE_SCOPES)
         if creds.expired and creds.refresh_token:
-            creds.refresh(Request())
+            creds.refresh(_timeout_request())
             # Atomisch (tmp + os.replace) i.p.v. direct write_text -- dit
             # gebeurt bij ELKE tokenverversing (niet alleen bij de eenmalige
             # koppeling), dus een onderbreking halverwege zou het token-
