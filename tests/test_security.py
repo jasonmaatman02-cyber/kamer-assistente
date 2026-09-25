@@ -210,3 +210,11 @@ def test_secrets_status_api_requires_the_password_when_one_is_set(client, monkey
 
 def test_secrets_status_is_open_when_no_password_is_set(client):
     assert client.get("/api/secrets").status_code == 200
+
+
+@pytest.mark.parametrize("path", ["/api/config", "/main", "/api/health", "/api/bestaat-niet", "/static/scripts/util.js"])
+def test_responses_carry_the_browser_security_headers(client, path):
+    r = client.get(path)
+    assert r.headers["X-Content-Type-Options"] == "nosniff"
+    assert r.headers["X-Frame-Options"] == "SAMEORIGIN"
+    assert r.headers["Referrer-Policy"] == "same-origin"

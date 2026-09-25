@@ -14,7 +14,7 @@ const statusEl = document.getElementById("camera-status");
 
 function setStatus(html) { if (statusEl) statusEl.innerHTML = "Status: " + html; }
 
-function loadScript(src) {
+function loadScript(src, integrity) {
   return new Promise((resolve, reject) => {
     const fail = () => reject(new Error("kan niet laden: " + src.split("/").pop()));
     let s = [...document.scripts].find(x => x.src === src);
@@ -26,6 +26,10 @@ function loadScript(src) {
     }
     s = document.createElement("script");
     s.src = src;
+    if (integrity) {                      // SRI: een gecompromitteerde CDN kan zo geen andere code in het dashboard laden
+      s.integrity = integrity;
+      s.crossOrigin = "anonymous";
+    }
     s.onload = () => { s.dataset.loaded = "1"; resolve(); };
     s.onerror = fail;
     document.head.appendChild(s);
@@ -40,8 +44,11 @@ let _modelPromise = null;
 function getModel() {
   if (!_modelPromise) {
     _modelPromise = (async () => {
-      await loadScript(`${CDN}/@tensorflow/tfjs@4.22.0/dist/tf.min.js`);
-      await loadScript(`${CDN}/@tensorflow-models/coco-ssd@2.2.3/dist/coco-ssd.min.js`);
+      // hashes = SHA-256 (jsDelivr-API) van precies deze gepinde versies; bij een nieuwe versie beide bijwerken
+      await loadScript(`${CDN}/@tensorflow/tfjs@4.22.0/dist/tf.min.js`,
+                       "sha256-MA364nPSC0BG9GoG1zVojwNnWoB1Yem8tfZk6y89KDE=");
+      await loadScript(`${CDN}/@tensorflow-models/coco-ssd@2.2.3/dist/coco-ssd.min.js`,
+                       "sha256-iHW4wbtXcjmQydZQYibg5RzSG4tpQ+tTIBCGCW3lLfU=");
       try { await tf.setBackend("webgl"); } catch (_) { /* val terug op wat er is */ }
       await tf.ready();
       return cocoSsd.load({ base: "lite_mobilenet_v2" });   // lichtste variant

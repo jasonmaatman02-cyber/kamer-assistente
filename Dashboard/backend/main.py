@@ -42,6 +42,18 @@ def _csrf_guard():
               f"origin={origin!r} host={request.host!r} sec-fetch-site={sfs!r}")
         return ("cross-site verzoek geweigerd", 403)
 
+@app.after_request
+def _security_headers(resp):
+    """Goedkope, veilige browser-beveiligingsheaders op elk antwoord: geen MIME-sniffing van API/JSON, geen
+    inbedding van het dashboard (met camera- en lampknoppen) op een vreemde pagina (clickjacking), en geen
+    dashboard-URL in de Referer richting de CDN's. Bewust GEEN Content-Security-Policy: de pagina's gebruiken
+    inline stijlen en TensorFlow.js (WebGL/blob) en die is niet te verifieren zonder elke pagina uit te proberen."""
+    resp.headers.setdefault("X-Content-Type-Options", "nosniff")
+    resp.headers.setdefault("X-Frame-Options", "SAMEORIGIN")
+    resp.headers.setdefault("Referrer-Policy", "same-origin")
+    return resp
+
+
 # Onverwachte fouten in een /api-route: een JSON-foutmelding i.p.v. Flask's HTML-500-pagina (de pagina-scripts
 # lezen elk antwoord als JSON) en de traceback in het journal. ``unhandled`` bewaart de laatste meldingen zodat
 # tests (fuzz) een echte crash nog steeds kunnen onderscheiden van een bewuste JSON-500.
