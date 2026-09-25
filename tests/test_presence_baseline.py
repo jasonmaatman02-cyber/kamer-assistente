@@ -37,6 +37,7 @@ def rig(monkeypatch):
     counts = {"n": 0}
     lamp = {"obj": FakeLamp(on=False)}
     monkeypatch.setattr("time.time", lambda: clock["t"])
+    monkeypatch.setattr("time.monotonic", lambda: clock["t"])
     monkeypatch.setattr(w, "_get_frame", lambda: object())
     monkeypatch.setattr("logic.people_detect.count_people", lambda frame, **kw: counts["n"])
     monkeypatch.setattr(P.S, "lamp_ip", lambda x: "192.0.2.9")

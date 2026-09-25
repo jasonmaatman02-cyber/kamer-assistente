@@ -1083,6 +1083,7 @@ def test_presence_worker_hysteresis_and_grace(monkeypatch):
 
     clock = {"t": 1_000_000.0}
     monkeypatch.setattr("time.time", lambda: clock["t"])
+    monkeypatch.setattr("time.monotonic", lambda: clock["t"])
 
     # Een lege kamer bij de start (de basislijn): het scenario hieronder is een ECHTE binnenkomst.
     # (Zit er al iemand bij de start van de service, dan is dat geen binnenkomst; zie
@@ -1310,6 +1311,7 @@ def test_presence_new_transition_resets_retry_state(monkeypatch):
 
     clock = {"t": 1_000_000.0}
     monkeypatch.setattr("time.time", lambda: clock["t"])
+    monkeypatch.setattr("time.monotonic", lambda: clock["t"])
 
     monkeypatch.setattr("logic.people_detect.count_people", lambda frame, **kw: 1)
     w._tick()   # overgang naar OCCUPIED, ON mislukt
@@ -1706,6 +1708,7 @@ def test_presence_sensor_offline_holds_unknown_state(monkeypatch):
 
     clock = {"t": 1_000_000.0}
     monkeypatch.setattr("time.time", lambda: clock["t"])
+    monkeypatch.setattr("time.monotonic", lambda: clock["t"])
 
     monkeypatch.setattr(w, "_get_frame", lambda: object())
     w._tick(); clock["t"] += 3; w._tick()

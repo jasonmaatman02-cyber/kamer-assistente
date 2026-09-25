@@ -286,6 +286,7 @@ def test_presence_grace_restarts_after_sensor_recovery(monkeypatch):
     w = PresenceWorker()
     clock = {"t": 1_000_000.0}
     monkeypatch.setattr("time.time", lambda: clock["t"])
+    monkeypatch.setattr("time.monotonic", lambda: clock["t"])
     counts = {"n": 1}
     monkeypatch.setattr("logic.people_detect.count_people", lambda frame, **kw: counts["n"])
 

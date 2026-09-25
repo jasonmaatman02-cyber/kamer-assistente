@@ -96,6 +96,9 @@ class PresenceWorker:
         self.last_detect_ms: float | None = None   # duur van de laatste HOG-detectie (performance-meting)
         self.last_change: float | None = None   # time.time() van de laatste EMPTY<->OCCUPIED-overgang
         self._positive_streak = 0
+        # time.monotonic(), NIET de wandklok: de Pi heeft geen batterijklok en NTP springt de tijd kort na de
+        # start uren vooruit; met de wandklok maakte die sprong van het eerste lege frame na een positieve
+        # meting direct "grace overschreden" (lamp uit terwijl er iemand zit)
         self._last_positive_at: float | None = None
         self._camera_hold = None   # release-functie van camera.acquire(), of None
         self._camera_full_warned = False
@@ -307,11 +310,11 @@ class PresenceWorker:
                 # flipte één enkel negatief frame direct na een lange storing de
                 # kamer naar EMPTY (lamp uit) zonder dat er ooit een geldige
                 # "leeg"-periode van empty_grace_s is doorlopen.
-                self._last_positive_at = time.time()
+                self._last_positive_at = time.monotonic()
         self._sensor_unknown = False
         self._sensor_unknown_warned = False
         self.last_count = count
-        now = time.time()
+        now = time.monotonic()
 
         if self._baseline is None:
             self._baseline = count > 0

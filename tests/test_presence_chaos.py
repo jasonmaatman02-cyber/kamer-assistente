@@ -27,6 +27,7 @@ def _run(seed, monkeypatch, ticks=400):
     w = PresenceWorker()
     clock = {"t": 1_000_000.0}
     monkeypatch.setattr("time.time", lambda: clock["t"])
+    monkeypatch.setattr("time.monotonic", lambda: clock["t"])
     mode = {"m": "empty"}                      # empty | person | none | broken
 
     monkeypatch.setattr(w, "_get_frame", lambda: None if mode["m"] == "none" else object())

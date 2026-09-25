@@ -43,6 +43,7 @@ def _worker(monkeypatch, counts):
     w = PresenceWorker()
     clock = {"t": 1_000_000.0}
     monkeypatch.setattr("time.time", lambda: clock["t"])
+    monkeypatch.setattr("time.monotonic", lambda: clock["t"])
     monkeypatch.setattr(w, "_get_frame", lambda: object())
     monkeypatch.setattr("logic.people_detect.count_people", lambda frame, **kw: counts["n"])
     return w, clock
@@ -118,6 +119,7 @@ def test_end_to_end_broken_hog_keeps_the_room_occupied(monkeypatch):
     w = PresenceWorker()
     clock = {"t": 1_000_000.0}
     monkeypatch.setattr("time.time", lambda: clock["t"])
+    monkeypatch.setattr("time.monotonic", lambda: clock["t"])
     frame = np.zeros((360, 640, 3), dtype=np.uint8)
     monkeypatch.setattr(w, "_get_frame", lambda: frame)
 
@@ -129,3 +131,27 @@ def test_end_to_end_broken_hog_keeps_the_room_occupied(monkeypatch):
         w._tick()
     assert w.room_state == "OCCUPIED"
     assert w.status()["state"] == "unknown"
+
+
+def test_a_wall_clock_jump_does_not_end_the_grace_period_early(monkeypatch):
+    """De Pi heeft geen batterijklok: kort na een (stroom)herstart springt NTP de wandklok uren vooruit. Met
+    time.time() maakte die sprong van het eerstvolgende lege frame direct "grace overschreden" (lamp uit
+    terwijl er iemand zit). De grace loopt nu op de monotone klok."""
+    counts = {"n": 1}
+    w, clock = _worker(monkeypatch, counts)
+    wall = {"jump": 0.0}
+    monkeypatch.setattr("time.time", lambda: clock["t"] + wall["jump"])     # de wandklok springt, monotoon niet
+    w._tick()
+    assert w.room_state == "OCCUPIED"
+
+    counts["n"] = 0
+    clock["t"] += 3
+    wall["jump"] = 7200.0                                                   # NTP-sprong: +2 uur
+    w._tick()
+    assert w.room_state == "OCCUPIED", "een klokstap beeindigde de grace-periode"
+    clock["t"] += 10
+    w._tick()
+    assert w.room_state == "OCCUPIED"
+    clock["t"] += 12                                                        # nu echt > 20 s leeg
+    w._tick()
+    assert w.room_state == "EMPTY"
