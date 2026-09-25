@@ -205,6 +205,13 @@ Formaat per item: **ID | subsystem | probleem | oorzaak | oplossing | tests | re
 - **Tests**: `tests/test_deploy_rollback.py` (4, Linux): het script draait echt in tijdelijke git-repo's (origin + dev + "Pi") met stubs voor `systemctl/sudo/curl/journalctl/sleep/pip`: gezonde update blijft, ongezonde wordt teruggedraaid (2 herstarts, HEAD terug, "NIET actief"), pip-fout -> terug zonder herstart, lokale wijziging overleeft de rollback. Alle 4 geslaagd op de Pi (Linux); op Windows overgeslagen.
 - **Resterend risico**: alleen de code wordt teruggedraaid, niet de pip-pakketten (een nieuwere versie blijft geinstalleerd; de vorige code werkte daarmee tot nu toe altijd); de rollback voor het geval het nieuwe `update-pi.sh` zelf kapot is werkt pas vanaf de tweede deploy.
 
+### S3-34 | AI-tools/deps | "zoek op internet" werkte op de Pi nooit (ddgs ontbrak); afhankelijkhedenaudit; Tapo-faalpad zonder lek
+- **Probleem**: een import-audit van alle bronbestanden (`ast`, ook lazy imports in functies) tegen de Pi-venv liet zien dat `ddgs` ontbrak: het stond alleen in `requirements.txt`, niet in `requirements-dashboard.txt` (dat de Pi gebruikt). `logic/websearch.search()` slikte de `ImportError` en de AI zei "Ik kon niks vinden op het internet" -- een functie die stil nooit werkte, aan de gebruikerskant niet te onderscheiden van een echte lege uitkomst.
+- **Andere ontbrekende modules op de Pi** (bewust, stemassistent draait daar niet): `faster_whisper`, `whisper`, `piper`, `pygame`, `pvporcupine`, `picamera2`, `openai` (optionele fallback). Alles wat het dashboard echt nodig heeft is aanwezig.
+- **Oplossing**: `ddgs>=9,<10` in `requirements-dashboard.txt` (op de Pi geinstalleerd door de deploy: ddgs 9.16.0 + primp aarch64-wheel, `pip install --dry-run` vooraf); `websearch.last_error` onderscheidt "pakket ontbreekt" en "zoekdienst onbereikbaar" van "geen resultaten"; een onzinnige `search.max_results` (tekst, 0, negatief, enorm) wordt begrensd op 1-20.
+- **Verificatie**: `tests/test_websearch.py` (7, o.a. een test die eist dat de dashboard-requirements `ddgs` bevatten); op de Pi een echte zoekopdracht: 5 resultaten in 1,9 s, `last_error=None`.
+- **Tapo-faalpad (los proces op de Pi, 40 mislukte verbindingen naar een TEST-NET-adres met 1 s timeout)**: threads 5 -> 5, fds 7 -> 7, RSS +~9 KB per mislukte poging (26,3 -> 26,7 MB over 40) = verwaarloosbaar (~1 MB per 100 mislukte pogingen, en pogingen gebeuren alleen bij een presence-overgang met een offline lamp). Geen lek van tokio-runtimes of sockets.
+
 ## Sessie 2 (2026-09-24, Pi tijdelijk onbereikbaar -> alles lokaal getest)
 
 Omgeving: Windows 11 dev-machine, Python 3.12. Geen SSH/deploy mogelijk;
