@@ -288,6 +288,14 @@ def _liveness_report() -> dict:
     return out
 
 
+def _timezone_info() -> dict:
+    """Naam en UTC-verschil van de lokale tijd NU. De naam was altijd ``tzname[0]`` (de winterse: "CET") terwijl
+    de offset de zomertijd toonde (+2): dat las als een tegenstrijdigheid."""
+    dst = time.localtime().tm_isdst > 0
+    offset = -(time.altzone if dst else time.timezone) / 3600
+    return {"name": time.tzname[1 if dst and len(time.tzname) > 1 else 0], "utc_offset_h": round(offset, 2)}
+
+
 @system_bp.route("/api/health")
 def health():
     from Dashboard.backend import routines_api
@@ -301,7 +309,7 @@ def health():
         "time": time.strftime("%Y-%m-%d %H:%M:%S"),
         # De 21:30-regel, wekkers en de agenda rekenen met de LOKALE tijd: staat de Pi op UTC,
         # dan loopt dat 1-2 uur mis. Zichtbaar maken i.p.v. stilzwijgend fout.
-        "timezone": {"name": time.tzname[0], "utc_offset_h": round(-(time.altzone if time.localtime().tm_isdst > 0 else time.timezone) / 3600, 2)},
+        "timezone": _timezone_info(),
         "git": on_disk,                          # commit op schijf
         "git_running": _BOOT_SHA,                # commit waarmee dit proces startte
         "restart_pending": on_disk != _BOOT_SHA and "?" not in (on_disk, _BOOT_SHA),

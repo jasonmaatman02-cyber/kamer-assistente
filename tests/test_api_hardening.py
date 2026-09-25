@@ -562,3 +562,21 @@ def test_chat_message_length_is_capped(client, monkeypatch):
     assert seen == []                                          # het model is nooit aangeroepen
     ok = client.post("/api/send_message", json={"message": "x" * 8000})
     assert ok.status_code == 200 and ok.get_json()["reply"] == "ok" and len(seen[0]) == 8000
+
+
+def test_health_timezone_name_matches_the_offset(client, monkeypatch):
+    import time as _time
+
+    from Dashboard.backend import system_api as api
+
+    class T:
+        tm_isdst = 1
+
+    monkeypatch.setattr(api.time, "localtime", lambda *a: T())
+    monkeypatch.setattr(api.time, "tzname", ("CET", "CEST"))
+    monkeypatch.setattr(api.time, "altzone", -7200)
+    monkeypatch.setattr(api.time, "timezone", -3600)
+    assert api._timezone_info() == {"name": "CEST", "utc_offset_h": 2.0}
+    T.tm_isdst = 0
+    assert api._timezone_info() == {"name": "CET", "utc_offset_h": 1.0}
+    assert "timezone" in client.get("/api/health").get_json()
