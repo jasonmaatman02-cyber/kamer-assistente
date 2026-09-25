@@ -29,7 +29,7 @@ jobs:
           pip install -r requirements-dashboard.txt
           pip install pytest requests
 
-      - name: Lint (echte fouten: syntax, ongebruikte/ontbrekende namen)
+      - name: Lint (syntaxfouten en ongebruikte of ontbrekende namen)
         run: |
           pip install ruff
           ruff check --isolated --select E9,F .
