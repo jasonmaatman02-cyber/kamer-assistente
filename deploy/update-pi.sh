@@ -13,6 +13,28 @@ main() {
   git fetch --quiet origin
   PREV="$(git rev-parse --short HEAD)"
 
+  # Terug naar de vorige commit zonder eventuele lokale wijzigingen weg te gooien ('reset --keep' weigert
+  # liever dan ze te overschrijven). Voorheen bleef een kapotte update gewoon staan -- met Restart=always
+  # herstartte systemd het kapotte dashboard eindeloos tot iemand handmatig ingreep.
+  rollback() {
+    echo "!!  Terugdraaien naar de vorige versie ($PREV)..."
+    if git reset --keep "$PREV" >/dev/null 2>&1; then
+      echo "==> code staat weer op $PREV"
+      return 0
+    fi
+    echo "!!  Automatisch terugdraaien lukte niet (lokale wijzigingen in de weg). Handmatig:"
+    echo "!!      git reset --hard $PREV && sudo systemctl restart kamer-dashboard"
+    return 1
+  }
+
+  wait_healthy() {
+    for _ in $(seq 1 40); do
+      if curl -fsS --max-time 2 http://127.0.0.1:5000/api/config >/dev/null 2>&1; then return 0; fi
+      sleep 1
+    done
+    return 1
+  }
+
   # ---- lokale wijzigingen? even opzij zetten zodat de pull kan slagen ----
   STASHED=0
   if [ -n "$(git status --porcelain)" ]; then
@@ -50,7 +72,14 @@ main() {
     REQ=requirements-dashboard.txt
     [ -f "$REQ" ] || REQ=requirements.txt
     echo "==> pip install -r $REQ (alleen wijzigingen)"
-    ./.venv/bin/pip install -r "$REQ" -q
+    if ! ./.venv/bin/pip install -r "$REQ" -q; then
+      # bv. wifi/PyPI even weg: de nieuwe code staat al op schijf maar de service draait nog de oude. Laat
+      # het daar niet bij (de eerstvolgende herstart -- ook na een stroomstoring -- laadt de nieuwe code met
+      # ontbrekende afhankelijkheden): terug naar de vorige versie, die nog draait.
+      echo "!!  pip install mislukte (netwerk?). De update wordt NIET doorgevoerd."
+      rollback || true
+      exit 1
+    fi
   fi
 
   # 'systemctl cat' leest het unit-bestand zelf en faalt met Permission denied
@@ -69,10 +98,7 @@ main() {
     # /api/config heeft geen externe afhankelijkheden, dus antwoordt snel.
     echo "==> wachten tot het dashboard antwoordt (max 40s)"
     ok=0
-    for _ in $(seq 1 40); do
-      if curl -fsS --max-time 2 http://127.0.0.1:5000/api/config >/dev/null 2>&1; then ok=1; break; fi
-      sleep 1
-    done
+    if wait_healthy; then ok=1; fi
     if [ "$ok" = 1 ]; then
       echo "==> dashboard OK (nu op $(git rev-parse --short HEAD), was $PREV)"
       # De systemd-unit wordt alleen door setup-pi.sh vernieuwd; zonder WatchdogSec herstart systemd
@@ -85,8 +111,16 @@ main() {
       echo
       echo "!!  Het dashboard antwoordt niet na de update. Laatste logregels:"
       journalctl -u kamer-dashboard -n 25 --no-pager || true
-      echo "!!  Terugdraaien naar de vorige versie ($PREV):"
-      echo "!!      git reset --hard $PREV && sudo systemctl restart kamer-dashboard"
+      NEW="$(git rev-parse --short HEAD)"
+      if rollback; then
+        sudo systemctl restart kamer-dashboard
+        if wait_healthy; then
+          echo "==> teruggedraaid: het dashboard draait weer op $PREV; de update ($NEW) is NIET actief"
+        else
+          echo "!!  Ook de vorige versie ($PREV) antwoordt niet. Laatste logregels:"
+          journalctl -u kamer-dashboard -n 25 --no-pager || true
+        fi
+      fi
       exit 1
     fi
   else
