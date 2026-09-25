@@ -26,6 +26,9 @@ def _offline(monkeypatch, tmp_path):
         monkeypatch.delenv(key, raising=False)
     config.reload()
     config.set("tts.backend", "none")
+    # Ollama draait op de Pi en op sommige dev-machines echt: een test die "Ollama is uit" wil, moest daar een
+    # echt modelantwoord krijgen (en belastte de Pi met een echte generatie). Poort 9 (discard) weigert altijd.
+    config.set("ai.ollama_url", "http://127.0.0.1:9")
     # verse service-registry per test
     from Dashboard.backend import services
 
@@ -69,3 +72,33 @@ def amsterdam_summer(monkeypatch):
     tz = datetime.timezone(datetime.timedelta(hours=2), "CEST")
     monkeypatch.setattr(agenda_mod, "_local_tz", lambda: tz)
     return tz
+
+
+_LOCAL_HOSTS = {None, "", "localhost", "127.0.0.1", "::1", "0.0.0.0", "::"}
+
+
+@pytest.fixture(autouse=True)
+def _no_real_network(monkeypatch):
+    """Tests horen nooit het echte netwerk op te gaan (Spotify, Google, Open-Meteo, DuckDuckGo, de lampen, een
+    lokale Ollama...). Loopback (eigen testservers) blijft toegestaan; al het andere geeft direct een fout,
+    zodat een vergeten mock zichtbaar wordt in plaats van stilletjes te werken (of te falen op een machine
+    zonder internet)."""
+    import socket
+
+    real_getaddrinfo = socket.getaddrinfo
+    real_connect = socket.socket.connect
+
+    def guarded_getaddrinfo(host, *args, **kwargs):
+        if host not in _LOCAL_HOSTS and not str(host).startswith("127."):
+            raise socket.gaierror(f"netwerk geblokkeerd in tests: {host!r}")
+        return real_getaddrinfo(host, *args, **kwargs)
+
+    def guarded_connect(self, address, *args, **kwargs):
+        if self.family in (socket.AF_INET, socket.AF_INET6) and isinstance(address, tuple):
+            host = address[0]
+            if host not in _LOCAL_HOSTS and not str(host).startswith("127."):
+                raise OSError(f"netwerk geblokkeerd in tests: {host!r}")
+        return real_connect(self, address, *args, **kwargs)
+
+    monkeypatch.setattr(socket, "getaddrinfo", guarded_getaddrinfo)
+    monkeypatch.setattr(socket.socket, "connect", guarded_connect)
