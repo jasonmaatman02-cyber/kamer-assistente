@@ -38,7 +38,7 @@ def _icloud_event(summary, dtstart, dtend=None, location=None, description=None,
 # --------------------------------------------------------------------------- #
 # 1. Google events worden correct weergegeven / genormaliseerd
 # --------------------------------------------------------------------------- #
-def test_google_event_normalized(monkeypatch):
+def test_google_event_normalized(monkeypatch, amsterdam_summer):
     import scheduler.agenda as agenda_mod
 
     cal = agenda_mod.MultiProviderCalendar()

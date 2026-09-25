@@ -246,7 +246,7 @@ def test_secrets_never_appear_in_error(monkeypatch):
 # --------------------------------------------------------------------------- #
 # 8. Events van beide providers hebben hetzelfde interne formaat
 # --------------------------------------------------------------------------- #
-def test_events_have_uniform_internal_format(monkeypatch):
+def test_events_have_uniform_internal_format(monkeypatch, amsterdam_summer):
     import scheduler.agenda as agenda_mod
 
     icloud_events = [agenda_mod._SimpleEvent(

@@ -55,3 +55,17 @@ def client():
     app.config.update(TESTING=True)
     with app.test_client() as c:
         yield c
+
+
+@pytest.fixture()
+def amsterdam_summer(monkeypatch):
+    """De lokale tijd van de Pi (UTC+2 in september) als vast verschil, onafhankelijk van de tijdzone van de
+    machine waarop de tests draaien: de CI staat op UTC en een ontwikkel-pc kan er weer anders voor staan.
+    Tests die 'lokale' klokslagen van Google-events controleren, gebruiken deze fixture."""
+    import datetime
+
+    import scheduler.agenda as agenda_mod
+
+    tz = datetime.timezone(datetime.timedelta(hours=2), "CEST")
+    monkeypatch.setattr(agenda_mod, "_local_tz", lambda: tz)
+    return tz

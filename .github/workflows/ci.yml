@@ -8,6 +8,10 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    env:
+      # Bewust een zone die noch de Pi (Europe/Amsterdam) noch de runner (UTC) is: de tests horen niet van de
+      # tijdzone van de machine af te hangen (dat brak de CI sinds de agenda-tijdzonefix).
+      TZ: America/New_York
     steps:
       - uses: actions/checkout@v4
 
@@ -24,6 +28,11 @@ jobs:
           python -m pip install -U pip
           pip install -r requirements-dashboard.txt
           pip install pytest requests
+
+      - name: Lint (echte fouten: syntax, ongebruikte/ontbrekende namen)
+        run: |
+          pip install ruff
+          ruff check --isolated --select E9,F .
 
       - name: Compile everything
         run: python -m compileall -q config ai logic voice devices sound_system scheduler weer Dashboard main.py rundashboard.py
