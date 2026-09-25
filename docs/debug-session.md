@@ -177,6 +177,11 @@ Formaat per item: **ID | subsystem | probleem | oorzaak | oplossing | tests | re
 - **Oplossing**: `_timeout_request()` (subklasse van google-auth's `Request`, timeout op 15 s begrensd; een kortere blijft) voor de verversing; `_ics_escape` normaliseert eerst CRLF/CR naar LF.
 - **Tests**: `tests/test_agenda_hardening.py` (5): standaard 15 s, begrensd op 15 s / korter mag, de echte `_credentials()` gebruikt de begrensde request, CR-injectie (titel/start blijven intact, beschrijving houdt de tekst), escape-roundtrip. Suite lokaal 691 geslaagd. **Resterend risico**: de eerste verbinding bij een echt hangend Google-endpoint kost nu maximaal 15 s per poging i.p.v. 120 s; een refresh-token dat verlopen is (Testing-modus, 7 dagen) blijft `invalid_grant` -> koppel-opnieuw-melding.
 
+### S3-29 | frontend/security | XSS-sweep van alle dashboard-scripts (geen bevindingen)
+- **Aanpak**: een script (`scratchpad/scan_xss.py`, niet in de repo) haalt uit alle 12 pagina-scripts elke `${...}` binnen een template literal en toont wat NIET met `esc(...)`/getal-functies begint (163 hits, allemaal handmatig beoordeeld), plus een grep op `innerHTML`/`insertAdjacentHTML`/`eval`/`new Function`/`javascript:`/`window.open`/`.href =`.
+- **Uitkomst**: alles wat uit externe bronnen komt (Spotify: artiest/album/apparaat/playlist/track, agenda: titel/locatie/beschrijving/kalender, notities, logregels, routine-namen, foutmeldingen, lampnamen) wordt via `esc()` in `innerHTML` gezet of met `textContent` toegewezen; de overige interpolaties zijn getallen, datumdelen of vaste tekst. Geen `eval`/`new Function`/`javascript:`; `window.open` heeft `noopener`. Attributen (`value="..."`, `data-id="..."`, `src="..."`) staan allemaal onder `esc()`.
+- **Resterend risico**: er is geen geautomatiseerde regressietest voor deze regel (een statische check geeft te veel valse positieven op getallen); de bewaking is dus dat nieuwe `innerHTML`-code `esc()` moet gebruiken (zie `util.js`).
+
 ## Sessie 2 (2026-09-24, Pi tijdelijk onbereikbaar -> alles lokaal getest)
 
 Omgeving: Windows 11 dev-machine, Python 3.12. Geen SSH/deploy mogelijk;
