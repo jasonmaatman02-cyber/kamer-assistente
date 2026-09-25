@@ -199,6 +199,12 @@ Formaat per item: **ID | subsystem | probleem | oorzaak | oplossing | tests | re
 - **Tests**: `test_presence_detection.py::test_a_wall_clock_jump_does_not_end_the_grace_period_early` (wandklok +2 u tussen twee frames: kamer blijft OCCUPIED tot echt >20 s leeg) -- **faalt op de oude code, slaagt nu**; de bestaande tests met een nep-klok (presence baseline/chaos/detection, camera, units) patchen nu ook `time.monotonic`. Suite 696 geslaagd.
 - **Resterend risico**: `camera_api` gebruikt de wandklok alleen voor "30 s zonder kijker -> camera loslaten"; een klokstap laat de camera dan hooguit eerder loslaten (presence-only-modus), zonder gevolgen.
 
+### S3-33 | deploy | een mislukte update bleef staan (kapot dashboard in een herstartlus / nieuwe code zonder afhankelijkheden)
+- **Probleem**: `deploy/update-pi.sh` liet na een mislukte health-check alleen een handmatige terugdraai-aanwijzing zien; de service stond dan met `Restart=always` in een herstartlus van kapotte code tot iemand met ssh ingreep -- op een headless Pi die nu ook nog via wifi hangt. Een mislukte `pip install` (wifi/PyPI even weg) brak het script af nadat de nieuwe code al op schijf stond terwijl de oude versie nog draaide: de eerstvolgende herstart (ook na een stroomstoring) laadt dan nieuwe code zonder de nieuwe afhankelijkheden.
+- **Oplossing**: `rollback()` = `git reset --keep <vorige commit>` (weigert liever dan lokale wijzigingen, bv. `data/notes.json`, te overschrijven), daarna herstart en opnieuw wachten op gezond (`wait_healthy`, dezelfde 40 s). Bij een pip-fout: terugdraaien zonder de draaiende service aan te raken. Exit-code blijft 1 zodat je het merkt; de melding zegt of de vorige versie weer draait.
+- **Tests**: `tests/test_deploy_rollback.py` (4, Linux): het script draait echt in tijdelijke git-repo's (origin + dev + "Pi") met stubs voor `systemctl/sudo/curl/journalctl/sleep/pip`: gezonde update blijft, ongezonde wordt teruggedraaid (2 herstarts, HEAD terug, "NIET actief"), pip-fout -> terug zonder herstart, lokale wijziging overleeft de rollback. Alle 4 geslaagd op de Pi (Linux); op Windows overgeslagen.
+- **Resterend risico**: alleen de code wordt teruggedraaid, niet de pip-pakketten (een nieuwere versie blijft geinstalleerd; de vorige code werkte daarmee tot nu toe altijd); de rollback voor het geval het nieuwe `update-pi.sh` zelf kapot is werkt pas vanaf de tweede deploy.
+
 ## Sessie 2 (2026-09-24, Pi tijdelijk onbereikbaar -> alles lokaal getest)
 
 Omgeving: Windows 11 dev-machine, Python 3.12. Geen SSH/deploy mogelijk;
