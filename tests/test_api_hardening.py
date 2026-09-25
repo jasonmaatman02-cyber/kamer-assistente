@@ -565,8 +565,6 @@ def test_chat_message_length_is_capped(client, monkeypatch):
 
 
 def test_health_timezone_name_matches_the_offset(client, monkeypatch):
-    import time as _time
-
     from Dashboard.backend import system_api as api
 
     class T:
