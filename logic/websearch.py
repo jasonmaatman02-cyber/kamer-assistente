@@ -15,6 +15,10 @@ import requests
 import config
 from ai import llm
 
+# Reden van de laatste mislukte zoekopdracht (None = gelukt/geen resultaten). Zonder dit was "het pakket ontbreekt"
+# of "geen internet" voor de gebruiker hetzelfde als "er is niets gevonden".
+last_error: str | None = None
+
 
 def _search_duckduckgo(query: str, limit: int) -> list[str]:
     from ddgs import DDGS
@@ -44,14 +48,24 @@ def _search_serper(query: str, limit: int) -> list[str]:
 
 
 def search(query: str) -> list[str]:
-    limit = int(config.get("search.max_results", 5))
+    global last_error
+    last_error = None
+    try:
+        limit = max(1, min(20, int(config.get("search.max_results", 5))))
+    except (TypeError, ValueError):
+        limit = 5
     provider = (config.get("search.provider") or "duckduckgo").lower()
     try:
         if provider == "serper" and config.secret("SERPER_API_KEY"):
             return _search_serper(query, limit)
         return _search_duckduckgo(query, limit)
+    except ImportError as exc:
+        print(f"[websearch] '{provider}' niet beschikbaar: {exc}")
+        last_error = "het zoekpakket (ddgs) is niet geinstalleerd op dit apparaat"
+        return []
     except Exception as exc:  # noqa: BLE001
         print(f"[websearch] '{provider}' faalde: {exc}")
+        last_error = "de zoekdienst is nu niet bereikbaar (geen internet?)"
         return []
 
 
@@ -59,6 +73,8 @@ def search_and_summarise(query: str) -> str:
     print(f"[websearch] zoeken: {query}")
     snippets = search(query)
     if not snippets:
+        if last_error:
+            return f"Zoeken op internet lukt nu niet: {last_error}."
         return "Ik kon niks vinden op het internet."
     prompt = (
         "Gebruik onderstaande info om kort en duidelijk antwoord te geven op de vraag.\n\n"
